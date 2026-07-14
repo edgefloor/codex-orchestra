@@ -91,6 +91,7 @@ impl RunStore {
         let root = repository.join(".codex/orchestra/runs").join(run_id);
         fs::create_dir_all(root.join("outputs"))?;
         fs::create_dir_all(root.join("evidence/checks"))?;
+        fs::create_dir_all(root.join("evidence/changes"))?;
         fs::create_dir_all(root.join("approvals"))?;
         let store = Self { root };
         atomic_json(&store.root.join("workflow.json"), plan)?;
@@ -147,6 +148,19 @@ impl RunStore {
                 .join(format!("{step_id}-{attempt}.json")),
             evidence,
         )
+    }
+    pub fn change_patch(
+        &self,
+        step_id: &str,
+        attempt: u32,
+        patch: &[u8],
+    ) -> Result<PathBuf, std::io::Error> {
+        let path = self
+            .root
+            .join("evidence/changes")
+            .join(format!("{step_id}-{attempt}.patch"));
+        atomic_write(&path, patch)?;
+        Ok(path)
     }
     pub fn approval(&self, step_id: &str, decision: &str) -> Result<(), std::io::Error> {
         atomic_json(

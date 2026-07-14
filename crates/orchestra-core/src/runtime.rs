@@ -111,6 +111,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
             checkpoint.status,
             RunStatus::Completed | RunStatus::Cancelled
         ) {
+            self.cleanup_shared_worktree(&checkpoint).await?;
             return Ok(if checkpoint.status == RunStatus::Completed {
                 RunOutcome::Completed(checkpoint)
             } else {
@@ -169,6 +170,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
             checkpoint.status,
             RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled
         ) {
+            self.cleanup_shared_worktree(&checkpoint).await?;
             return Ok(checkpoint);
         }
         checkpoint.status = RunStatus::Cancelled;
@@ -183,17 +185,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         }
         store.save(&checkpoint)?;
         store.summary(&summary(&checkpoint))?;
-        let shared_worktree = shared_worktree_path(&checkpoint.repository, &checkpoint.run_id);
-        if shared_worktree.exists() {
-            let _ = self
-                .host
-                .remove_worktree(
-                    &checkpoint.parent_thread_id,
-                    &checkpoint.repository,
-                    &shared_worktree,
-                )
-                .await;
-        }
+        self.cleanup_shared_worktree(&checkpoint).await?;
         Ok(checkpoint)
     }
 
@@ -348,7 +340,6 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                 let task = StepTask {
                     host: Arc::clone(&self.host),
                     handles: Arc::clone(&handles),
-                    repository: checkpoint.repository.clone(),
                     parent_thread_id: checkpoint.parent_thread_id.clone(),
                     run_id: checkpoint.run_id.clone(),
                     step: step.clone(),
@@ -359,13 +350,43 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                 };
                 join_set.spawn(async move {
                     let id = step.id.clone();
-                    (id, task.execute().await)
+                    let workspace = task.workspace.clone();
+                    (id, workspace, task.execute().await)
                 });
             }
             store.save(&checkpoint)?;
             while let Some(result) = join_set.join_next().await {
-                let (step_id, result) = result.map_err(|e| RunError::Join(e.to_string()))?;
+                let (step_id, workspace, mut result) =
+                    result.map_err(|e| RunError::Join(e.to_string()))?;
                 let step = plan.steps.iter().find(|step| step.id == step_id).unwrap();
+                if step.worktree == crate::WorktreePolicy::Isolated {
+                    if let Ok(step_result) = &mut result
+                        && step_result.error.is_none()
+                        && let Some(changes) = step_result.changes.take()
+                        && let Err(error) = self
+                            .integrate_changes(
+                                &store,
+                                &checkpoint,
+                                step,
+                                checkpoint.steps[&step_id].attempts,
+                                &changes,
+                            )
+                            .await
+                    {
+                        result = Err(error);
+                    }
+                    if let Err(cleanup_error) = self
+                        .host
+                        .remove_worktree(
+                            &checkpoint.parent_thread_id,
+                            &checkpoint.repository,
+                            &workspace,
+                        )
+                        .await
+                    {
+                        result = Err(format!("isolated worktree cleanup failed: {cleanup_error}"));
+                    }
+                }
                 let state = checkpoint.steps.get_mut(&step_id).unwrap();
                 match result {
                     Ok(result) => {
@@ -429,22 +450,15 @@ impl<H: NativeHost> OrchestraRuntime<H> {
             }
         }
 
-        store.save(&checkpoint)?;
-        store.summary(&summary(&checkpoint))?;
         self.active.lock().await.remove(&checkpoint.run_id);
         if checkpoint.status != RunStatus::WaitingApproval {
-            let shared_worktree = shared_worktree_path(&checkpoint.repository, &checkpoint.run_id);
-            if shared_worktree.exists() {
-                let _ = self
-                    .host
-                    .remove_worktree(
-                        &checkpoint.parent_thread_id,
-                        &checkpoint.repository,
-                        &shared_worktree,
-                    )
-                    .await;
+            if let Err(error) = self.cleanup_shared_worktree(&checkpoint).await {
+                checkpoint.status = RunStatus::Failed;
+                checkpoint.next_action = format!("clean up shared worktree: {error}");
             }
         }
+        store.save(&checkpoint)?;
+        store.summary(&summary(&checkpoint))?;
         self.host
             .emit_activity(
                 &checkpoint.parent_thread_id,
@@ -461,12 +475,77 @@ impl<H: NativeHost> OrchestraRuntime<H> {
             _ => RunOutcome::Failed(checkpoint),
         })
     }
+
+    async fn integrate_changes(
+        &self,
+        store: &RunStore,
+        checkpoint: &RunCheckpoint,
+        step: &Step,
+        attempt: u32,
+        changes: &WorktreeChanges,
+    ) -> Result<(), String> {
+        let patch_path = store
+            .change_patch(&step.id, attempt, changes.patch.as_bytes())
+            .map_err(|error| format!("failed to persist isolated changes: {error}"))?;
+        if changes.patch.is_empty() {
+            return Ok(());
+        }
+        let shared = self
+            .host
+            .create_worktree(
+                &checkpoint.parent_thread_id,
+                &checkpoint.repository,
+                &checkpoint.run_id,
+                &step.id,
+                &crate::WorktreePolicy::Shared,
+                &checkpoint.source_revision,
+            )
+            .await?;
+        let outcome = self
+            .host
+            .run_command(
+                &checkpoint.parent_thread_id,
+                &shared,
+                &[
+                    "git".into(),
+                    "apply".into(),
+                    "--index".into(),
+                    "--3way".into(),
+                    patch_path.to_string_lossy().into_owned(),
+                ],
+                Some(&shared),
+                120_000,
+            )
+            .await?;
+        if outcome.exit_code == 0 {
+            Ok(())
+        } else {
+            Err(format!(
+                "failed to integrate isolated changes from `{}`: {}",
+                step.id, outcome.stderr
+            ))
+        }
+    }
+
+    async fn cleanup_shared_worktree(&self, checkpoint: &RunCheckpoint) -> Result<(), RunError> {
+        let shared = shared_worktree_path(&checkpoint.repository, &checkpoint.run_id);
+        if shared.exists() {
+            self.host
+                .remove_worktree(
+                    &checkpoint.parent_thread_id,
+                    &checkpoint.repository,
+                    &shared,
+                )
+                .await
+                .map_err(RunError::Host)?;
+        }
+        Ok(())
+    }
 }
 
 struct StepTask<H: NativeHost> {
     host: Arc<H>,
     handles: Arc<Mutex<HashMap<String, AgentHandle>>>,
-    repository: PathBuf,
     parent_thread_id: String,
     run_id: String,
     step: Step,
@@ -481,7 +560,12 @@ struct StepResult {
     final_response: Option<String>,
     agent: Option<AgentHandle>,
     check_evidence: Option<CheckEvidence>,
+    changes: Option<WorktreeChanges>,
     error: Option<String>,
+}
+
+struct WorktreeChanges {
+    patch: String,
 }
 
 #[derive(Serialize)]
@@ -568,11 +652,17 @@ impl<H: NativeHost> StepTask<H> {
                         if agent.outputs.is_empty() {
                             outputs.extend(object.clone());
                         }
+                        let changes = if self.step.worktree == crate::WorktreePolicy::Isolated {
+                            Some(self.collect_changes().await?)
+                        } else {
+                            None
+                        };
                         Ok(StepResult {
                             outputs,
                             final_response: Some(response),
                             agent: Some(handle),
                             check_evidence: None,
+                            changes,
                             error: None,
                         })
                     }
@@ -607,6 +697,7 @@ impl<H: NativeHost> StepTask<H> {
                         final_response: None,
                         agent: None,
                         check_evidence: Some(evidence),
+                        changes: None,
                         error: None,
                     })
                 } else {
@@ -616,19 +707,76 @@ impl<H: NativeHost> StepTask<H> {
                         agent: None,
                         error: Some(format!("check exited with {}", evidence.exit_code)),
                         check_evidence: Some(evidence),
+                        changes: None,
                     })
                 }
             }
             Action::Approval(_) => unreachable!(),
         };
-        if self.step.worktree == crate::WorktreePolicy::Isolated {
-            let _ = self
-                .host
-                .remove_worktree(&self.parent_thread_id, &self.repository, &self.workspace)
-                .await;
-        }
         result
     }
+
+    async fn collect_changes(&self) -> Result<WorktreeChanges, String> {
+        self.git(&["add", "-A"]).await?;
+        let names = self.git(&["diff", "--cached", "--name-only", "-z"]).await?;
+        let changed_paths: Vec<_> = names
+            .stdout
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .collect();
+        let outside_scope: Vec<_> = changed_paths
+            .iter()
+            .filter(|path| !path_in_write_scope(path, &self.step.write_scope))
+            .copied()
+            .collect();
+        if !outside_scope.is_empty() {
+            return Err(format!(
+                "isolated step changed paths outside write_scope: {}",
+                outside_scope.join(", ")
+            ));
+        }
+        let patch = self
+            .git(&["diff", "--cached", "--binary", "--full-index", "--no-color"])
+            .await?;
+        Ok(WorktreeChanges {
+            patch: patch.stdout,
+        })
+    }
+
+    async fn git(&self, arguments: &[&str]) -> Result<crate::CommandOutcome, String> {
+        let mut argv = vec!["git".to_string()];
+        argv.extend(arguments.iter().map(|value| value.to_string()));
+        let outcome = self
+            .host
+            .run_command(
+                &self.parent_thread_id,
+                &self.workspace,
+                &argv,
+                Some(&self.workspace),
+                120_000,
+            )
+            .await?;
+        if outcome.exit_code == 0 {
+            Ok(outcome)
+        } else {
+            Err(format!(
+                "git {} failed: {}",
+                arguments.join(" "),
+                outcome.stderr
+            ))
+        }
+    }
+}
+
+fn path_in_write_scope(path: &str, scopes: &[String]) -> bool {
+    scopes.iter().any(|scope| {
+        let scope = scope.trim_end_matches('/');
+        !scope.is_empty()
+            && (path == scope
+                || path
+                    .strip_prefix(scope)
+                    .is_some_and(|suffix| suffix.starts_with('/')))
+    })
 }
 
 fn all_outputs(checkpoint: &RunCheckpoint) -> BTreeMap<String, StepOutputs> {
@@ -1365,7 +1513,11 @@ mod tests {
             .unwrap(),
             "integrated\n"
         );
-        assert!(!worktrees.join(format!("{}-implement", state.run_id)).exists());
+        assert!(
+            !worktrees
+                .join(format!("{}-implement", state.run_id))
+                .exists()
+        );
         assert!(
             dir.path()
                 .join(".codex/orchestra/runs")
