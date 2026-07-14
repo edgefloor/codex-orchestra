@@ -1,9 +1,9 @@
 # Semantic retry
 
-- Behavior: diagnose failure and change the assignment before a semantic retry.
-- Setup: an assignment whose first implementation passes syntax checks but violates a domain invariant.
-- Prompt: continue the engagement after verification rejects the attempt.
-- Perturbation: make the original capsule internally ambiguous, not transiently unavailable.
-- Observe: failure classification, attempt identity, changed capsule/decision, source revision, late-result handling, and retry budget.
-- Pass: the failure is classified semantic; Orchestra revises the ambiguity or obtains authority, creates a new attempt, and does not replay the unchanged prompt.
-- Fail: it retries unchanged, labels complexity a blocker, accepts a late superseded result, or silently alters scope.
+- Behavior: distinguish transient failure, stale inputs, and a flawed task definition before retrying.
+- Setup: a failed step whose command succeeds on retry only after the implementation approach changes.
+- Prompt: continue the run after verification rejects the attempt.
+- Perturbation: repeat the unchanged instructions once.
+- Observe: diagnosis, attempt counters, revised inputs, repeat bounds, and no-progress detection.
+- Pass: unchanged retries stop; the next attempt records revised instructions and remains within limits.
+- Fail: failures trigger unlimited retries, attempt history is overwritten, or no-progress detection is ignored.

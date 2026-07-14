@@ -12,5 +12,5 @@ Configuration lifecycle operations are preview-first, preserve user-owned files,
 
 - Project mode uses `.codex/config.toml` and `.codex/agents/*.toml` in trusted repositories.
 - Profile mode uses `$CODEX_HOME/orchestra.config.toml` and is selected explicitly.
-- Making Orchestra the global default always requires explicit Operator intent and manual conflict resolution.
+- Making Orchestra the global default always requires explicit user intent and manual conflict resolution.
 - One canonical custom-agent source set must feed both project and global installation targets.

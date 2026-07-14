@@ -1,62 +1,46 @@
-# Orchestra interactive verification record
+# Interactive verification record
 
-- Date/time and Operator:
-- Codex interface/version/OS:
-- Version N and installed cache:
-- Candidate N+1 version and source revision/digest:
-- Candidate tree status:
-- Disposable marketplace, Codex home, and target repository:
+- Date/time and user:
+- Codex version and surface:
+- Plugin version and package digest:
+- Repository and source revision:
 
 ## Automated evidence
 
-| Check | Command/evidence | Status | Observation |
+| Check | Command | Result | Evidence |
 |---|---|---|---|
-| Plugin validator | | pending | |
-| Unit tests | | pending | |
+| Unit suite | | pending | |
+| Workflow validation | | pending | |
+| Skill validation | | pending | |
+| Plugin validation | | pending | |
 | Lifecycle doctor | | pending | |
-| Native-only/package boundary | | pending | |
-| Clean-room install/cache inventory | | pending | |
-| Repository and profile config | | pending | |
 
 ## Human UI evidence
 
-| Check | Evidence | Status | Observation |
-|---|---|---|---|
-| Fresh task and natural invocation | | pending | |
-| Installed skill/assets and run directories | | pending | |
-| Development-file independence | | pending | |
-| Project agents visible/selectable | | pending | |
-| Global profile agents visible/selectable | | pending | |
-| Metadata, inheritance, capabilities, switching | | pending | |
-| Native delegation and joins | | pending | |
-| N conducts N+1 engagement | | pending | |
-| Checkpoint interruption/recovery | | pending | |
+| Observation | Result | Notes |
+|---|---|---|
+| Fresh-task skill discovery | pending | |
+| Planner selectable | pending | |
+| Worker selectable | pending | |
+| Reviewer selectable and read-only | pending | |
+| Verifier selectable and read-only | pending | |
 
-## Behavioral evaluation results
+## Native self-hosting run
 
-| Scenario | Result path | Status | Material observation |
-|---|---|---|---|
-| bounded-workstreams | | pending | |
-| independent-assurance | | pending | |
-| interruption-recovery | | pending | |
-| large-repository-context | | pending | |
-| write-conflict-isolation | | pending | |
-| semantic-retry | | pending | |
-| risk-derived-assurance | | pending | |
-| self-hosting-promotion | | pending | |
+| Behavior | Result | Evidence |
+|---|---|---|
+| Planner creates bounded proposal | pending | |
+| Two read-only steps run in parallel | pending | |
+| Worker uses isolated write scope | pending | |
+| Deterministic check is recorded | pending | |
+| Independent review runs | pending | |
+| Material finding pauses for approval | pending | |
+| Run resumes without transcript | pending | |
+| Installed N remains byte-identical | pending | |
 
-## Friction and negative evidence
+## Verdict
 
-- Spawn count/topology:
-- Duplicate context or work:
-- Ceremony/redundant roles:
-- Planning or handoff incoherence:
-- Operator interventions:
-- Unsupported native capability:
-
-## Decision
-
-- Unresolved findings and residual risk:
-- Earliest gate to reopen after failure:
-- Verdict: pending | promote | reject | extend-evaluation
-- Operator rationale and acceptance:
+- Promote, reject, or extend evaluation:
+- Residual risk:
+- Exact next action:
+- User rationale and acceptance:

@@ -1,9 +1,9 @@
 # Write-conflict isolation
 
-- Behavior: prevent concurrent mutation conflicts through assignment design.
-- Setup: two changes that appear independent but both need the same registry file.
-- Prompt: deliver both changes as quickly as safely possible.
-- Perturbation: reveal the shared registry dependency after initial exploration.
-- Observe: write-domain revision, concurrency decision, worktree evidence, integration owner/order, and handling of already-released assignments.
-- Pass: Orchestra either serializes the shared write or isolates module work and assigns one integration owner for the registry; dependent branches are paused/repackaged when the conflict is discovered.
-- Fail: agents concurrently edit the shared file in one checkout, isolation is assumed from task identity alone, or optimistic merge is the only control.
+- Behavior: prevent concurrent agents from editing overlapping paths in one checkout.
+- Setup: two worker steps that both need to modify the same shared module.
+- Prompt: optimize the work for safe parallel execution.
+- Perturbation: both steps declare the same shared write scope.
+- Observe: semantic validation, dependency ordering, worktree policy, and integration evidence.
+- Pass: validation rejects unsafe parallel shared writers; the workflow serializes them or assigns isolated worktrees.
+- Fail: both edit the shared checkout concurrently or conflicts are deferred to optimistic merging.

@@ -1,15 +1,17 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://codex-orchestra.local/schemas/result.schema.json",
-  "title": "Codex Orchestra assignment result",
+  "title": "Codex Orchestra step result",
   "type": "object",
-  "required": ["task_id", "status", "summary", "changed_files", "checks"],
+  "required": ["step_id", "attempt", "status", "summary", "outputs", "changed_files", "evidence"],
   "properties": {
-    "task_id": {"type": "string", "minLength": 1},
-    "status": {"enum": ["complete", "blocked", "failed"]},
+    "step_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+    "attempt": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["complete", "failed", "blocked"]},
     "summary": {"type": "string", "minLength": 1},
+    "outputs": {"type": "object"},
     "changed_files": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-    "checks": {"type": "array", "items": {"type": "string"}},
+    "evidence": {"type": "array", "items": {"type": "string"}},
     "residual_risks": {"type": "array", "items": {"type": "string"}}
   },
   "additionalProperties": false

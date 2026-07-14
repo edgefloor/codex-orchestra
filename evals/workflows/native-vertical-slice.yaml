@@ -1,0 +1,77 @@
+schema_version: "1"
+name: native-vertical-slice
+description: Exercise planning, parallel reading, isolated implementation, checks, review, conditional approval, and durable state.
+inputs:
+  objective: Improve one bounded part of Codex Orchestra.
+limits:
+  max_parallel: 2
+  max_steps: 8
+  max_attempts: 2
+steps:
+  - id: plan
+    type: agent
+    agent: planner
+    instructions: Inspect the repository and propose one bounded improvement with acceptance criteria.
+    read_only: true
+    worktree: shared
+    write_scope: []
+    outputs: [proposal, acceptance]
+    max_attempts: 1
+  - id: inspect-docs
+    type: agent
+    agent: planner
+    needs: [plan]
+    instructions: Check documentation affected by ${steps.plan.proposal} and return exact required updates.
+    read_only: true
+    worktree: shared
+    write_scope: []
+    outputs: [documentation-findings]
+    max_attempts: 1
+  - id: inspect-tests
+    type: agent
+    agent: verifier
+    needs: [plan]
+    instructions: Check tests affected by ${steps.plan.proposal} and return the smallest verification set.
+    read_only: true
+    worktree: shared
+    write_scope: []
+    outputs: [test-findings]
+    max_attempts: 1
+  - id: implement
+    type: agent
+    agent: worker
+    needs: [inspect-docs, inspect-tests]
+    instructions: Implement the proposal using ${steps.inspect-docs.documentation-findings} and ${steps.inspect-tests.test-findings}.
+    read_only: false
+    worktree: isolated
+    write_scope: [skills/, docs/, tests/]
+    outputs: [changed-files, summary, workspace, revision]
+    max_attempts: 2
+  - id: checks
+    type: check
+    needs: [implement]
+    workspace_from: implement
+    command: uv run --locked python -m unittest discover -s tests -v
+    outputs: [exit-code, evidence]
+  - id: review
+    type: agent
+    agent: reviewer
+    needs: [implement, checks]
+    workspace_from: implement
+    instructions: Independently review ${steps.implement.changed-files} and ${steps.checks.evidence}.
+    read_only: true
+    worktree: shared
+    write_scope: []
+    outputs: [findings, material-finding]
+    max_attempts: 1
+  - id: approve-material-finding
+    type: approval
+    needs: [review]
+    when: ${steps.review.material-finding} == true
+    reason: Decide whether to accept, repair, or reject the material review finding in ${steps.review.findings}.
+    default: repair
+    decisions:
+      accept: continue
+      repair: revise
+      reject: stop
+    outputs: [decision]

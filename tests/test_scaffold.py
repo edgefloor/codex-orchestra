@@ -8,6 +8,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+import re
 from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parents[1]
@@ -23,8 +24,9 @@ class ScaffoldTests(unittest.TestCase):
         pyproject = tomllib.loads((PLUGIN / "pyproject.toml").read_text(encoding="utf-8"))
         manifest = json.loads((PLUGIN / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
         self.assertFalse(pyproject["tool"]["uv"]["package"])
-        self.assertEqual(pyproject["project"]["version"], manifest["version"])
+        self.assertEqual(pyproject["project"]["version"].split("+", 1)[0], manifest["version"].split("+", 1)[0])
         self.assertIn("pyyaml>=6.0.2", pyproject["dependency-groups"]["dev"])
+        self.assertIn("jsonschema>=4.26.0", pyproject["dependency-groups"]["dev"])
         self.assertTrue((PLUGIN / "uv.lock").is_file())
 
     def test_manifest_is_native_and_namespaced(self) -> None:
@@ -56,12 +58,18 @@ class ScaffoldTests(unittest.TestCase):
 
     def test_skill_surface_is_discoverable(self) -> None:
         skills = sorted((PLUGIN / "skills").glob("*/SKILL.md"))
-        self.assertGreaterEqual(len(skills), 12)
-        self.assertTrue(any(path.parent.name == "orchestrate" for path in skills))
+        self.assertEqual(
+            {path.parent.name for path in skills},
+            {"orchestrate", "create-workflow", "run-workflow", "resume-workflow"},
+        )
         for path in skills:
             text = path.read_text(encoding="utf-8")
             self.assertTrue(text.startswith("---\nname: "), path)
             self.assertIn("\ndescription: ", text, path)
+        for name in ("create-workflow", "run-workflow", "resume-workflow"):
+            metadata = PLUGIN / "skills" / name / "agents/openai.yaml"
+            self.assertTrue(metadata.is_file())
+            self.assertIn(f"${name}", metadata.read_text(encoding="utf-8"))
 
     def test_configuration_templates_parse_and_use_stable_feature(self) -> None:
         for path in (PLUGIN / "config").rglob("*.toml"):
@@ -89,20 +97,33 @@ class ScaffoldTests(unittest.TestCase):
 
     def test_architecture_decisions_are_grounded(self) -> None:
         context = (PLUGIN / "CONTEXT.md").read_text(encoding="utf-8")
-        for term in ("Operator", "Grounding", "Context Capsule", "Join Owner", "Reviewer", "Verifier", "Gate", "Drift", "Handoff", "Attempt"):
+        for term in ("Workflow", "Run", "Step", "Stage", "Task input", "Result", "Check", "Review", "Approval", "Attempt", "Run summary"):
             self.assertIn(f"**{term}**", context)
         adrs = sorted((PLUGIN / "docs/adr").glob("[0-9][0-9][0-9][0-9]-*.md"))
-        self.assertEqual(len(adrs), 8)
+        self.assertEqual(len(adrs), 9)
         combined = "\n".join(path.read_text(encoding="utf-8") for path in adrs)
-        for decision in ("Codex-native", "optional configuration", "not a fixed organization chart", "self-hosting", "Context Capsules", "isolate mutation", "risk", "recover"):
+        for decision in ("Codex-native", "optional configuration", "organization chart", "self-hosting", "task inputs", "isolate writing", "risk", "recover", "first-class workflows"):
             self.assertIn(decision, combined)
-        structure = (PLUGIN / "docs/REPOSITORY-STRUCTURE.md").read_text(encoding="utf-8")
-        self.assertIn("## Migration outcome", structure)
+        self.assertIn("model-executed", context)
+
+    def test_retired_terminology_is_absent_from_user_facing_content(self) -> None:
+        retired = re.compile(
+            r"\b(operator|engagement|workstream|wave|context capsule|join owner|gate|handoff|grounding|drift|consultant|team leader)\b",
+            re.IGNORECASE,
+        )
+        roots = [PLUGIN / "README.md", PLUGIN / "CONTEXT.md", PLUGIN / "docs", PLUGIN / "skills", PLUGIN / "evals"]
+        for root in roots:
+            files = [root] if root.is_file() else list(root.rglob("*.md"))
+            for path in files:
+                self.assertIsNone(retired.search(path.read_text(encoding="utf-8")), path)
 
     def test_repository_cutover_is_complete(self) -> None:
         self.assertTrue((PLUGIN / "config/project.toml").is_file())
         self.assertTrue((PLUGIN / "config/orchestra.config.toml").is_file())
-        self.assertEqual(len(list((PLUGIN / "config/agents").glob("*.toml"))), 5)
+        self.assertEqual(
+            {path.stem for path in (PLUGIN / "config/agents").glob("*.toml")},
+            {"planner", "worker", "reviewer", "verifier"},
+        )
         for retired in (
             "codex-orchestra",
             "codex-orchestra-framework",
@@ -129,7 +150,7 @@ class ScaffoldTests(unittest.TestCase):
     def test_permanent_behavioral_scenarios_cover_required_risks(self) -> None:
         scenario_root = PLUGIN / "evals/scenarios"
         expected = {
-            "bounded-workstreams.md",
+            "bounded-tasks.md",
             "independent-assurance.md",
             "interruption-recovery.md",
             "large-repository-context.md",
@@ -182,7 +203,8 @@ class ScaffoldTests(unittest.TestCase):
             self.assertEqual(lifecycle.install(lifecycle.desired_project(target), target, state, apply=True), 0)
             config = target / ".codex/config.toml"
             config.write_text(config.read_text(encoding="utf-8") + "# local\n", encoding="utf-8")
-            artifact = target / ".codex/orchestra/results/keep.md"
+            artifact = target / ".codex/orchestra/runs/run-001/evidence/keep.md"
+            artifact.parent.mkdir(parents=True)
             artifact.write_text("evidence\n", encoding="utf-8")
             self.assertEqual(lifecycle.uninstall(target, apply=True), 0)
             self.assertTrue(config.exists())

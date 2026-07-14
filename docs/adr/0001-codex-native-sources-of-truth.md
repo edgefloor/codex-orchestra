@@ -2,15 +2,15 @@
 status: accepted
 ---
 
-# Keep Orchestra Codex-native and repository-grounded
+# Keep execution Codex-native and state repository-local
 
-Orchestra is an installable Codex-native operating layer. Skills and custom agents conduct live work through Codex tasks, native collaboration, worktrees, approvals, and ordinary tools; repository artifacts preserve accepted intent, plans, decisions, assignments, results, verification, recovery, and handoffs; Git preserves code and change evidence. Native messages and transcripts are coordination context, not durable truth.
+The active Codex agent executes workflows through native collaboration, worktrees, approvals, and ordinary tools. Workflow definitions, run state, step results, evidence, and summaries are repository artifacts; Git preserves source and change history. Messages and transcripts are coordination context, not durable state.
 
-Do not add an MCP server, App Server client, daemon, external scheduler, event store, SQLite control plane, or separate workflow platform unless a concrete requirement is proven impossible through supported native Codex facilities. This supersedes the legacy R2 external-control-plane and Workflow IR proposals while retaining their useful separation between live coordination, durable work records, and code evidence.
+Do not add an MCP server, App Server client, daemon, sidecar, external scheduler, event database, or separate workflow platform unless a proven requirement cannot be met through supported native Codex capabilities.
 
 ## Consequences
 
-- The installed plugin contains read-only behavior and templates, never live Engagement state.
-- Mutable state is rooted at `<repository>/.codex/orchestra/`.
-- Recovery reconstructs work from repository and Git evidence rather than a transcript or external database.
-- Native capability gaps are recorded and validated before introducing a new integration seam.
+- Installed plugin files are read-only behavior and templates.
+- Mutable state lives under `<repository>/.codex/orchestra/`.
+- Recovery uses repository and Git evidence rather than transcript continuity.
+- Native capability gaps are documented instead of hidden behind unsupported integrations.

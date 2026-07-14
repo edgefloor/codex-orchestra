@@ -1,0 +1,56 @@
+schema_version: "1"
+name: replace-with-workflow-name
+description: State the reusable outcome of this workflow.
+inputs: {}
+limits:
+  max_parallel: 4
+  max_steps: 20
+  max_attempts: 2
+steps:
+  - id: plan
+    type: agent
+    agent: planner
+    instructions: Inspect the requested scope and return a bounded implementation plan.
+    read_only: true
+    worktree: shared
+    write_scope: []
+    outputs: [plan]
+    max_attempts: 1
+  - id: implement
+    type: agent
+    agent: worker
+    needs: [plan]
+    instructions: Implement ${steps.plan.plan} within the declared write scope.
+    read_only: false
+    worktree: isolated
+    write_scope: [src/]
+    outputs: [changed-files, summary, workspace, revision]
+    max_attempts: 2
+  - id: test
+    type: check
+    needs: [implement]
+    workspace_from: implement
+    command: replace-with-project-test-command
+    outputs: [exit-code, evidence]
+  - id: review
+    type: agent
+    agent: reviewer
+    needs: [implement, test]
+    workspace_from: implement
+    instructions: Review the implementation and test evidence independently.
+    read_only: true
+    worktree: shared
+    write_scope: []
+    outputs: [findings, material-finding]
+    max_attempts: 1
+  - id: approve-material-finding
+    type: approval
+    needs: [review]
+    when: ${steps.review.material-finding} == true
+    reason: Decide how to handle ${steps.review.findings}.
+    default: repair
+    decisions:
+      accept: continue
+      repair: revise
+      reject: stop
+    outputs: [decision]

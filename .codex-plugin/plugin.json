@@ -1,24 +1,31 @@
 {
   "name": "codex-orchestra",
-  "version": "0.1.0",
-  "description": "Repository-native orchestration workflows for Codex",
+  "version": "0.1.0+codex.20260714175148",
+  "description": "Reviewable, resumable workflows executed through native Codex agents",
   "author": {
     "name": "Codex Orchestra contributors"
   },
   "license": "MIT",
-  "keywords": ["orchestration", "multi-agent", "delivery"],
+  "keywords": [
+    "orchestration",
+    "multi-agent",
+    "delivery"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Codex Orchestra",
-    "shortDescription": "Coordinate bounded, repository-native Codex delivery.",
-    "longDescription": "Codex-native skills, agent templates, and repository artifacts for planning, delegation, review, verification, recovery, and handoff without an external control plane.",
+    "shortDescription": "Create and run Codex-native workflows.",
+    "longDescription": "Create, review, run, and resume YAML workflows through native Codex agents, checks, worktrees, review, and approvals without an external control plane.",
     "developerName": "Codex Orchestra contributors",
     "category": "Productivity",
-    "capabilities": ["Interactive", "Write"],
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
     "defaultPrompt": [
-      "Orchestrate this repository-native delivery task.",
-      "Ground this project and draft an engagement charter.",
-      "Recover the interrupted Orchestra run."
+      "Create and run a workflow for this repository task.",
+      "Show me a reviewable workflow before executing this change.",
+      "Resume the interrupted Orchestra workflow run."
     ]
   }
 }

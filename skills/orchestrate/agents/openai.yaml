@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestrate Workflow"
+  short_description: "Create, run, or resume a Codex workflow"
+  default_prompt: "Use $orchestrate to coordinate this task as a workflow."

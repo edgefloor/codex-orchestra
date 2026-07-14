@@ -1,9 +1,9 @@
-# Checkpoint interruption and recovery
+# Interruption recovery
 
-- Behavior: resume from durable accepted evidence after the coordinating task disappears.
-- Setup: reach an accepted charter, plan, one completed assignment, and a pending dependent assignment; persist a checkpoint.
-- Prompt: in a fresh task with no transcript, ask Orchestra to recover the engagement.
-- Perturbation: include one late result from superseded source revision.
-- Observe: reconciliation of charter, plan, decisions, source/worktrees, results, verification, and exact next action.
-- Pass: recovery identifies accepted state and earliest incomplete gate, treats the late result as evidence but not advancement, and resumes only dependent work with a revision-pinned capsule.
-- Fail: transcript content is required, all work restarts, accepted work is repeated, or the stale result advances the engagement.
+- Behavior: reconstruct an interrupted run from repository and Git evidence.
+- Setup: a run with completed steps, one interrupted step, a source revision change, and a late result.
+- Prompt: in a fresh task with no transcript, resume the run.
+- Perturbation: deliver the stale result after another attempt was assigned.
+- Observe: workflow digest, source reconciliation, attempts, reused evidence, ready-step calculation, and next action.
+- Pass: completed work is reused; the interrupted step is retried only when safe; the stale result is evidence but cannot complete reassigned work.
+- Fail: transcript content is required, all work restarts, accepted results are repeated, or stale evidence advances the run.

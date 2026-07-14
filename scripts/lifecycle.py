@@ -18,15 +18,9 @@ from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parents[1]
 STATE_DIRS = (
-    "charter",
-    "plans",
-    "decisions",
-    "context",
-    "tasks",
-    "results",
-    "verification",
-    "recovery",
-    "overrides",
+    "workflows",
+    "runs",
+    "install",
 )
 
 
@@ -172,7 +166,7 @@ def uninstall(target: Path, *, apply: bool) -> int:
             print(f"REMOVE {key}")
     for line in conflicts:
         print(line)
-    print("PRESERVE .codex/orchestra/ engagement artifacts")
+    print("PRESERVE .codex/orchestra/ workflow definitions and run artifacts")
     if not apply:
         print("Preview only; rerun with --apply to make these changes.")
         return 0

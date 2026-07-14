@@ -1,14 +1,19 @@
 version: 1
 state_root: .codex/orchestra
 native_only: true
+workflow_format: yaml
 delegation:
-  parent_owns_join: true
+  parent_collects_results: true
   default_fork_turns: none
   leaf_may_spawn: false
-  require_write_boundary: true
+  require_write_scope: true
+limits:
+  max_parallel: 6
+  max_attempts: 3
+  max_repeat_rounds: 5
 assurance:
   independent_review_for_code: true
   evidence_before_acceptance: true
 bootstrap:
-  conductor_must_not_modify_cached_installation: true
+  orchestrator_must_not_modify_cached_installation: true
   preserve_known_good_version: true

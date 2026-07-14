@@ -1,20 +1,17 @@
 ---
 name: orchestrate
-description: Conduct a bounded Codex-native delivery engagement using repository artifacts and native collaboration tools.
+description: Create, run, or resume a reviewable Codex-native workflow. Use when a user asks Orchestra to coordinate a multi-step repository task, delegate bounded work, recover an interrupted run, or apply review and verification stages.
 ---
 
-# Orchestra conductor
+# Orchestrate a workflow
 
-Act as the Operator-facing conductor. Durable state is `.codex/orchestra/`; plugin files are read-only resources.
+Act as the user-facing router. Plugin files are read-only; all workflow definitions and run state belong in the target repository under `.codex/orchestra/`.
 
-1. Run the lifecycle `doctor`, then inspect the earliest incomplete artifact in charter, plans, tasks, results, verification, or recovery.
-2. Ground intent and create a charter before planning implementation. Record reversible defaults; stop only for material authority, scope, safety, budget, or irreversible choices.
-3. Create a delivery plan with bounded workstreams, dependencies, write domains, acceptance, review, and verification expectations.
-4. Form the smallest taskforce. Use native `spawn_agent`, `send_message`, `followup_task`, `wait_agent`, and worktrees when available. Never invent an external scheduler.
-5. Give each child a self-contained context capsule and explicit output path. The parent that spawns a child owns its wait, review, and join.
-6. Require independent review for implementation and independent milestone verification when risk warrants it.
-7. Persist decisions, results, evidence, and recovery checkpoints before handoff or close.
+1. Inspect `.codex/orchestra/runs/` for an incomplete run that matches the request.
+2. If one exists, route to `$codex-orchestra:resume-workflow`.
+3. If the user supplied a workflow or named a reusable workflow, route to `$codex-orchestra:run-workflow`.
+4. Otherwise route to `$codex-orchestra:create-workflow`, show the generated workflow, and obtain any required approval before routing to `$codex-orchestra:run-workflow`.
 
-For a new run, route through `$codex-orchestra:ground-project`, `$codex-orchestra:create-charter`, and `$codex-orchestra:plan-delivery`. For interrupted work, use `$codex-orchestra:recover-run` first.
+Use only native Codex collaboration and ordinary repository tools. Do not start an MCP server, App Server client, daemon, sidecar, or external scheduler. The active Codex agent decides which dependency-ready steps execute next.
 
-Complete when the next operator checkpoint is decision-ready or the accepted engagement is closed with evidence.
+Complete when the workflow is closed with a run summary or paused with an exact user decision or recovery action.

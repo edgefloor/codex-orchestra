@@ -1,9 +1,7 @@
-# Behavioral evaluation protocol
+# Behavioral evaluations
 
-These scenarios test orchestration behavior, not internal implementation. Run them against an installed candidate in a fresh task. Preserve the prompt and Context Capsules, but judge only observable decisions, artifacts, delegation, authority, recovery, and evidence.
+These scenarios test observable workflow behavior against an installed candidate in a fresh Codex task. Internal implementation details do not satisfy them.
 
-For every scenario, record candidate/source revision, Codex version/interface, repository fixture revision, topology and spawn count, timestamps, artifacts, commands, findings, residual risk, and `pass`, `fail`, `blocked`, or `pending`. A `blocked` result names the missing native capability and does not count as pass. Never repair the candidate inside an evaluation attempt; use a new revision and attempt.
+For each scenario, record source revision, workflow snapshot, run state, step results, evidence, elapsed time, spawned agents, user interventions, and residual risk. Fail fast on authority loss, unsafe shared writes, missing evidence, unbounded retries, cache mutation, or transcript-dependent recovery.
 
-Mandatory invariants are fail-fast: Operator authority is preserved, mutable state stays in the target repository, writers have isolated write domains, Reviewer/Verifier remain independent, a failed semantic attempt is not retried unchanged, and recovery does not require a transcript. Non-invariant observations—latency, artifact count, repeated context, spawning, interventions, and clarity—feed the N versus N+1 scorecard.
-
-The standard result uses `assets/templates/VERIFICATION.md` plus these fields: scenario, attempt, setup/perturbation, topology, authority decisions, artifact inventory, deviations, and comparison baseline.
+`workflows/native-vertical-slice.yaml` is the executable self-hosting fixture.

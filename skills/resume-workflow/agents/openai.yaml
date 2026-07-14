@@ -1,0 +1,4 @@
+interface:
+  display_name: "Resume Workflow"
+  short_description: "Resume a durable Orchestra workflow run"
+  default_prompt: "Use $resume-workflow to resume the interrupted run."

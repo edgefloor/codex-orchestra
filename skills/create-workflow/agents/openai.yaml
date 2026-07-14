@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Workflow"
+  short_description: "Create a reviewable Codex workflow file"
+  default_prompt: "Use $create-workflow to create a workflow for this task."

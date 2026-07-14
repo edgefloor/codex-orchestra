@@ -1,63 +1,32 @@
 # Repository structure
 
-## Decision
-
-The repository root is the installable Codex Orchestra plugin. Product source is not wrapped in a second package directory, and retired design prototypes are preserved through Git history rather than shipped beside the plugin.
-
 ```text
-codex-orchestra/
-├── .codex-plugin/plugin.json
-├── .gitignore
-├── AGENTS.md
-├── CONTEXT.md
-├── LICENSE
-├── README.md
-├── pyproject.toml
-├── uv.lock
-├── skills/
-├── config/
-│   ├── project.toml
-│   ├── orchestra.config.toml
-│   └── agents/
-├── assets/
-│   ├── policies/
-│   ├── schemas/
-│   └── templates/
-├── scripts/lifecycle.py
-├── tests/
-├── evals/scenarios/
-└── docs/
-    ├── adr/
-    ├── verification/
-    ├── CONFIGURATION.md
-    ├── INTERACTIVE-VERIFICATION.md
-    ├── LIFECYCLE.md
-    ├── SELF-HOSTING.md
-    └── VALIDATION.md
+.codex-plugin/plugin.json      installable plugin manifest
+skills/                        workflow creation, execution, and recovery behavior
+config/agents/                 optional planner, worker, reviewer, verifier agents
+assets/schemas/                workflow, run-state, and step-result contracts
+assets/templates/              workflow, step-input, run-summary, and verification templates
+assets/policies/               default execution limits and safety rules
+scripts/lifecycle.py           preview-first configuration lifecycle
+scripts/workflow.py            workflow validation and run initialization
+docs/adr/                      architecture decisions
+evals/workflows/               executable workflow fixtures
+evals/scenarios/               behavioral acceptance scenarios
+tests/                         deterministic repository tests
 ```
 
-`config/agents/` is the only custom-agent source. The lifecycle helper maps those files into either repository or global Codex locations. There is no placeholder hooks directory; a hooks surface should appear only with a supported, implemented hook.
+Runtime data is never bundled with the plugin:
 
-## Migration outcome
+```text
+<target-repository>/.codex/orchestra/
+├── workflows/                 reusable project workflows
+├── runs/<run-id>/
+│   ├── workflow.yaml          immutable run snapshot
+│   ├── state.json             durable step state and workflow digest
+│   ├── steps/                 inputs and structured attempt results
+│   ├── evidence/              command and review evidence
+│   └── summary.md             final or paused run summary
+└── install/                   managed configuration lifecycle state
+```
 
-The pre-cutover scaffold is recoverable from Git commit `75e7598`. Its durable architectural content was grounded before removal:
-
-| Durable concern | Permanent home |
-|---|---|
-| Native-only product and durable truth | `docs/adr/0001-codex-native-sources-of-truth.md` |
-| Plugin plus optional configuration installation | `docs/adr/0002-plugin-and-configuration-distribution.md` |
-| Role authority without fixed topology | `docs/adr/0003-role-contracts-not-fixed-topology.md` |
-| Lifecycle and self-hosting | `docs/adr/0004-checkpoint-lifecycle-and-self-hosting.md` |
-| Delegation, joins, and bounded context | `docs/adr/0005-bounded-delegation-and-context.md` |
-| Read parallelism and writer isolation | `docs/adr/0006-parallel-reading-isolated-writing.md` |
-| Risk-derived assurance | `docs/adr/0007-risk-derived-assurance.md` |
-| Drift, recovery, retry, and learning | `docs/adr/0008-drift-recovery-and-framework-learning.md` |
-
-Behavioral knowledge that needs executable evidence lives in `evals/scenarios/`. The repository does not carry forward the legacy SQLite control plane, external App Server design, Workflow IR, fixed role tree, hard-coded model routes, experimental configuration, leases, or the old schema/template catalog.
-
-## Boundaries
-
-- Mutable Engagement state belongs in a target repository at `.codex/orchestra/` and is ignored in this plugin repository by default.
-- Project/global TOML files are templates, not hidden runtime state.
-- Development instructions in `AGENTS.md` are not installed into target repositories.
-- Installed plugin caches are immutable; upgrades use a newly packaged candidate and a fresh Codex task.
+Configuration templates are separate from plugin installation. Users may install them per repository, as a selectable global profile, or deliberately reconcile them into their global default.

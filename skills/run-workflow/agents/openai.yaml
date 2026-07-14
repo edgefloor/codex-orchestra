@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Workflow"
+  short_description: "Run a workflow with native Codex agents"
+  default_prompt: "Use $run-workflow to execute this workflow."
