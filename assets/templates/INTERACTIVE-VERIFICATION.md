@@ -22,6 +22,8 @@
 | Canonical V2 task paths/activity | pending | |
 | Explicit model/reasoning visible | pending | |
 | Approval and cancellation behavior | pending | |
+| Accepted patch promoted unstaged; rejection leaves target unchanged | pending | |
+| Promotion conflict preserves target and resumes from shared worktree | pending | |
 | Transcript-free recovery | pending | |
 | Installed cache remains byte-identical | pending | |
 

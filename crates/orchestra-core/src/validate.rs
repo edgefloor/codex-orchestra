@@ -75,7 +75,31 @@ pub fn validate_plan(plan: &ExecutionPlan) -> Vec<ValidationError> {
             Action::Check(check) if check.command.is_empty() => {
                 push(&mut errors, &format!("{path}.command"), "must not be empty")
             }
-            Action::Approval(_) => {}
+            Action::Approval(approval) => {
+                if approval.choices.is_empty() {
+                    push(
+                        &mut errors,
+                        &format!("{path}.choices"),
+                        "must include a continuing choice",
+                    );
+                }
+                let mut choices = BTreeSet::new();
+                for choice in &approval.choices {
+                    if choice.trim().is_empty() {
+                        push(
+                            &mut errors,
+                            &format!("{path}.choices"),
+                            "must not include an empty choice",
+                        );
+                    } else if !choices.insert(choice) {
+                        push(
+                            &mut errors,
+                            &format!("{path}.choices"),
+                            "must not include duplicate choices",
+                        );
+                    }
+                }
+            }
             Action::Check(_) => {}
         }
     }
@@ -225,6 +249,31 @@ mod tests {
                 .iter()
                 .any(|error| error.message.contains("unknown dependency"))
         );
+    }
+
+    #[test]
+    fn approval_requires_a_unique_nonempty_continuing_choice() {
+        let approval = |choices: Vec<&str>| Step {
+            id: "accept".into(),
+            needs: vec![],
+            max_attempts: 1,
+            repeat: None,
+            worktree: WorktreePolicy::Shared,
+            write_scope: vec![],
+            action: Action::Approval(crate::ApprovalStep {
+                prompt: "Accept?".into(),
+                choices: choices.into_iter().map(Into::into).collect(),
+            }),
+        };
+        for choices in [vec![], vec![""], vec!["accept", "accept"]] {
+            let errors = validate_plan(&ExecutionPlan {
+                name: "approval".into(),
+                description: String::new(),
+                max_parallel: 1,
+                steps: vec![approval(choices)],
+            });
+            assert!(errors.iter().any(|error| error.path.ends_with("choices")));
+        }
     }
 
     #[test]

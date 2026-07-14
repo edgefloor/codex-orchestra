@@ -18,7 +18,9 @@
 
 **Checkpoint**: Atomic runtime state recording attempts, rounds, statuses, context hashes, validated outputs, evidence, and approvals.
 
-**Approval**: An explicit human decision that pauses a run and can be supplied only during resume.
+**Approval**: An explicit human decision that pauses a run. The first declared choice continues an accepted run; any other declared choice rejects and cancels it.
+
+**Promotion**: Conflict-checked application of the aggregate verified isolated-worktree patch into the target checkout after every step and approval succeeds.
 
 **Run summary**: The transcript-independent terminal or paused record under `.codex/orchestra/runs/<run-id>/summary.md`.
 
@@ -30,4 +32,5 @@
 - `fork_turns` defaults to `none`; exact declared context replaces the parent transcript.
 - Models and reasoning settings are step data, not fixed role personalities.
 - Installed plugin and runtime artifacts are immutable. Mutable snapshots and state live only in the target repository.
+- Verified isolated changes reach the target checkout only after successful checks and acceptance; rejection or a promotion conflict never overwrites target files.
 - Stock Codex cannot load this Rust extension dynamically today; the pinned integration patch is explicit and temporary.

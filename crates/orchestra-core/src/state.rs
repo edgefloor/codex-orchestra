@@ -15,6 +15,15 @@ pub enum RunStatus {
     Cancelled,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromotionStatus {
+    #[default]
+    Pending,
+    Applied,
+    NotRequired,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StepStatus {
@@ -71,6 +80,8 @@ pub struct RunCheckpoint {
     pub repository: PathBuf,
     pub source_revision: String,
     pub status: RunStatus,
+    #[serde(default)]
+    pub promotion: PromotionStatus,
     pub steps: BTreeMap<String, StepCheckpoint>,
     pub next_action: String,
 }
@@ -96,13 +107,14 @@ impl RunStore {
         let store = Self { root };
         atomic_json(&store.root.join("workflow.json"), plan)?;
         let checkpoint = RunCheckpoint {
-            schema_version: 1,
+            schema_version: 2,
             run_id: run_id.into(),
             workflow_sha256: workflow_sha256.into(),
             parent_thread_id: parent_thread_id.into(),
             repository: repository.to_path_buf(),
             source_revision,
             status: RunStatus::Pending,
+            promotion: PromotionStatus::Pending,
             steps: plan
                 .steps
                 .iter()
@@ -160,6 +172,11 @@ impl RunStore {
             .root
             .join("evidence/changes")
             .join(format!("{step_id}-{attempt}.patch"));
+        atomic_write(&path, patch)?;
+        Ok(path)
+    }
+    pub fn promotion_patch(&self, patch: &[u8]) -> Result<PathBuf, std::io::Error> {
+        let path = self.root.join("evidence/changes/promoted.patch");
         atomic_write(&path, patch)?;
         Ok(path)
     }

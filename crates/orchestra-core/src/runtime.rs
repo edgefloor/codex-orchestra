@@ -1,8 +1,8 @@
 use crate::context::materialize_context;
 use crate::state::RunStore;
 use crate::{
-    Action, AgentHandle, AgentStatus, ExecutionPlan, NativeHost, RunCheckpoint, RunStatus,
-    SpawnRequest, Step, StepOutputs, StepStatus, validate_plan,
+    Action, AgentHandle, AgentStatus, ExecutionPlan, NativeHost, PromotionStatus, RunCheckpoint,
+    RunStatus, SpawnRequest, Step, StepOutputs, StepStatus, validate_plan,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -119,6 +119,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
             });
         }
         let mut approval_decision = approval_decision;
+        let mut rejected_approval = None;
         for step in &plan.steps {
             let state = checkpoint
                 .steps
@@ -127,9 +128,20 @@ impl<H: NativeHost> OrchestraRuntime<H> {
             if state.status == StepStatus::WaitingApproval
                 && let Some(decision) = approval_decision.take()
             {
+                let Action::Approval(spec) = &step.action else {
+                    unreachable!()
+                };
+                validate_approval_decision(step, spec, decision)?;
                 state.approval_decision = Some(decision.to_string());
                 state.status = StepStatus::Completed;
                 store.approval(&step.id, decision)?;
+                if spec
+                    .choices
+                    .first()
+                    .is_some_and(|choice| choice != decision)
+                {
+                    rejected_approval = Some(step.id.clone());
+                }
                 continue;
             }
             if matches!(
@@ -145,6 +157,15 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                     state.status = StepStatus::Pending;
                 }
             }
+        }
+        if let Some(step_id) = rejected_approval {
+            checkpoint.status = RunStatus::Cancelled;
+            checkpoint.promotion = PromotionStatus::NotRequired;
+            checkpoint.next_action = format!("approval `{step_id}` rejected the verified result");
+            store.save(&checkpoint)?;
+            store.summary(&summary(&checkpoint))?;
+            self.cleanup_shared_worktree(&checkpoint).await?;
+            return Ok(RunOutcome::Cancelled(checkpoint));
         }
         checkpoint.status = RunStatus::Running;
         checkpoint.next_action = "resume dependency-ready steps from checkpoint".into();
@@ -275,10 +296,22 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                     .map_err(RunError::Host)?
                 {
                     Some(decision) => {
+                        validate_approval_decision(&approval, spec, &decision)?;
                         let state = checkpoint.steps.get_mut(&approval.id).unwrap();
                         state.approval_decision = Some(decision.clone());
                         state.status = StepStatus::Completed;
                         store.approval(&approval.id, &decision)?;
+                        if spec
+                            .choices
+                            .first()
+                            .is_some_and(|choice| choice != &decision)
+                        {
+                            checkpoint.status = RunStatus::Cancelled;
+                            checkpoint.promotion = PromotionStatus::NotRequired;
+                            checkpoint.next_action =
+                                format!("approval `{}` rejected the verified result", approval.id);
+                            break;
+                        }
                         checkpoint.status = RunStatus::Running;
                         checkpoint.next_action = "continue after approval".into();
                         store.save(&checkpoint)?;
@@ -451,7 +484,24 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         }
 
         self.active.lock().await.remove(&checkpoint.run_id);
+        let mut promotion_failed = false;
+        if checkpoint.status == RunStatus::Completed
+            && checkpoint.promotion == PromotionStatus::Pending
+        {
+            match self.promote_verified_changes(&store, &checkpoint).await {
+                Ok(status) => {
+                    checkpoint.promotion = status;
+                    store.save(&checkpoint)?;
+                }
+                Err(error) => {
+                    checkpoint.status = RunStatus::Failed;
+                    checkpoint.next_action = format!("promote verified changes: {error}");
+                    promotion_failed = true;
+                }
+            }
+        }
         if checkpoint.status != RunStatus::WaitingApproval
+            && !promotion_failed
             && let Err(error) = self.cleanup_shared_worktree(&checkpoint).await
         {
             checkpoint.status = RunStatus::Failed;
@@ -540,6 +590,84 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                 .map_err(RunError::Host)?;
         }
         Ok(())
+    }
+
+    async fn promote_verified_changes(
+        &self,
+        store: &RunStore,
+        checkpoint: &RunCheckpoint,
+    ) -> Result<PromotionStatus, String> {
+        let shared = shared_worktree_path(&checkpoint.repository, &checkpoint.run_id);
+        if !shared.exists() {
+            return Ok(PromotionStatus::NotRequired);
+        }
+        let diff = self
+            .host
+            .run_command(
+                &checkpoint.parent_thread_id,
+                &shared,
+                &[
+                    "git".into(),
+                    "diff".into(),
+                    "--cached".into(),
+                    "--binary".into(),
+                    "--full-index".into(),
+                    "--no-color".into(),
+                ],
+                Some(&shared),
+                120_000,
+            )
+            .await?;
+        if diff.exit_code != 0 {
+            return Err(format!("failed to collect verified patch: {}", diff.stderr));
+        }
+        if diff.stdout.is_empty() {
+            return Ok(PromotionStatus::NotRequired);
+        }
+        let patch_path = store
+            .promotion_patch(diff.stdout.as_bytes())
+            .map_err(|error| format!("failed to persist verified patch: {error}"))?;
+        let patch = patch_path.to_string_lossy().into_owned();
+        let check = self.run_git_apply(checkpoint, &["--check", &patch]).await?;
+        if check.exit_code != 0 {
+            let reverse = self
+                .run_git_apply(checkpoint, &["--reverse", "--check", &patch])
+                .await?;
+            if reverse.exit_code == 0 {
+                return Ok(PromotionStatus::Applied);
+            }
+            return Err(format!(
+                "target checkout no longer accepts the verified patch: {}",
+                check.stderr.trim()
+            ));
+        }
+        let applied = self.run_git_apply(checkpoint, &[&patch]).await?;
+        if applied.exit_code == 0 {
+            Ok(PromotionStatus::Applied)
+        } else {
+            Err(format!(
+                "failed to apply verified patch to target checkout: {}",
+                applied.stderr.trim()
+            ))
+        }
+    }
+
+    async fn run_git_apply(
+        &self,
+        checkpoint: &RunCheckpoint,
+        arguments: &[&str],
+    ) -> Result<crate::CommandOutcome, String> {
+        let mut argv = vec!["git".into(), "apply".into()];
+        argv.extend(arguments.iter().map(|argument| (*argument).to_string()));
+        self.host
+            .run_command(
+                &checkpoint.parent_thread_id,
+                &checkpoint.repository,
+                &argv,
+                Some(&checkpoint.repository),
+                120_000,
+            )
+            .await
     }
 }
 
@@ -797,6 +925,21 @@ fn shared_worktree_path(repository: &Path, run_id: &str) -> PathBuf {
         .join(".codex/orchestra/worktrees")
         .join(format!("{run_id}-shared"))
 }
+fn validate_approval_decision(
+    step: &Step,
+    spec: &crate::ApprovalStep,
+    decision: &str,
+) -> Result<(), RunError> {
+    if spec.choices.iter().any(|choice| choice == decision) {
+        Ok(())
+    } else {
+        Err(RunError::Validation(format!(
+            "approval `{}` decision `{decision}` is not one of: {}",
+            step.id,
+            spec.choices.join(", ")
+        )))
+    }
+}
 fn git_revision(repository: &Path) -> Result<String, std::io::Error> {
     let snapshot = std::process::Command::new("git")
         .arg("-C")
@@ -836,6 +979,7 @@ fn summary(checkpoint: &RunCheckpoint) -> String {
         text.push('\n');
     }
     text.push_str(&format!("\nNext action: {}\n", checkpoint.next_action));
+    text.push_str(&format!("Promotion: `{:?}`\n", checkpoint.promotion));
     text
 }
 
@@ -1147,6 +1291,43 @@ mod tests {
         }
     }
 
+    fn isolated_integration_plan() -> ExecutionPlan {
+        let mut implement = agent("implement", vec![]);
+        implement.worktree = WorktreePolicy::Isolated;
+        implement.write_scope = vec!["scope/".into()];
+        let check = Step {
+            id: "verify".into(),
+            needs: vec!["implement".into()],
+            max_attempts: 1,
+            repeat: None,
+            worktree: WorktreePolicy::Shared,
+            write_scope: vec![],
+            action: Action::Check(crate::CheckStep {
+                command: vec!["assert-integrated".into()],
+                cwd: None,
+                timeout_ms: 1000,
+            }),
+        };
+        let approval = Step {
+            id: "accept".into(),
+            needs: vec!["verify".into()],
+            max_attempts: 1,
+            repeat: None,
+            worktree: WorktreePolicy::Shared,
+            write_scope: vec![],
+            action: Action::Approval(crate::ApprovalStep {
+                prompt: "accept?".into(),
+                choices: vec!["accept".into(), "reject".into()],
+            }),
+        };
+        ExecutionPlan {
+            name: "integrate".into(),
+            description: String::new(),
+            max_parallel: 1,
+            steps: vec![implement, check, approval],
+        }
+    }
+
     #[tokio::test]
     async fn schedules_parallel_agents_with_explicit_native_settings() {
         let host = FakeHost::new(vec![r#"{"ok":true}"#, r#"{"ok":true}"#]);
@@ -1450,52 +1631,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn isolated_changes_are_verified_in_shared_worktree_then_cleaned_up() {
+    async fn isolated_changes_are_verified_promoted_and_worktrees_cleaned_up() {
         let runtime = OrchestraRuntime::new(GitHost {
             response: r#"{"ok":true}"#.into(),
             workspaces: Mutex::new(HashMap::new()),
         });
         let dir = committed_repo();
-        let mut implement = agent("implement", vec![]);
-        implement.worktree = WorktreePolicy::Isolated;
-        implement.write_scope = vec!["scope/".into()];
-        let check = Step {
-            id: "verify".into(),
-            needs: vec!["implement".into()],
-            max_attempts: 1,
-            repeat: None,
-            worktree: WorktreePolicy::Shared,
-            write_scope: vec![],
-            action: Action::Check(crate::CheckStep {
-                command: vec!["assert-integrated".into()],
-                cwd: None,
-                timeout_ms: 1000,
-            }),
-        };
-        let approval = Step {
-            id: "accept".into(),
-            needs: vec!["verify".into()],
-            max_attempts: 1,
-            repeat: None,
-            worktree: WorktreePolicy::Shared,
-            write_scope: vec![],
-            action: Action::Approval(crate::ApprovalStep {
-                prompt: "accept?".into(),
-                choices: vec!["accept".into(), "reject".into()],
-            }),
-        };
 
         let RunOutcome::Paused(state) = runtime
-            .run(
-                dir.path(),
-                "parent",
-                ExecutionPlan {
-                    name: "integrate".into(),
-                    description: String::new(),
-                    max_parallel: 1,
-                    steps: vec![implement, check, approval],
-                },
-            )
+            .run(dir.path(), "parent", isolated_integration_plan())
             .await
             .unwrap()
         else {
@@ -1503,6 +1647,7 @@ mod tests {
         };
         let worktrees = dir.path().join(".codex/orchestra/worktrees");
         assert_eq!(state.steps["verify"].outputs["passed"], Value::Bool(true));
+        assert!(!dir.path().join("scope/change.txt").exists());
         assert_eq!(
             std::fs::read_to_string(
                 worktrees
@@ -1525,14 +1670,129 @@ mod tests {
                 .is_file()
         );
 
-        assert!(matches!(
-            runtime
-                .resume_with_approval(dir.path(), &state.run_id, Some("reject"))
-                .await
-                .unwrap(),
-            RunOutcome::Completed(_)
-        ));
+        let RunOutcome::Completed(completed) = runtime
+            .resume_with_approval(dir.path(), &state.run_id, Some("accept"))
+            .await
+            .unwrap()
+        else {
+            panic!("accepted verified changes should complete")
+        };
+        assert_eq!(completed.promotion, PromotionStatus::Applied);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("scope/change.txt")).unwrap(),
+            "integrated\n"
+        );
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["status", "--short", "--", "scope"])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&status.stdout), "?? scope/\n");
+        assert!(
+            dir.path()
+                .join(".codex/orchestra/runs")
+                .join(&state.run_id)
+                .join("evidence/changes/promoted.patch")
+                .is_file()
+        );
         assert!(!worktrees.join(format!("{}-shared", state.run_id)).exists());
+    }
+
+    #[tokio::test]
+    async fn rejected_verified_changes_are_not_promoted() {
+        let runtime = OrchestraRuntime::new(GitHost {
+            response: r#"{"ok":true}"#.into(),
+            workspaces: Mutex::new(HashMap::new()),
+        });
+        let dir = committed_repo();
+        let RunOutcome::Paused(state) = runtime
+            .run(dir.path(), "parent", isolated_integration_plan())
+            .await
+            .unwrap()
+        else {
+            panic!("run should pause for approval")
+        };
+
+        let error = runtime
+            .resume_with_approval(dir.path(), &state.run_id, Some("maybe"))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("is not one of"));
+        assert_eq!(
+            runtime
+                .status(dir.path(), &state.run_id)
+                .await
+                .unwrap()
+                .status,
+            RunStatus::WaitingApproval
+        );
+
+        let RunOutcome::Cancelled(cancelled) = runtime
+            .resume_with_approval(dir.path(), &state.run_id, Some("reject"))
+            .await
+            .unwrap()
+        else {
+            panic!("rejecting verified changes should cancel the run")
+        };
+        assert_eq!(cancelled.promotion, PromotionStatus::NotRequired);
+        assert!(!dir.path().join("scope/change.txt").exists());
+        assert!(
+            !dir.path()
+                .join(".codex/orchestra/worktrees")
+                .join(format!("{}-shared", state.run_id))
+                .exists()
+        );
+    }
+
+    #[tokio::test]
+    async fn promotion_conflict_preserves_target_and_shared_worktree_for_retry() {
+        let runtime = OrchestraRuntime::new(GitHost {
+            response: r#"{"ok":true}"#.into(),
+            workspaces: Mutex::new(HashMap::new()),
+        });
+        let dir = committed_repo();
+        let RunOutcome::Paused(state) = runtime
+            .run(dir.path(), "parent", isolated_integration_plan())
+            .await
+            .unwrap()
+        else {
+            panic!("run should pause for approval")
+        };
+        std::fs::create_dir_all(dir.path().join("scope")).unwrap();
+        std::fs::write(dir.path().join("scope/change.txt"), "user change\n").unwrap();
+
+        let RunOutcome::Failed(failed) = runtime
+            .resume_with_approval(dir.path(), &state.run_id, Some("accept"))
+            .await
+            .unwrap()
+        else {
+            panic!("a target conflict must fail promotion")
+        };
+        assert_eq!(failed.promotion, PromotionStatus::Pending);
+        assert!(failed.next_action.contains("target checkout"));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("scope/change.txt")).unwrap(),
+            "user change\n"
+        );
+        let shared = dir
+            .path()
+            .join(".codex/orchestra/worktrees")
+            .join(format!("{}-shared", state.run_id));
+        assert!(shared.exists());
+
+        std::fs::remove_file(dir.path().join("scope/change.txt")).unwrap();
+        let RunOutcome::Completed(completed) =
+            runtime.resume(dir.path(), &state.run_id).await.unwrap()
+        else {
+            panic!("promotion should retry from the retained shared worktree")
+        };
+        assert_eq!(completed.promotion, PromotionStatus::Applied);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("scope/change.txt")).unwrap(),
+            "integrated\n"
+        );
+        assert!(!shared.exists());
     }
 
     #[test]

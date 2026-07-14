@@ -32,7 +32,7 @@ export interface CheckStep extends CommonStep {
 
 export interface ApprovalStep extends CommonStep {
   prompt: string;
-  choices?: string[];
+  choices: string[];
 }
 
 export interface RepeatPolicy {
@@ -60,4 +60,3 @@ export declare function pipeline(steps: StepNode[]): StepNode;
 export declare function worktree(step: StepNode, policy: "shared" | "isolated"): StepNode;
 export declare function repeat(step: StepNode, policy: RepeatPolicy): StepNode;
 export declare function ref(path: `steps.${string}.outputs.${string}`): string;
-

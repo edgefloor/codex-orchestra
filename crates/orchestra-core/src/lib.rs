@@ -16,5 +16,5 @@ pub use context::{ContextBundle, ContextError, materialize_context};
 pub use host::{AgentHandle, AgentOutcome, AgentStatus, CommandOutcome, NativeHost, SpawnRequest};
 pub use plan::*;
 pub use runtime::{OrchestraRuntime, RunError, RunOutcome};
-pub use state::{RunCheckpoint, RunStatus, StepCheckpoint, StepStatus};
+pub use state::{PromotionStatus, RunCheckpoint, RunStatus, StepCheckpoint, StepStatus};
 pub use validate::{ValidationError, validate_plan};

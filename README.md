@@ -172,7 +172,7 @@ approval({
 });
 ```
 
-The native adapter currently returns the pause to the caller. Resume the run with an explicit `approval_decision` only after the user decides. The runtime records the supplied string but does not yet enforce that it appears in `choices`.
+The native adapter currently returns the pause to the caller. Resume the run with an explicit `approval_decision` only after the user decides. The decision must exactly match a unique, nonempty declared choice. The first choice continues the run; every other choice rejects the result and cancels the run without promotion.
 
 ### Pipelines, parallel steps, and dependencies
 
@@ -212,8 +212,7 @@ worktree(
 
 Concurrent writers with overlapping path prefixes fail validation unless both use isolated worktrees. For isolated agent steps, Orchestra also rejects a completed change set containing paths outside the declared `write_scope`. This is a runtime validation boundary, not an operating-system write restriction while the agent is running.
 
-> [!WARNING]
-> Isolated changes are captured as durable patches, integrated serially into the shared run worktree, and verified there before approval. Terminal cleanup still removes the shared worktree without promoting it into the target checkout. Use the persisted patch under the run's `evidence/changes/` directory until automatic change promotion is implemented.
+Isolated changes are captured as durable patches, integrated serially into the shared run worktree, and verified there before approval. Once the run completes with the first approval choice, Orchestra persists an aggregate `promoted.patch`, checks that it applies cleanly, and applies it to the target checkout without staging it. A conflict fails promotion without changing target files and retains the shared worktree so `orchestra_resume` can retry. Rejection cleans up without promotion.
 
 An unborn repository can use the shared checkout directly. Isolated worktrees require a committed source revision.
 
@@ -327,7 +326,7 @@ export default workflow({
 });
 ```
 
-`pipeline` supplies the dependencies in this example. The implementation step receives structured output through context rather than transcript inheritance. The run pauses at `accept` and resumes only when the caller passes a decision. Remember that the current adapter does not promote the isolated implementation worktree into the target checkout.
+`pipeline` supplies the dependencies in this example. The implementation step receives structured output through context rather than transcript inheritance. The run pauses at `accept` and resumes only when the caller passes a declared decision. `accept`, the first choice, completes the run and promotes the verified patch; `reject` cancels and cleans up without touching the target checkout.
 
 ## Shipped workflows and templates
 
@@ -388,9 +387,10 @@ stateDiagram-v2
     [*] --> pending
     pending --> running: orchestra_run
     running --> waiting_approval: approval step
-    waiting_approval --> running: orchestra_resume with decision
-    running --> completed: all steps complete
-    running --> failed: step or scheduling failure
+    waiting_approval --> running: first approval choice
+    waiting_approval --> cancelled: any other approval choice
+    running --> completed: all steps complete and promotion succeeds
+    running --> failed: step, scheduling, or promotion failure
     running --> cancelled: orchestra_cancel
     waiting_approval --> cancelled: orchestra_cancel
 ```
@@ -403,7 +403,8 @@ The Rust runtime owns every transition:
 4. Materialize context and create the requested worktree.
 5. Spawn agents or run checks through the native host.
 6. Validate outputs and atomically save state after transitions.
-7. Pause for approvals, retry within bounds, or write a terminal summary.
+7. Pause for approvals or retry within bounds.
+8. Promote the aggregate verified patch after acceptance, clean up, and write the terminal summary.
 
 ### Resume, cancellation, and cleanup
 
@@ -413,7 +414,7 @@ A failed run is eligible for resume, but already failed steps remain failed in t
 
 `orchestra_cancel` asks active native child tasks to cancel, marks active or waiting steps cancelled, saves a summary, and removes the shared worktree. Cancelling a completed, failed, or already cancelled run is idempotent and returns its current checkpoint.
 
-Isolated worktrees are removed after their step finishes. The shared worktree remains while a run is waiting for approval and is removed after terminal completion, failure, or cancellation. Worktree removal errors during cleanup are currently ignored.
+Isolated worktrees are removed after their step finishes. The shared worktree remains while a run is waiting for approval and is removed after completion, rejection, ordinary failure, or cancellation. A promotion conflict retains it for retry. Cleanup errors fail the run instead of being ignored.
 
 ## Run artifacts
 
@@ -425,11 +426,13 @@ All mutable runtime state belongs to the target repository:
 ├── state.json                      atomic run checkpoint
 ├── outputs/<step-id>.json          validated step outputs
 ├── evidence/checks/<step>-<n>.json command, timeout, exit code, stdout, stderr
+├── evidence/changes/<step>-<n>.patch isolated attempt patches
+├── evidence/changes/promoted.patch aggregate verified promotion patch
 ├── approvals/<step-id>.json        explicit approval decision
 └── summary.md                      paused or terminal summary
 ```
 
-The checkpoint records the workflow hash, parent task, repository, source revision, run status, per-step attempts and rounds, context hashes, outputs, errors, agent handles, and next action. Files are written through temporary files and atomic rename.
+The checkpoint records the workflow hash, parent task, repository, source revision, run and promotion status, per-step attempts and rounds, context hashes, outputs, errors, agent handles, and next action. Files are written through temporary files and atomic rename.
 
 Installed plugin files and the custom runtime contain no mutable run state. Uninstall preserves `.codex/orchestra/runs/`.
 
@@ -479,7 +482,7 @@ Installed plugin files and the custom runtime contain no mutable run state. Unin
 | Field | Type | Required | Default |
 | --- | --- | --- | --- |
 | `prompt` | `string` | Yes | — |
-| `choices` | `string[]` | No | `[]` |
+| `choices` | `string[]` | Yes | — | Unique, nonempty values; the first continues and the rest reject |
 
 ### Repeat policy
 
@@ -562,9 +565,7 @@ Implementations must preserve parent-task lineage, return final agent responses,
 
 - Stock Codex cannot dynamically load the Rust extension; the pinned integration patch is required.
 - The repository does not yet automate connecting the custom App Server build to a Codex client.
-- Verified worktree changes are persisted as patches but are not automatically promoted into the target checkout.
 - `ref()` and template output markers are not expanded at runtime; use `dependency_output` context.
-- Approval choices are not enforced against the decision passed to resume.
 - Interactive UI rendering, provider-backed child completion, approval flow, cancellation, and transcript-free recovery remain recorded as human-only pending checks in [`docs/verification/2026-07-14-interactive-baseline.md`](docs/verification/2026-07-14-interactive-baseline.md).
 
 These constraints are tracked explicitly rather than hidden behind an alternate runtime.

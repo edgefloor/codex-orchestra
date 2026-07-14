@@ -22,9 +22,9 @@ Runtime-owned target-repository data:
 ├── state.json                      atomic checkpoint and hashes
 ├── outputs/<step>.json             validated outputs
 ├── evidence/checks/                command evidence
-├── evidence/changes/               isolated change patches applied before checks
+├── evidence/changes/               isolated patches plus the aggregate promoted.patch
 ├── approvals/                      explicit decisions
 └── summary.md                      paused or terminal summary
 ```
 
-Temporary worktrees may exist under `.codex/orchestra/worktrees/` while a run is active and are removed by the runtime. No workflow engine or mutable state is stored in the installed plugin cache.
+Temporary worktrees may exist under `.codex/orchestra/worktrees/` while a run is active. They are removed after success, rejection, cancellation, or ordinary failure; a shared worktree is retained after a promotion conflict so resume can retry. No workflow engine or mutable state is stored in the installed plugin cache.

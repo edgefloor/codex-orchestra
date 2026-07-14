@@ -14,11 +14,11 @@ Using the Orchestra-enabled Codex build, confirm `orchestra_validate`, `orchestr
 
 ## Stage 3 — V2 vertical slice
 
-Run `evals/workflows/native-vertical-slice.workflow.ts`. Observe canonical child task paths, explicit model/reasoning, no parent transcript for `fork_turns: none`, parallel activity, V2 completion, isolated changes present in the shared worktree before the sandboxed check, approval pause, isolated and terminal shared-worktree cleanup, and final summary.
+Run `evals/workflows/native-vertical-slice.workflow.ts`. Observe canonical child task paths, explicit model/reasoning, no parent transcript for `fork_turns: none`, parallel activity, V2 completion, isolated changes present in the shared worktree before the sandboxed check, approval pause, accepted promotion into the target checkout as unstaged changes, isolated and terminal shared-worktree cleanup, and final summary.
 
 ## Stage 4 — recovery and self-hosting
 
-Interrupt a run, resume it from a fresh task, and verify checkpoint reconciliation. Use an installed version to validate a source-checkout candidate without changing the installed cache; promote only after all required checks and approval pass.
+Interrupt a run, resume it from a fresh task, and verify checkpoint reconciliation. Create a conflicting target edit and verify promotion preserves it, retains the shared worktree, and succeeds after the conflict is resolved and the run is resumed. Use an installed version to validate a source-checkout candidate without changing the installed cache; promote only after all required checks and approval pass.
 
 ## Human-only evidence
 
