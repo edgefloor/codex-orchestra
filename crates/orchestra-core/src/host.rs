@@ -15,6 +15,7 @@ pub struct SpawnRequest {
     pub parent_thread_id: String,
     pub task_name: String,
     pub prompt: String,
+    pub cwd: PathBuf,
     pub model: String,
     pub reasoning_effort: Option<String>,
     pub service_tier: Option<String>,
@@ -65,6 +66,7 @@ pub trait NativeHost: Send + Sync + 'static {
         run_id: &str,
         step_id: &str,
         policy: &WorktreePolicy,
+        source_revision: &str,
     ) -> Result<PathBuf, String>;
     async fn remove_worktree(
         &self,

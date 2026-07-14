@@ -57,11 +57,16 @@ fn legacy_python_yaml_runtime_and_fixed_roles_are_removed() {
     ] {
         assert!(!root.join(path).exists(), "{path}");
     }
-    let agents = fs::read_dir(root.join("config/agents"))
-        .unwrap()
-        .flatten()
-        .filter(|entry| entry.path().extension().and_then(|value| value.to_str()) == Some("toml"))
-        .count();
+    let agents = match fs::read_dir(root.join("config/agents")) {
+        Ok(entries) => entries
+            .flatten()
+            .filter(|entry| {
+                entry.path().extension().and_then(|value| value.to_str()) == Some("toml")
+            })
+            .count(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(error) => panic!("failed to inspect config/agents: {error}"),
+    };
     assert_eq!(agents, 0);
     assert!(
         root.join("evals/workflows/native-vertical-slice.workflow.ts")
@@ -280,11 +285,13 @@ fn upgrade_is_reversible_and_rollback_refuses_post_upgrade_edits() {
 
 #[test]
 fn source_and_versioned_cache_layouts_are_valid() {
-    let root = root();
     let manifest = manifest();
     let name = manifest["name"].as_str().unwrap();
     let version = manifest["version"].as_str().unwrap();
-    assert!(plugin_layout_matches_manifest(&root, name, version));
+    let temp = tempdir().unwrap();
+    let source = temp.path().join(name);
+    fs::create_dir(&source).unwrap();
+    assert!(plugin_layout_matches_manifest(&source, name, version));
     let cache = PathBuf::from("/tmp").join(name).join(version);
     assert!(plugin_layout_matches_manifest(&cache, name, version));
 }

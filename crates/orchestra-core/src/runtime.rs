@@ -165,15 +165,35 @@ impl<H: NativeHost> OrchestraRuntime<H> {
             }
         }
         let (store, _, mut checkpoint) = RunStore::open(repository, run_id)?;
+        if matches!(
+            checkpoint.status,
+            RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled
+        ) {
+            return Ok(checkpoint);
+        }
         checkpoint.status = RunStatus::Cancelled;
         checkpoint.next_action = "run cancelled".into();
         for step in checkpoint.steps.values_mut() {
-            if matches!(step.status, StepStatus::Running | StepStatus::Retrying) {
+            if matches!(
+                step.status,
+                StepStatus::Running | StepStatus::Retrying | StepStatus::WaitingApproval
+            ) {
                 step.status = StepStatus::Cancelled;
             }
         }
         store.save(&checkpoint)?;
         store.summary(&summary(&checkpoint))?;
+        let shared_worktree = shared_worktree_path(&checkpoint.repository, &checkpoint.run_id);
+        if shared_worktree.exists() {
+            let _ = self
+                .host
+                .remove_worktree(
+                    &checkpoint.parent_thread_id,
+                    &checkpoint.repository,
+                    &shared_worktree,
+                )
+                .await;
+        }
         Ok(checkpoint)
     }
 
@@ -273,8 +293,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                         continue;
                     }
                     None => {
-                        self.active.lock().await.remove(&checkpoint.run_id);
-                        return Ok(RunOutcome::Paused(checkpoint));
+                        break;
                     }
                 }
             }
@@ -288,13 +307,37 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                 let state = checkpoint.steps.get_mut(&step.id).unwrap();
                 state.status = StepStatus::Running;
                 state.attempts += 1;
-                let context = match &step.action {
-                    Action::Agent(agent) => materialize_context(
+                let workspace = self
+                    .host
+                    .create_worktree(
+                        &checkpoint.parent_thread_id,
                         &checkpoint.repository,
-                        &agent.context,
-                        &dependency_outputs,
+                        &checkpoint.run_id,
+                        &step.id,
+                        &step.worktree,
+                        &checkpoint.source_revision,
                     )
-                    .map_err(|e| RunError::Host(e.to_string()))?,
+                    .await
+                    .map_err(RunError::Host)?;
+                let context = match &step.action {
+                    Action::Agent(agent) => {
+                        match materialize_context(&workspace, &agent.context, &dependency_outputs) {
+                            Ok(context) => context,
+                            Err(error) => {
+                                if step.worktree == crate::WorktreePolicy::Isolated {
+                                    let _ = self
+                                        .host
+                                        .remove_worktree(
+                                            &checkpoint.parent_thread_id,
+                                            &checkpoint.repository,
+                                            &workspace,
+                                        )
+                                        .await;
+                                }
+                                return Err(RunError::Host(error.to_string()));
+                            }
+                        }
+                    }
                     _ => crate::ContextBundle {
                         sha256: format!("{:x}", Sha256::digest([])),
                         content: String::new(),
@@ -310,6 +353,8 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                     run_id: checkpoint.run_id.clone(),
                     step: step.clone(),
                     attempt: state.attempts,
+                    round: state.rounds + 1,
+                    workspace,
                     context,
                 };
                 join_set.spawn(async move {
@@ -387,6 +432,19 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         store.save(&checkpoint)?;
         store.summary(&summary(&checkpoint))?;
         self.active.lock().await.remove(&checkpoint.run_id);
+        if checkpoint.status != RunStatus::WaitingApproval {
+            let shared_worktree = shared_worktree_path(&checkpoint.repository, &checkpoint.run_id);
+            if shared_worktree.exists() {
+                let _ = self
+                    .host
+                    .remove_worktree(
+                        &checkpoint.parent_thread_id,
+                        &checkpoint.repository,
+                        &shared_worktree,
+                    )
+                    .await;
+            }
+        }
         self.host
             .emit_activity(
                 &checkpoint.parent_thread_id,
@@ -413,6 +471,8 @@ struct StepTask<H: NativeHost> {
     run_id: String,
     step: Step,
     attempt: u32,
+    round: u32,
+    workspace: PathBuf,
     context: crate::ContextBundle,
 }
 
@@ -436,16 +496,6 @@ struct CheckEvidence {
 
 impl<H: NativeHost> StepTask<H> {
     async fn execute(self) -> Result<StepResult, String> {
-        let worktree = self
-            .host
-            .create_worktree(
-                &self.parent_thread_id,
-                &self.repository,
-                &self.run_id,
-                &self.step.id,
-                &self.step.worktree,
-            )
-            .await?;
         let result = match &self.step.action {
             Action::Agent(agent) => {
                 let delegation = if agent.allow_delegation {
@@ -472,13 +522,15 @@ impl<H: NativeHost> StepTask<H> {
                 let request = SpawnRequest {
                     parent_thread_id: self.parent_thread_id.clone(),
                     task_name: format!(
-                        "orchestra-{}-{}-{}",
+                        "orchestra_{}_{}_r{}_a{}",
                         self.run_id
                             .replace(|character: char| !character.is_ascii_alphanumeric(), ""),
-                        self.step.id,
+                        self.step.id.replace('-', "_"),
+                        self.round,
                         self.attempt
                     ),
                     prompt,
+                    cwd: self.workspace.clone(),
                     model: agent.model.clone(),
                     reasoning_effort: agent.reasoning_effort.clone(),
                     service_tier: agent.service_tier.clone(),
@@ -530,12 +582,12 @@ impl<H: NativeHost> StepTask<H> {
                 }
             }
             Action::Check(check) => {
-                let cwd = check.cwd.as_ref().map(|value| worktree.join(value));
+                let cwd = check.cwd.as_ref().map(|value| self.workspace.join(value));
                 let outcome = self
                     .host
                     .run_command(
                         &self.parent_thread_id,
-                        &worktree,
+                        &self.workspace,
                         &check.command,
                         cwd.as_deref(),
                         check.timeout_ms,
@@ -569,10 +621,10 @@ impl<H: NativeHost> StepTask<H> {
             }
             Action::Approval(_) => unreachable!(),
         };
-        if worktree != self.repository {
+        if self.step.worktree == crate::WorktreePolicy::Isolated {
             let _ = self
                 .host
-                .remove_worktree(&self.parent_thread_id, &self.repository, &worktree)
+                .remove_worktree(&self.parent_thread_id, &self.repository, &self.workspace)
                 .await;
         }
         result
@@ -593,7 +645,23 @@ fn new_run_id(hash: &str) -> String {
         .as_millis();
     format!("{millis}-{}", &hash[..12])
 }
+fn shared_worktree_path(repository: &Path, run_id: &str) -> PathBuf {
+    repository
+        .join(".codex/orchestra/worktrees")
+        .join(format!("{run_id}-shared"))
+}
 fn git_revision(repository: &Path) -> Result<String, std::io::Error> {
+    let snapshot = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repository)
+        .args(["stash", "create", "codex-orchestra run snapshot"])
+        .output()?;
+    if snapshot.status.success() {
+        let revision = String::from_utf8_lossy(&snapshot.stdout).trim().to_string();
+        if !revision.is_empty() {
+            return Ok(revision);
+        }
+    }
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(repository)
@@ -702,16 +770,19 @@ mod tests {
             run_id: &str,
             step_id: &str,
             policy: &WorktreePolicy,
+            _: &str,
         ) -> Result<PathBuf, String> {
-            if *policy == WorktreePolicy::Shared {
-                Ok(repository.into())
-            } else {
-                let path = repository
+            let path = if *policy == WorktreePolicy::Shared {
+                repository
                     .join(".codex/orchestra/worktrees")
-                    .join(format!("{run_id}-{step_id}"));
-                std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-                Ok(path)
-            }
+                    .join(format!("{run_id}-shared"))
+            } else {
+                repository
+                    .join(".codex/orchestra/worktrees")
+                    .join(format!("{run_id}-{step_id}"))
+            };
+            std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+            Ok(path)
         }
         async fn remove_worktree(&self, _: &str, _: &Path, path: &Path) -> Result<(), String> {
             std::fs::remove_dir_all(path).map_err(|e| e.to_string())
@@ -770,7 +841,10 @@ mod tests {
                     name: "parallel".into(),
                     description: String::new(),
                     max_parallel: 2,
-                    steps: vec![agent("a", vec![]), agent("b", vec![])],
+                    steps: vec![
+                        agent("inspect-runtime", vec![]),
+                        agent("inspect-tests", vec![]),
+                    ],
                 },
             )
             .await
@@ -778,10 +852,25 @@ mod tests {
         assert!(matches!(result, RunOutcome::Completed(_)));
         assert_eq!(runtime.host.max_running.load(Ordering::SeqCst), 2);
         let requests = runtime.host.spawned.lock().await;
-        assert!(requests.iter().all(|r| r.model == "gpt-5.4"
-            && r.reasoning_effort.as_deref() == Some("high")
-            && r.fork_turns == ForkTurns::None
-            && !r.allow_delegation));
+        assert!(requests.iter().all(|r| {
+            r.cwd
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.ends_with("-shared"))
+                && r.cwd.is_absolute()
+                && r.model == "gpt-5.4"
+                && r.reasoning_effort.as_deref() == Some("high")
+                && r.fork_turns == ForkTurns::None
+                && !r.allow_delegation
+                && r.task_name.chars().all(|character| {
+                    character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
+                })
+        }));
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.task_name.contains("inspect_runtime"))
+        );
     }
 
     #[tokio::test]
@@ -837,6 +926,11 @@ mod tests {
             panic!()
         };
         assert_eq!(state.steps["a"].rounds, 2);
+        let requests = runtime.host.spawned.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_ne!(requests[0].task_name, requests[1].task_name);
+        assert!(requests[0].task_name.contains("_r1_a1"));
+        assert!(requests[1].task_name.contains("_r2_a1"));
     }
 
     #[tokio::test]
@@ -876,6 +970,13 @@ mod tests {
             runtime.resume(dir.path(), &state.run_id).await.unwrap(),
             RunOutcome::Completed(_)
         ));
+        assert!(
+            dir.path()
+                .join(".codex/orchestra/runs")
+                .join(&state.run_id)
+                .join("summary.md")
+                .is_file()
+        );
     }
 
     #[tokio::test]
@@ -996,5 +1097,37 @@ mod tests {
         runtime.cancel(dir.path(), &run_id).await.unwrap();
         assert!(matches!(task.await.unwrap(), RunOutcome::Cancelled(_)));
         assert_eq!(runtime.host.cancelled.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn cancel_does_not_rewrite_completed_run() {
+        let runtime = OrchestraRuntime::new(FakeHost::new(vec![r#"{"ok":true}"#]));
+        let dir = repo();
+        let RunOutcome::Completed(state) = runtime
+            .run(
+                dir.path(),
+                "parent",
+                ExecutionPlan {
+                    name: "done".into(),
+                    description: String::new(),
+                    max_parallel: 1,
+                    steps: vec![agent("a", vec![])],
+                },
+            )
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        let summary_path = dir
+            .path()
+            .join(".codex/orchestra/runs")
+            .join(&state.run_id)
+            .join("summary.md");
+        let before = std::fs::read_to_string(&summary_path).unwrap();
+        let cancelled = runtime.cancel(dir.path(), &state.run_id).await.unwrap();
+        let after = std::fs::read_to_string(&summary_path).unwrap();
+        assert_eq!(cancelled.status, RunStatus::Completed);
+        assert_eq!(before, after);
     }
 }

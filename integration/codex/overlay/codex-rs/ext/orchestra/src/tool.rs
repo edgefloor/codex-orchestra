@@ -60,10 +60,12 @@ impl NativeHost for CodexHost {
             .spawn(OrchestraSpawnRequest {
                 task_name: request.task_name,
                 prompt: request.prompt,
+                cwd: AbsolutePathBuf::try_from(request.cwd).map_err(|error| error.to_string())?,
                 model: request.model,
                 reasoning_effort,
                 service_tier: request.service_tier,
                 fork_turns,
+                allow_delegation: request.allow_delegation,
             })
             .await
             .map_err(|error| error.to_string())?;
@@ -136,13 +138,27 @@ impl NativeHost for CodexHost {
         run_id: &str,
         step_id: &str,
         policy: &WorktreePolicy,
+        source_revision: &str,
     ) -> Result<PathBuf, String> {
-        if *policy == WorktreePolicy::Shared {
+        if source_revision == "unborn" && *policy == WorktreePolicy::Shared {
             return Ok(repository.to_path_buf());
         }
-        let path = repository
-            .join(".codex/orchestra/worktrees")
-            .join(format!("{run_id}-{step_id}"));
+        if source_revision == "unborn" {
+            return Err("isolated worktrees require a committed source revision".into());
+        }
+        let root = repository.join(".codex/orchestra/worktrees");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let path = if *policy == WorktreePolicy::Shared {
+            root.join(format!("{run_id}-shared"))
+        } else {
+            root.join(format!("{run_id}-{step_id}"))
+        };
+        if path.exists() {
+            if *policy == WorktreePolicy::Shared {
+                return Ok(path);
+            }
+            self.remove_worktree(parent_thread_id, repository, &path).await?;
+        }
         let outcome = self
             .run_command(
                 parent_thread_id,
@@ -153,7 +169,7 @@ impl NativeHost for CodexHost {
                     "add".into(),
                     "--detach".into(),
                     path.to_string_lossy().into_owned(),
-                    "HEAD".into(),
+                    source_revision.into(),
                 ],
                 Some(repository),
                 120_000,

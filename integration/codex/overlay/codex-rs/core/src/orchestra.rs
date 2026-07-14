@@ -29,10 +29,12 @@ pub enum OrchestraForkTurns {
 pub struct OrchestraSpawnRequest {
     pub task_name: String,
     pub prompt: String,
+    pub cwd: AbsolutePathBuf,
     pub model: String,
     pub reasoning_effort: Option<ReasoningEffort>,
     pub service_tier: Option<String>,
     pub fork_turns: OrchestraForkTurns,
+    pub allow_delegation: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -107,6 +109,11 @@ impl OrchestraControl {
         if request.service_tier.is_some() {
             config.service_tier = request.service_tier;
         }
+        let child_depth = next_thread_spawn_depth(&self.parent_source);
+        config.cwd = request.cwd;
+        if !request.allow_delegation {
+            config.agent_max_depth = child_depth;
+        }
         let parent_path = self
             .parent_source
             .get_agent_path()
@@ -116,7 +123,7 @@ impl OrchestraControl {
             .map_err(CodexErr::InvalidRequest)?;
         let source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
             parent_thread_id: self.parent_thread_id,
-            depth: next_thread_spawn_depth(&self.parent_source),
+            depth: child_depth,
             agent_path: Some(task_path.clone()),
             agent_nickname: None,
             agent_role: None,
@@ -179,12 +186,16 @@ impl OrchestraControl {
         request: OrchestraCommandRequest,
     ) -> CodexResult<OrchestraCommandOutput> {
         let windows_level = windows_sandbox_level_from_config(&self.config);
+        let mut env = HashMap::new();
+        if let Ok(path) = std::env::var("PATH") {
+            env.insert("PATH".to_string(), path);
+        }
         let params = ExecParams {
             command: request.argv,
             cwd: request.cwd,
             expiration: ExecExpiration::from(request.timeout_ms),
             capture_policy: ExecCapturePolicy::ShellTool,
-            env: HashMap::new(),
+            env,
             network: None,
             network_environment_id: None,
             sandbox_permissions: SandboxPermissions::UseDefault,
