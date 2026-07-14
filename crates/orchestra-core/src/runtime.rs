@@ -808,6 +808,177 @@ mod tests {
             .unwrap();
         dir
     }
+
+    struct GitHost {
+        response: String,
+        workspaces: Mutex<HashMap<String, PathBuf>>,
+    }
+
+    #[async_trait]
+    impl NativeHost for GitHost {
+        async fn spawn(&self, request: SpawnRequest) -> Result<AgentHandle, String> {
+            let thread_id = request.task_name.clone();
+            self.workspaces
+                .lock()
+                .await
+                .insert(thread_id.clone(), request.cwd);
+            Ok(AgentHandle {
+                thread_id,
+                task_path: request.task_name,
+                parent_thread_id: request.parent_thread_id,
+            })
+        }
+
+        async fn status(&self, _: &AgentHandle) -> Result<AgentStatus, String> {
+            Ok(AgentStatus::Running)
+        }
+
+        async fn wait(&self, handle: &AgentHandle) -> Result<AgentOutcome, String> {
+            let workspace = self.workspaces.lock().await[&handle.thread_id].clone();
+            std::fs::create_dir_all(workspace.join("scope")).map_err(|e| e.to_string())?;
+            std::fs::write(workspace.join("scope/change.txt"), "integrated\n")
+                .map_err(|e| e.to_string())?;
+            Ok(AgentOutcome {
+                status: AgentStatus::Completed,
+                final_response: Some(self.response.clone()),
+            })
+        }
+
+        async fn cancel(&self, _: &AgentHandle) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn run_command(
+            &self,
+            _: &str,
+            repository: &Path,
+            argv: &[String],
+            cwd: Option<&Path>,
+            _: u64,
+        ) -> Result<CommandOutcome, String> {
+            if argv == ["assert-integrated"] {
+                let content = std::fs::read_to_string(repository.join("scope/change.txt"));
+                return Ok(CommandOutcome {
+                    exit_code: i32::from(
+                        !content
+                            .as_deref()
+                            .is_ok_and(|value| value == "integrated\n"),
+                    ),
+                    stdout: content.unwrap_or_default(),
+                    stderr: String::new(),
+                });
+            }
+            let output = std::process::Command::new(&argv[0])
+                .args(&argv[1..])
+                .current_dir(cwd.unwrap_or(repository))
+                .output()
+                .map_err(|e| e.to_string())?;
+            Ok(CommandOutcome {
+                exit_code: output.status.code().unwrap_or(-1),
+                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            })
+        }
+
+        async fn create_worktree(
+            &self,
+            _: &str,
+            repository: &Path,
+            run_id: &str,
+            step_id: &str,
+            policy: &WorktreePolicy,
+            source_revision: &str,
+        ) -> Result<PathBuf, String> {
+            let suffix = if *policy == WorktreePolicy::Shared {
+                "shared".to_string()
+            } else {
+                step_id.to_string()
+            };
+            let path = repository
+                .join(".codex/orchestra/worktrees")
+                .join(format!("{run_id}-{suffix}"));
+            if path.exists() {
+                return Ok(path);
+            }
+            std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repository)
+                .args(["worktree", "add", "--detach"])
+                .arg(&path)
+                .arg(source_revision)
+                .output()
+                .map_err(|e| e.to_string())?;
+            if output.status.success() {
+                Ok(path)
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).into_owned())
+            }
+        }
+
+        async fn remove_worktree(
+            &self,
+            _: &str,
+            repository: &Path,
+            path: &Path,
+        ) -> Result<(), String> {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repository)
+                .args(["worktree", "remove", "--force"])
+                .arg(path)
+                .output()
+                .map_err(|e| e.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).into_owned())
+            }
+        }
+
+        async fn request_approval(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[String],
+        ) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+
+        async fn emit_activity(&self, _: &str, _: &str) {}
+    }
+
+    fn committed_repo() -> tempfile::TempDir {
+        let dir = repo();
+        std::fs::write(dir.path().join("README.md"), "source\n").unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(["add", "."])
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args([
+                    "-c",
+                    "user.name=Orchestra Test",
+                    "-c",
+                    "user.email=orchestra@example.invalid",
+                    "commit",
+                    "-qm",
+                    "source",
+                ])
+                .status()
+                .unwrap()
+                .success()
+        );
+        dir
+    }
     fn agent(id: &str, needs: Vec<&str>) -> Step {
         Step {
             id: id.into(),
@@ -1129,5 +1300,87 @@ mod tests {
         let after = std::fs::read_to_string(&summary_path).unwrap();
         assert_eq!(cancelled.status, RunStatus::Completed);
         assert_eq!(before, after);
+    }
+
+    #[tokio::test]
+    async fn isolated_changes_are_verified_in_shared_worktree_then_cleaned_up() {
+        let runtime = OrchestraRuntime::new(GitHost {
+            response: r#"{"ok":true}"#.into(),
+            workspaces: Mutex::new(HashMap::new()),
+        });
+        let dir = committed_repo();
+        let mut implement = agent("implement", vec![]);
+        implement.worktree = WorktreePolicy::Isolated;
+        implement.write_scope = vec!["scope/".into()];
+        let check = Step {
+            id: "verify".into(),
+            needs: vec!["implement".into()],
+            max_attempts: 1,
+            repeat: None,
+            worktree: WorktreePolicy::Shared,
+            write_scope: vec![],
+            action: Action::Check(crate::CheckStep {
+                command: vec!["assert-integrated".into()],
+                cwd: None,
+                timeout_ms: 1000,
+            }),
+        };
+        let approval = Step {
+            id: "accept".into(),
+            needs: vec!["verify".into()],
+            max_attempts: 1,
+            repeat: None,
+            worktree: WorktreePolicy::Shared,
+            write_scope: vec![],
+            action: Action::Approval(crate::ApprovalStep {
+                prompt: "accept?".into(),
+                choices: vec!["accept".into(), "reject".into()],
+            }),
+        };
+
+        let RunOutcome::Paused(state) = runtime
+            .run(
+                dir.path(),
+                "parent",
+                ExecutionPlan {
+                    name: "integrate".into(),
+                    description: String::new(),
+                    max_parallel: 1,
+                    steps: vec![implement, check, approval],
+                },
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("run should pause only after verifying the integrated change")
+        };
+        let worktrees = dir.path().join(".codex/orchestra/worktrees");
+        assert_eq!(state.steps["verify"].outputs["passed"], Value::Bool(true));
+        assert_eq!(
+            std::fs::read_to_string(
+                worktrees
+                    .join(format!("{}-shared", state.run_id))
+                    .join("scope/change.txt")
+            )
+            .unwrap(),
+            "integrated\n"
+        );
+        assert!(!worktrees.join(format!("{}-implement", state.run_id)).exists());
+        assert!(
+            dir.path()
+                .join(".codex/orchestra/runs")
+                .join(&state.run_id)
+                .join("evidence/changes/implement-1.patch")
+                .is_file()
+        );
+
+        assert!(matches!(
+            runtime
+                .resume_with_approval(dir.path(), &state.run_id, Some("reject"))
+                .await
+                .unwrap(),
+            RunOutcome::Completed(_)
+        ));
+        assert!(!worktrees.join(format!("{}-shared", state.run_id)).exists());
     }
 }
