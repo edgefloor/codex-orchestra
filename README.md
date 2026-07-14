@@ -210,10 +210,10 @@ worktree(
 );
 ```
 
-Concurrent writers with overlapping path prefixes fail validation unless both use isolated worktrees. `write_scope` is used for conflict validation; it is not an operating-system write restriction.
+Concurrent writers with overlapping path prefixes fail validation unless both use isolated worktrees. For isolated agent steps, Orchestra also rejects a completed change set containing paths outside the declared `write_scope`. This is a runtime validation boundary, not an operating-system write restriction while the agent is running.
 
 > [!WARNING]
-> The current native adapter removes temporary worktrees but does not merge or copy their changes back to the target checkout. Use the present runtime for read-only, validation, and experimental workflows unless another in-scope step persists the desired result. Automatic change promotion is not implemented.
+> Isolated changes are captured as durable patches, integrated serially into the shared run worktree, and verified there before approval. Terminal cleanup still removes the shared worktree without promoting it into the target checkout. Use the persisted patch under the run's `evidence/changes/` directory until automatic change promotion is implemented.
 
 An unborn repository can use the shared checkout directly. Isolated worktrees require a committed source revision.
 
@@ -562,7 +562,7 @@ Implementations must preserve parent-task lineage, return final agent responses,
 
 - Stock Codex cannot dynamically load the Rust extension; the pinned integration patch is required.
 - The repository does not yet automate connecting the custom App Server build to a Codex client.
-- Worktree changes are cleaned up without merge or promotion into the target checkout.
+- Verified worktree changes are persisted as patches but are not automatically promoted into the target checkout.
 - `ref()` and template output markers are not expanded at runtime; use `dependency_output` context.
 - Approval choices are not enforced against the decision passed to resume.
 - Interactive UI rendering, provider-backed child completion, approval flow, cancellation, and transcript-free recovery remain recorded as human-only pending checks in [`docs/verification/2026-07-14-interactive-baseline.md`](docs/verification/2026-07-14-interactive-baseline.md).

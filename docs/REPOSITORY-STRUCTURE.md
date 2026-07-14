@@ -22,6 +22,7 @@ Runtime-owned target-repository data:
 ├── state.json                      atomic checkpoint and hashes
 ├── outputs/<step>.json             validated outputs
 ├── evidence/checks/                command evidence
+├── evidence/changes/               isolated change patches applied before checks
 ├── approvals/                      explicit decisions
 └── summary.md                      paused or terminal summary
 ```

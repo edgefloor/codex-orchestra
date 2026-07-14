@@ -119,6 +119,7 @@ impl RunStore {
         run_id: &str,
     ) -> Result<(Self, ExecutionPlan, RunCheckpoint), std::io::Error> {
         let root = repository.join(".codex/orchestra/runs").join(run_id);
+        fs::create_dir_all(root.join("evidence/changes"))?;
         let plan = serde_json::from_slice(&fs::read(root.join("workflow.json"))?)
             .map_err(std::io::Error::other)?;
         let checkpoint = serde_json::from_slice(&fs::read(root.join("state.json"))?)

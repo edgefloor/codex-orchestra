@@ -451,11 +451,11 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         }
 
         self.active.lock().await.remove(&checkpoint.run_id);
-        if checkpoint.status != RunStatus::WaitingApproval {
-            if let Err(error) = self.cleanup_shared_worktree(&checkpoint).await {
-                checkpoint.status = RunStatus::Failed;
-                checkpoint.next_action = format!("clean up shared worktree: {error}");
-            }
+        if checkpoint.status != RunStatus::WaitingApproval
+            && let Err(error) = self.cleanup_shared_worktree(&checkpoint).await
+        {
+            checkpoint.status = RunStatus::Failed;
+            checkpoint.next_action = format!("clean up shared worktree: {error}");
         }
         store.save(&checkpoint)?;
         store.summary(&summary(&checkpoint))?;
@@ -580,7 +580,7 @@ struct CheckEvidence {
 
 impl<H: NativeHost> StepTask<H> {
     async fn execute(self) -> Result<StepResult, String> {
-        let result = match &self.step.action {
+        match &self.step.action {
             Action::Agent(agent) => {
                 let delegation = if agent.allow_delegation {
                     "Recursive delegation is explicitly allowed for this step."
@@ -712,8 +712,7 @@ impl<H: NativeHost> StepTask<H> {
                 }
             }
             Action::Approval(_) => unreachable!(),
-        };
-        result
+        }
     }
 
     async fn collect_changes(&self) -> Result<WorktreeChanges, String> {
@@ -1534,5 +1533,16 @@ mod tests {
             RunOutcome::Completed(_)
         ));
         assert!(!worktrees.join(format!("{}-shared", state.run_id)).exists());
+    }
+
+    #[test]
+    fn write_scope_matches_only_complete_path_segments() {
+        assert!(path_in_write_scope("scope/file.rs", &["scope/".into()]));
+        assert!(path_in_write_scope("scope", &["scope".into()]));
+        assert!(!path_in_write_scope(
+            "scope-other/file.rs",
+            &["scope".into()]
+        ));
+        assert!(!path_in_write_scope("scope/file.rs", &[]));
     }
 }

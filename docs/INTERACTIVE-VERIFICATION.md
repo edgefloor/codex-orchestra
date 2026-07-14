@@ -14,7 +14,7 @@ Using the Orchestra-enabled Codex build, confirm `orchestra_validate`, `orchestr
 
 ## Stage 3 — V2 vertical slice
 
-Run `evals/workflows/native-vertical-slice.workflow.ts`. Observe canonical child task paths, explicit model/reasoning, no parent transcript for `fork_turns: none`, parallel activity, V2 completion, isolated worktree cleanup, sandboxed check evidence, approval pause, and final summary.
+Run `evals/workflows/native-vertical-slice.workflow.ts`. Observe canonical child task paths, explicit model/reasoning, no parent transcript for `fork_turns: none`, parallel activity, V2 completion, isolated changes present in the shared worktree before the sandboxed check, approval pause, isolated and terminal shared-worktree cleanup, and final summary.
 
 ## Stage 4 — recovery and self-hosting
 
