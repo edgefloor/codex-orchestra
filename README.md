@@ -1,14 +1,14 @@
 # Codex Orchestra
 
-**Run reviewable, recoverable multi-agent workflows inside native Codex—without a daemon, sidecar, MCP server, or model-authored state.**
+**Run reviewable, recoverable multi-agent workflows through Codex's native agent runtime—without a daemon, sidecar, MCP server, or model-owned state.**
 
-Codex Orchestra turns a declared `.workflow.ts` plan into a Rust-owned execution run: agents receive only the context you declare, independent steps run concurrently, writes are isolated in worktrees, checks and approvals gate promotion, and every outcome is checkpointed in the target repository.
+Codex Orchestra parses restricted `.workflow.ts` source into an execution plan, then runs that plan under Rust-owned scheduling and durable state. Dependency-ready steps form stages that run concurrently when their write scopes permit it. Each agent receives an exact context bundle, checks and approvals control progress, and atomic checkpoints make the run recoverable from the target repository.
 
-> **Status:** experimental, source-first infrastructure for an Orchestra-enabled Codex build. The plugin skills can install on stock Codex, but native workflow tools require the pinned integration described below.
+> **Status:** Experimental, source-first infrastructure for an Orchestra-enabled Codex build. The plugin skills install on stock Codex; the native workflow tools require the pinned integration described below.
 
-## Try the native vertical slice
+## Verify the native runtime
 
-From a checkout of this repository, these commands build and verify the exact Codex integration Orchestra targets:
+From a checkout of this repository, these commands test Orchestra and verify it against the exact Codex revision it targets:
 
 ```bash
 # Verify the Rust runtime itself
@@ -17,22 +17,22 @@ cargo test --workspace
 # Check plugin and configuration capabilities
 cargo run -p codex-orchestra-lifecycle -- doctor
 
-# Clone the pinned Codex revision (if needed), apply the overlay, and verify it
+# Clone the pinned Codex revision (if needed), apply the integration patch, and verify it
 scripts/codex-integration.sh /tmp/codex-orchestra-codex verify
 ```
 
-To prepare a repository for a real run, preview the configuration first; add `--apply` only after reviewing the proposed changes:
+To configure a target repository, preview the proposed changes first. Add `--apply` only after reviewing them:
 
 ```bash
 cargo run -p codex-orchestra-lifecycle -- project --target /path/to/your/repo
 cargo run -p codex-orchestra-lifecycle -- project --target /path/to/your/repo --apply
 ```
 
-The resulting Codex build exposes native `orchestra_validate`, `orchestra_run`, `orchestra_resume`, `orchestra_status`, and `orchestra_cancel` tools. Runtime-owned artifacts stay in the target repository at `.codex/orchestra/runs/`.
+The integrated Codex build exposes `orchestra_validate`, `orchestra_run`, `orchestra_resume`, `orchestra_status`, and `orchestra_cancel` as native tools. Run artifacts remain in the target repository under `.codex/orchestra/runs/`.
 
 ## What a workflow looks like
 
-Workflows are a small, restricted TypeScript-shaped data language. Rust parses and lowers them to an execution plan; it never evaluates JavaScript.
+Workflow source uses a small, restricted TypeScript-shaped data language. Rust parses and lowers the source into an execution plan; it never evaluates JavaScript.
 
 ```ts
 import { agent, check, pipeline, workflow } from "@codex-orchestra/workflow";
@@ -66,26 +66,26 @@ See the complete runnable template in [assets/templates/WORKFLOW.workflow.ts](as
 
 ## Why Orchestra
 
-| Need | Orchestra's default |
+| Requirement | Orchestra behavior |
 | --- | --- |
-| Keep agents on the active Codex task | Parent-linked V2 `AgentControl`, canonical task paths, and completion watchers |
-| Make context auditable | Exact declared bytes and dependency outputs, materialized and SHA-256 hashed |
-| Avoid concurrent-write surprises | Sandbox-aware checks and isolated Git worktrees for conflicting writes |
-| Recover from interruption | Atomic checkpoints, resumable approvals, cancellation, and a terminal run summary |
-| Keep execution predictable | Bounded retries and repeats; child delegation is disabled by default |
+| Keep agent execution native to the active Codex task | The native host uses parent-linked V2 `AgentControl`, canonical task paths, and completion watchers |
+| Make agent context auditable | Context bundles contain exact declared bytes and dependency outputs and carry a SHA-256 digest |
+| Control concurrent writes | Dependency-ready writers run concurrently only with disjoint write scopes and isolated Git worktrees |
+| Recover after interruption | Atomic checkpoints preserve run state; approvals resume explicitly; terminal state is recorded in the run summary |
+| Bound execution | Attempts and repeat rounds have explicit limits; child delegation is disabled by default |
 
-Every run records its plan, attempts, context hashes, validated outputs, evidence, decisions, and summary independently of the parent transcript.
+Every run records its execution plan, attempts, context hashes, validated outputs, evidence, decisions, and summary independently of the parent transcript.
 
-## Requirements and honest boundaries
+## Integration boundary
 
-Orchestra currently has two deliberate delivery pieces:
+Orchestra currently consists of two parts:
 
 1. This repository’s Rust runtime, lifecycle tooling, and installable plugin skills.
-2. A small, temporary integration patch for the Codex revision pinned in [integration/codex/UPSTREAM_REVISION](integration/codex/UPSTREAM_REVISION).
+2. A temporary integration patch for the Codex revision pinned in [integration/codex/UPSTREAM_REVISION](integration/codex/UPSTREAM_REVISION).
 
-Stock plugin packages cannot dynamically register arbitrary Rust extensions. Consequently, stock Codex may load the authoring skills but cannot run native Orchestra tools. There is intentionally no fallback through SDK threads, `codex exec`, an App Server client, an MCP server, a daemon, or a sidecar.
+Stock Codex plugin packages cannot dynamically register arbitrary Rust extensions. Stock Codex can therefore load Orchestra's authoring skills, but it cannot expose the native workflow tools. Orchestra deliberately provides no alternate execution path through SDK threads, `codex exec`, an App Server client, an MCP server, a daemon, or a sidecar.
 
-The lifecycle tool is preview-first and hash-managed. It preserves modified files, supports upgrade/rollback/uninstall, and never removes run artifacts. To install a selectable profile rather than project configuration:
+The lifecycle tool previews changes by default and tracks managed files by hash. It preserves user-modified files, supports upgrades, rollbacks, and uninstall, and never removes run artifacts. To install a selectable profile instead of project-local configuration:
 
 ```bash
 cargo run -p codex-orchestra-lifecycle -- profile
@@ -103,7 +103,7 @@ cargo run -p codex-orchestra-lifecycle -- profile --apply
 
 ## Development checks
 
-Before structural changes, run:
+After structural changes, run:
 
 ```bash
 cargo test --workspace
@@ -111,7 +111,7 @@ cargo run -p codex-orchestra-lifecycle -- doctor
 scripts/codex-integration.sh /tmp/codex-orchestra-codex verify
 ```
 
-The integration command requires a clean checkout at the pinned revision. It applies the overlay, tests the Orchestra crates, and checks `codex-app-server`.
+The integration command requires a clean checkout at the pinned revision. It applies the integration patch, tests the Orchestra crates, and checks `codex-app-server`.
 
 ## License
 
