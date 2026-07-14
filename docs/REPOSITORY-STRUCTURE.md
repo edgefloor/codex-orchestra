@@ -1,32 +1,29 @@
 # Repository structure
 
 ```text
-.codex-plugin/plugin.json      installable plugin manifest
-skills/                        workflow creation, execution, and recovery behavior
-config/agents/                 optional planner, worker, reviewer, verifier agents
-assets/schemas/                workflow, run-state, and step-result contracts
-assets/templates/              workflow, step-input, run-summary, and verification templates
-assets/policies/               default execution limits and safety rules
-scripts/lifecycle.py           preview-first configuration lifecycle
-scripts/workflow.py            workflow validation and run initialization
-docs/adr/                      architecture decisions
-evals/workflows/               executable workflow fixtures
-evals/scenarios/               behavioral acceptance scenarios
-tests/                         deterministic repository tests
+crates/orchestra-core/              restricted compiler, plan validation, runtime, state, context, host trait
+crates/orchestra-lifecycle/         preview-first plugin configuration lifecycle CLI and tests
+sdk/                                TypeScript authoring declarations (never executed)
+integration/codex/                  pinned revision, minimal patch, and Codex overlay crates
+scripts/codex-integration.sh        deterministic apply/build verification
+skills/                             user-facing native-tool guidance
+config/                             optional project/global Codex configuration
+assets/templates/                   .workflow.ts and summary templates
+evals/workflows/                    compiler/runtime fixtures
+evals/scenarios/                    behavioral acceptance scenarios
+docs/adr/                           architecture decisions
 ```
 
-Runtime data is never bundled with the plugin:
+Runtime-owned target-repository data:
 
 ```text
-<target-repository>/.codex/orchestra/
-├── workflows/                 reusable project workflows
-├── runs/<run-id>/
-│   ├── workflow.yaml          immutable run snapshot
-│   ├── state.json             durable step state and workflow digest
-│   ├── steps/                 inputs and structured attempt results
-│   ├── evidence/              command and review evidence
-│   └── summary.md             final or paused run summary
-└── install/                   managed configuration lifecycle state
+.codex/orchestra/runs/<run-id>/
+├── workflow.json                   immutable compiled-plan snapshot
+├── state.json                      atomic checkpoint and hashes
+├── outputs/<step>.json             validated outputs
+├── evidence/checks/                command evidence
+├── approvals/                      explicit decisions
+└── summary.md                      paused or terminal summary
 ```
 
-Configuration templates are separate from plugin installation. Users may install them per repository, as a selectable global profile, or deliberately reconcile them into their global default.
+Temporary worktrees may exist under `.codex/orchestra/worktrees/` while a run is active and are removed by the runtime. No workflow engine or mutable state is stored in the installed plugin cache.

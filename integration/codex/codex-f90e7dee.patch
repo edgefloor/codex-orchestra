@@ -1,0 +1,74 @@
+diff --git a/codex-rs/Cargo.toml b/codex-rs/Cargo.toml
+index 943397e..5870f3d 100644
+--- a/codex-rs/Cargo.toml
++++ b/codex-rs/Cargo.toml
+@@ -52,6 +52,8 @@ members = [
+     "ext/connectors",
+     "ext/extension-api",
+     "ext/goal",
++    "ext/orchestra",
++    "ext/orchestra-core",
+     "ext/guardian",
+     "ext/image-generation",
+     "ext/items",
+@@ -184,5 +186,7 @@ codex-extension-api = { path = "ext/extension-api" }
+ codex-extension-items = { path = "ext/items" }
+ codex-goal-extension = { path = "ext/goal" }
+ codex-guardian = { path = "ext/guardian" }
++codex-orchestra-core = { path = "ext/orchestra-core" }
++codex-orchestra-extension = { path = "ext/orchestra" }
+ codex-image-generation-extension = { path = "ext/image-generation" }
+ codex-external-agent-migration = { path = "external-agent-migration" }
+diff --git a/codex-rs/app-server/Cargo.toml b/codex-rs/app-server/Cargo.toml
+index f3db01f..bc22441 100644
+--- a/codex-rs/app-server/Cargo.toml
++++ b/codex-rs/app-server/Cargo.toml
+@@ -47,4 +47,5 @@ codex-features = { workspace = true }
+ codex-goal-extension = { workspace = true }
+ codex-guardian = { workspace = true }
++codex-orchestra-extension = { workspace = true }
+ codex-git-utils = { workspace = true }
+ codex-file-watcher = { workspace = true }
+diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
+index 5dc066a..a5794f2 100644
+--- a/codex-rs/app-server/src/extensions.rs
++++ b/codex-rs/app-server/src/extensions.rs
+@@ -60,5 +60,6 @@ where
+         thread_store: _thread_store,
+     } = dependencies;
+     let mut builder = ExtensionRegistryBuilder::<Config>::with_event_sink(event_sink);
++    codex_orchestra_extension::install(&mut builder, thread_manager.clone());
+     if let Some(state_db) = state_db {
+         codex_goal_extension::install_with_backend(
+diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
+index 1dca2a0..17e23e7 100644
+--- a/codex-rs/core/src/lib.rs
++++ b/codex-rs/core/src/lib.rs
+@@ -105,5 +105,6 @@ pub(crate) use skills::skills_load_input_from_config;
+ mod stream_events_utils;
+ pub use stream_events_utils::image_generation_artifact_path;
+ pub mod test_support;
+ mod unified_exec;
++pub mod orchestra;
+ pub mod windows_sandbox;
+diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
+index e548cf2..8bc848a 100644
+--- a/codex-rs/core/src/codex_thread.rs
++++ b/codex-rs/core/src/codex_thread.rs
+@@ -599,5 +599,16 @@ impl CodexThread {
+         self.codex.session.get_config().await
+     }
+
++    /// Returns the narrow Orchestra capability backed by this thread's active
++    /// V2 `AgentControl`, preserving lineage, residency, and completion watchers.
++    pub async fn orchestra_control(&self) -> crate::orchestra::OrchestraControl {
++        crate::orchestra::OrchestraControl::new(
++            self.codex.session.services.agent_control.clone(),
++            self.session_configured.thread_id,
++            self.session_source.clone(),
++            (*self.config().await).clone(),
++        )
++    }
++
+     /// Resolves the MCP runtime configuration using this thread's extension data.
+     pub async fn runtime_mcp_config(&self, config: &crate::config::Config) -> codex_mcp::McpConfig {

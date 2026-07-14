@@ -10,6 +10,6 @@ The parent that spawns an agent waits for it and records its structured result. 
 
 ## Consequences
 
-- Workers do not spawn children.
+- Agent steps do not spawn children unless explicitly enabled.
 - Raw transcripts and broad repository dumps are not delegated.
 - Attempt and parallelism limits reserve capacity for review and verification.

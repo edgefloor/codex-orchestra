@@ -1,17 +1,16 @@
 ---
 name: orchestrate
-description: Create, run, or resume a reviewable Codex-native workflow. Use when a user asks Orchestra to coordinate a multi-step repository task, delegate bounded work, recover an interrupted run, or apply review and verification stages.
+description: Route creation, validation, execution, status, cancellation, and recovery through the native Orchestra V2 tools.
 ---
 
 # Orchestrate a workflow
 
-Act as the user-facing router. Plugin files are read-only; all workflow definitions and run state belong in the target repository under `.codex/orchestra/`.
+This skill is a user-facing layer over the Rust extension. It is not the scheduler.
 
-1. Inspect `.codex/orchestra/runs/` for an incomplete run that matches the request.
-2. If one exists, route to `$codex-orchestra:resume-workflow`.
-3. If the user supplied a workflow or named a reusable workflow, route to `$codex-orchestra:run-workflow`.
-4. Otherwise route to `$codex-orchestra:create-workflow`, show the generated workflow, and obtain any required approval before routing to `$codex-orchestra:run-workflow`.
+1. Inspect `.codex/orchestra/runs/` for a matching incomplete run.
+2. Resume an existing run with `orchestra_resume`; pass an approval decision only when the user explicitly supplied it.
+3. Validate an existing `.workflow.ts` with `orchestra_validate`, then run it with `orchestra_run`.
+4. Otherwise use `$codex-orchestra:create-workflow`, validate the result, show material mutations and approvals, and run only when authorized.
+5. Use `orchestra_status` and `orchestra_cancel` for runtime-owned state and cancellation.
 
-Use only native Codex collaboration and ordinary repository tools. Do not start an MCP server, App Server client, daemon, sidecar, or external scheduler. The active Codex agent decides which dependency-ready steps execute next.
-
-Complete when the workflow is closed with a run summary or paused with an exact user decision or recovery action.
+Never emulate missing native tools with SDK threads, MCP, `codex exec`, an App Server client, a daemon, a sidecar, or model-mediated scheduling. If the native tools are absent, explain that the Orchestra-enabled pinned Codex build is required.

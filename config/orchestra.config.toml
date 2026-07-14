@@ -1,5 +1,5 @@
 # Install as ~/.codex/orchestra.config.toml and select with: codex --profile orchestra
-# Validated with Codex CLI 0.141.0 using --strict-config on 2026-07-14.
+# Requires the Orchestra-enabled build pinned in integration/codex/UPSTREAM_REVISION.
 [features]
 multi_agent = true
 

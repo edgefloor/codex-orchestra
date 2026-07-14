@@ -1,22 +1,9 @@
 # Validation
 
-Automated validation covers:
+Repository verification has four layers:
 
-- plugin manifest and supported bundle structure;
-- all skill frontmatter and UI metadata;
-- TOML configuration and native Codex capability probes;
-- workflow JSON Schema and semantic rules;
-- valid and invalid workflow fixtures;
-- lifecycle preview, install, upgrade, rollback, and uninstall;
-- retired terminology in user-facing documentation and skills;
-- mutable-state exclusion from the plugin package.
+1. `cargo test --workspace` covers compiler security, plan validation, DAG scheduling, exact context, retries, repeats, conflicts, fake native spawning, malformed output, approvals, checks, worktrees, recovery, cancellation primitives, plugin layout, and immutable lifecycle behavior.
+2. `cargo run -p codex-orchestra-lifecycle -- doctor` validates manifest/config/plugin capabilities.
+3. `scripts/codex-integration.sh <fresh-dir> verify` applies the patch to the pinned Codex source, tests both Orchestra crates, and checks `codex-app-server`.
 
-Run:
-
-```text
-uv run --locked python -m unittest discover -s tests -v
-uv run --locked python scripts/workflow.py validate evals/workflows/native-vertical-slice.yaml
-uv run --locked python scripts/lifecycle.py doctor
-```
-
-Interactive verification additionally covers fresh-task discovery, custom-agent selection, an installed self-hosting run, interruption recovery, and candidate promotion.
+Interactive UI rendering of native Orchestra tools and real provider-backed child completion remains human-only evidence; it must not be marked complete until observed.

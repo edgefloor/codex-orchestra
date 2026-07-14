@@ -1,27 +1,25 @@
 # Interactive verification
 
-Automated checks cannot prove plugin discovery, custom-agent UI behavior, or a real native multi-agent run. Record those observations separately.
-
 ## Stage 0 — automated baseline
 
-Run the unit suite, workflow validator, lifecycle doctor, skill validators, and plugin validator. Record exact commands, versions, exit status, and package digest.
+Run the Rust workspace suite, lifecycle doctor, plugin validator, and pinned Codex integration build. Record exact revisions and exit status.
 
-## Stage 1 — fresh installation
+## Stage 1 — fresh plugin discovery
 
-Install the packaged candidate through the configured local marketplace. Start a new Codex task in a repository that does not contain the plugin source. Invoke `$codex-orchestra:orchestrate` and confirm the installed skill is used without development-only paths.
+Install the packaged candidate, start a task outside the source repository, invoke `$codex-orchestra:orchestrate`, and confirm it requires the native tool surface rather than emulating a scheduler.
 
-## Stage 2 — custom agents
+## Stage 2 — native tool surface
 
-Install project or profile configuration through the preview-first lifecycle. Confirm planner, worker, reviewer, and verifier appear and can be selected. Reviewer and verifier must remain read-only; worker must not spawn children.
+Using the Orchestra-enabled Codex build, confirm `orchestra_validate`, `orchestra_run`, `orchestra_resume`, `orchestra_status`, and `orchestra_cancel` appear as native tools.
 
-## Stage 3 — native self-hosting workflow
+## Stage 3 — V2 vertical slice
 
-Use installed N to run `evals/workflows/native-vertical-slice.yaml` against candidate N+1. Confirm the planner step, two parallel read-only steps, isolated worker, deterministic check, independent review, conditional approval, durable state, and final summary. Hash N before and after the run.
+Run `evals/workflows/native-vertical-slice.workflow.ts`. Observe canonical child task paths, explicit model/reasoning, no parent transcript for `fork_turns: none`, parallel activity, V2 completion, isolated worktree cleanup, sandboxed check evidence, approval pause, and final summary.
 
-## Stage 4 — interruption recovery and promotion
+## Stage 4 — recovery and self-hosting
 
-Interrupt after at least one completed step. Start a transcript-free task and invoke `$codex-orchestra:resume-workflow`. Confirm completed evidence is reused and only dependency-ready work continues. Package and install N+1 only after all mandatory checks pass.
+Interrupt a run, resume it from a fresh task, and verify checkpoint reconciliation. Use an installed version to validate a source-checkout candidate without changing the installed cache; promote only after all required checks and approval pass.
 
 ## Human-only evidence
 
-Fresh-task discovery, UI selection, live parallelism, interruption recovery, and promotion observations stay `pending` until actually performed.
+Tool rendering, real provider execution, visible V2 activity/residency behavior, interactive approval, cancellation timing, fresh-task recovery, and installed-cache identity remain `pending` until observed.

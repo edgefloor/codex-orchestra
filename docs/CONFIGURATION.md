@@ -1,11 +1,7 @@
 # Configuration
 
-Plugin installation exposes namespaced skills without changing user configuration. Optional templates enable native multi-agent support and custom agents.
+`config/project.toml` and `config/orchestra.config.toml` enable multi-agent support, cap the thread tree, and set `max_depth = 1` so child recursive delegation is disabled by default. Workflows choose explicit models and reasoning settings per agent step; `config/agents/` role personalities are intentionally absent.
 
-- Project: preview `scripts/lifecycle.py project --target <repo>`, then repeat with `--apply`.
-- Global profile: preview `scripts/lifecycle.py profile`, then repeat with `--apply`; select with `codex --profile orchestra`.
-- Global default: use `global-default` only after explicitly reviewing conflicts.
+Use `cargo run -p codex-orchestra-lifecycle -- project --target <repo>` or `cargo run -p codex-orchestra-lifecycle -- profile --codex-home <home>` to preview, then add `--apply`. Existing or locally modified configuration is never overwritten silently.
 
-The canonical custom agents are planner, worker, reviewer, and verifier. The active root agent orchestrates runs. Templates avoid pinned models and experimental feature flags.
-
-Lifecycle operations preserve user-owned files, refuse unresolved conflicts, and track only files Orchestra created. Upgrades create rollback evidence before replacing managed files.
+These templates require the Orchestra-enabled build pinned by `integration/codex/UPSTREAM_REVISION`. A stock Codex installation may load the plugin skills but will not expose `orchestra_validate`, `orchestra_run`, `orchestra_resume`, `orchestra_status`, or `orchestra_cancel`.

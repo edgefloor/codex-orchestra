@@ -1,14 +1,7 @@
-# Self-hosting vertical slice
+# Self-hosting
 
-Installed Orchestra N runs `evals/workflows/native-vertical-slice.yaml` against the source tree for candidate N+1.
+Develop from the source checkout, never an installed cache. Build the custom Codex tree in a separate directory with `scripts/codex-integration.sh`. The script copies the current Rust core and adapter overlay into a clean checkout of the pinned upstream revision; it does not edit the plugin cache.
 
-1. A planner proposes one bounded improvement.
-2. Two read-only agent steps inspect documentation and tests in parallel.
-3. One worker implements the combined result in an isolated worktree.
-4. A deterministic check runs in the worker's recorded candidate workspace and revision.
-5. An independent reviewer examines that same candidate workspace.
-6. A conditional approval pauses for the user when a material finding exists.
-7. Every transition is reconstructable from `.codex/orchestra/runs/<run-id>/`.
-8. Only an accepted candidate workspace is packaged and installed as N+1; N's cached files must remain byte-identical.
+Point a target repository at the resulting Codex binary, install or select the optional configuration with the preview-first lifecycle tool, then invoke the plugin skills. Runtime state is written only to the target repository's `.codex/orchestra/runs/`.
 
-Promotion requires deterministic validation plus a fresh Codex task using the installed candidate. A failed candidate is removed while the known-good version remains available.
+Promotion requires the Rust workspace suite, lifecycle doctor, pinned Codex build, vertical slice, and an explicit interactive record.

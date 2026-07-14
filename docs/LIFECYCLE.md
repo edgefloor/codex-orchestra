@@ -1,16 +1,7 @@
-# Lifecycle commands
+# Lifecycle
 
-Run commands through the locked development environment:
+Plugin configuration installation is preview-first and hash-managed. Upgrade snapshots are reversible, uninstall preserves modified files, and run artifacts are never removed.
 
-```text
-uv run --locked python scripts/lifecycle.py doctor
-uv run --locked python scripts/lifecycle.py project --target <repo>
-uv run --locked python scripts/lifecycle.py project --target <repo> --apply
-uv run --locked python scripts/lifecycle.py upgrade --target <repo> --apply
-uv run --locked python scripts/lifecycle.py rollback --target <repo> --apply
-uv run --locked python scripts/lifecycle.py uninstall --target <repo> --apply
-```
+The `orchestra-lifecycle` Rust binary owns project/profile installation, upgrades, rollback, uninstall, and capability diagnostics. From a source checkout, invoke it with `cargo run -p codex-orchestra-lifecycle -- <command>`.
 
-`doctor` validates the manifest, TOML, native multi-agent availability, and strict Codex configuration loading. Project initialization creates only `.codex/orchestra/workflows/`, `runs/`, and `install/`.
-
-Preview is the default. Managed-file hashes prevent an upgrade, rollback, or uninstall from overwriting user modifications. Workflow definitions and run artifacts are always preserved.
+The Rust extension is built into the pinned custom Codex binary; it is not copied into the installed plugin directory. Updating Codex requires changing the full revision pin, regenerating the minimal patch against that source, and rerunning the integration build before changing the plugin version.

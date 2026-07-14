@@ -1,0 +1,18 @@
+[package]
+name = "codex-orchestra-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Runtime-owned compiler and scheduler for Codex Orchestra"
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile = "3.23.0"
+

@@ -4,4 +4,4 @@ These scenarios test observable workflow behavior against an installed candidate
 
 For each scenario, record source revision, workflow snapshot, run state, step results, evidence, elapsed time, spawned agents, user interventions, and residual risk. Fail fast on authority loss, unsafe shared writes, missing evidence, unbounded retries, cache mutation, or transcript-dependent recovery.
 
-`workflows/native-vertical-slice.yaml` is the executable self-hosting fixture.
+`workflows/native-vertical-slice.workflow.ts` is the restricted compiler and self-hosting fixture.

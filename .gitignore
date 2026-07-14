@@ -1,7 +1,4 @@
-.venv/
-__pycache__/
-*.py[cod]
-.pytest_cache/
+target/
 .DS_Store
 .codex/config.toml
 .codex/agents/
