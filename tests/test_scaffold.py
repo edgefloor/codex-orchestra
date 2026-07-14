@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -33,6 +35,25 @@ class ScaffoldTests(unittest.TestCase):
         self.assertNotIn("apps", manifest)
         self.assertNotIn("hooks", manifest)
 
+    def test_plugin_layout_accepts_source_and_versioned_cache_only(self) -> None:
+        manifest = json.loads((PLUGIN / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
+        self.assertTrue(lifecycle.plugin_layout_matches_manifest(PLUGIN, manifest))
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / manifest["name"] / manifest["version"]
+            shutil.copytree(
+                PLUGIN,
+                cache,
+                ignore=shutil.ignore_patterns(".codex", ".git", ".venv", "__pycache__"),
+            )
+            self.assertTrue(lifecycle.plugin_layout_matches_manifest(cache, manifest))
+            self.assertFalse(lifecycle.plugin_layout_matches_manifest(Path(tmp) / "unrelated", manifest))
+            self.assertFalse(
+                lifecycle.plugin_layout_matches_manifest(Path(tmp) / "other-plugin" / manifest["version"], manifest)
+            )
+            self.assertFalse(
+                lifecycle.plugin_layout_matches_manifest(Path(tmp) / manifest["name"] / "other-version", manifest)
+            )
+
     def test_skill_surface_is_discoverable(self) -> None:
         skills = sorted((PLUGIN / "skills").glob("*/SKILL.md"))
         self.assertGreaterEqual(len(skills), 12)
@@ -52,7 +73,17 @@ class ScaffoldTests(unittest.TestCase):
         self.assertNotIn("model", project)
 
     def test_mutable_state_is_not_bundled_in_plugin(self) -> None:
-        self.assertFalse((PLUGIN / ".codex/orchestra").exists())
+        state_root = PLUGIN / ".codex/orchestra"
+        if (PLUGIN / ".git").exists():
+            tracked = subprocess.run(
+                ["git", "-C", str(PLUGIN), "ls-files", "--", ".codex/orchestra"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(tracked.stdout, "")
+        else:
+            self.assertFalse(state_root.exists())
         policy = (PLUGIN / "assets/policies/orchestration.yaml").read_text(encoding="utf-8")
         self.assertIn("state_root: .codex/orchestra", policy)
 

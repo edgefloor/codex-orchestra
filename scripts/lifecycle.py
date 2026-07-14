@@ -239,11 +239,17 @@ def manifest() -> dict:
     return json.loads((PLUGIN / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
 
 
+def plugin_layout_matches_manifest(plugin: Path, data: dict) -> bool:
+    name = data.get("name")
+    version = data.get("version")
+    return plugin.name == name or (plugin.parent.name == name and plugin.name == version)
+
+
 def doctor() -> int:
     errors: list[str] = []
     notes: list[str] = []
     data = manifest()
-    if data.get("name") != PLUGIN.name:
+    if not plugin_layout_matches_manifest(PLUGIN, data):
         errors.append("plugin name does not match its directory")
     if any((PLUGIN / name).exists() for name in (".mcp.json", ".app.json")):
         errors.append("external runtime integration is outside the scaffold boundary")
