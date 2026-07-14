@@ -23,7 +23,7 @@ fn manifest() -> Value {
 #[test]
 fn manifest_describes_native_v2_surface_without_external_runtime() {
     let manifest = manifest();
-    assert_eq!(manifest["name"], "codex-orchestra");
+    assert_eq!(manifest["name"], "orchestra");
     assert!(
         manifest["version"]
             .as_str()

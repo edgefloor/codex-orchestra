@@ -2,11 +2,11 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/dark-logo.png">
     <source media="(prefers-color-scheme: light)" srcset="assets/light-logo.png">
-    <img alt="Codex Orchestra — Dynamic, reviewable multi-agent workflows for Codex" src="assets/light-logo.png" width="700">
+    <img alt="Orchestra — Dynamic, reviewable multi-agent workflows for Codex" src="assets/light-logo.png" width="700">
   </picture>
 </div>
 
-Codex Orchestra is a workflow runtime for composing task-specific Codex agents, checks, approvals, retries, and parallel stages. A workflow declares the work; a Rust runtime validates the plan, schedules it through the active Codex task, and persists enough state to inspect or resume the run.
+Orchestra is a workflow runtime for composing task-specific Codex agents, checks, approvals, retries, and parallel stages. A workflow declares the work; a Rust runtime validates the plan, schedules it through the active Codex task, and persists enough state to inspect or resume the run.
 
 1. Write a restricted `.workflow.ts` file.
 2. Validate and run it through Orchestra's native Codex tools.

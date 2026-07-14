@@ -1,9 +1,9 @@
 {
-  "name": "codex-orchestra",
+  "name": "orchestra",
   "version": "0.2.0+codex.f90e7dee",
   "description": "Author and operate native V2 Orchestra workflows in an Orchestra-enabled Codex build",
   "author": {
-    "name": "Codex Orchestra contributors"
+    "name": "Orchestra contributors"
   },
   "license": "MIT",
   "keywords": [
@@ -13,10 +13,10 @@
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Codex Orchestra",
+    "displayName": "Orchestra",
     "shortDescription": "Operate native V2 Orchestra workflows.",
     "longDescription": "Author restricted TypeScript workflows and run them through the Rust Orchestra extension using the active thread's native V2 AgentControl.",
-    "developerName": "Codex Orchestra contributors",
+    "developerName": "Orchestra contributors",
     "category": "Productivity",
     "capabilities": [
       "Interactive",

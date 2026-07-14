@@ -1,4 +1,4 @@
-//! Codex Orchestra's host-independent workflow compiler and runtime.
+//! Orchestra's host-independent workflow compiler and runtime.
 //!
 //! Workflow TypeScript is parsed as a restricted data language. It is never
 //! evaluated by a JavaScript engine and cannot execute user code.

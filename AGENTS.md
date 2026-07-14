@@ -1,6 +1,6 @@
-# Codex Orchestra development guide
+# Orchestra development guide
 
-Codex Orchestra is a native V2 Rust runtime with an installable plugin for skills, configuration, and documentation. Keep orchestration on the active thread's native `AgentControl` path through the pinned Codex integration.
+Orchestra is a native V2 Rust runtime with an installable plugin for skills, configuration, and documentation. Keep orchestration on the active thread's native `AgentControl` path through the pinned Codex integration.
 
 - Do not add an MCP server, App Server client, daemon, sidecar, external scheduler, or hidden control plane.
 - Treat `CONTEXT.md` as the domain-language source and `docs/adr/` as the architectural decision record.

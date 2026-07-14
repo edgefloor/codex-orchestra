@@ -1,4 +1,4 @@
-# Codex Orchestra
+# Orchestra
 
 ## Domain language
 

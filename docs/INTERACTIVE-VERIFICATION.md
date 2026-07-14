@@ -6,7 +6,7 @@ Run the Rust workspace suite, lifecycle doctor, plugin validator, and pinned Cod
 
 ## Stage 1 — fresh plugin discovery
 
-Install the packaged candidate, start a task outside the source repository, invoke `$codex-orchestra:orchestrate`, and confirm it requires the native tool surface rather than emulating a scheduler.
+Install the packaged candidate, start a task outside the source repository, invoke `$orchestra:orchestrate`, and confirm it requires the native tool surface rather than emulating a scheduler.
 
 ## Stage 2 — native tool surface
 
