@@ -1,5 +1,0 @@
-interface:
-  display_name: "Run Bounded Branch"
-  short_description: "Explicit Codex Orchestra procedure: run-bounded-branch."
-policy:
-  allow_implicit_invocation: false

@@ -1,5 +1,0 @@
-interface:
-  display_name: "Lead Workstream"
-  short_description: "Explicit Codex Orchestra procedure: lead-workstream."
-policy:
-  allow_implicit_invocation: false

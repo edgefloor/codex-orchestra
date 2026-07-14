@@ -1,5 +1,0 @@
-interface:
-  display_name: "Architect Delivery"
-  short_description: "Explicit Codex Orchestra procedure: architect-delivery."
-policy:
-  allow_implicit_invocation: false

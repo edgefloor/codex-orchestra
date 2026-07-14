@@ -1,5 +1,0 @@
-interface:
-  display_name: "Design Role"
-  short_description: "Explicit Codex Orchestra procedure: design-role."
-policy:
-  allow_implicit_invocation: false

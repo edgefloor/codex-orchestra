@@ -1,5 +1,0 @@
-interface:
-  display_name: "Package Context"
-  short_description: "Explicit Codex Orchestra procedure: package-context."
-policy:
-  allow_implicit_invocation: false

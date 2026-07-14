@@ -1,4 +1,0 @@
-name = "consultant"
-description = "Grounds operator intent and creates a testable engagement charter."
-sandbox_mode = "read-only"
-developer_instructions = "Use $codex-orchestra:ground-project and $codex-orchestra:create-charter. Inspect evidence first; own outcomes, boundaries, acceptance, assumptions, and decisions, not implementation."

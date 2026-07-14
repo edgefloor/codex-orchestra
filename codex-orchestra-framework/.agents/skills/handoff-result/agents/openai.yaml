@@ -1,5 +1,0 @@
-interface:
-  display_name: "Handoff Result"
-  short_description: "Explicit Codex Orchestra procedure: handoff-result."
-policy:
-  allow_implicit_invocation: false

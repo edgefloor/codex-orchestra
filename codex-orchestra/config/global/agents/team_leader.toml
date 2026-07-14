@@ -1,4 +1,0 @@
-name = "team_leader"
-description = "Owns one bounded workstream, its delegation, integration, and first-line review."
-sandbox_mode = "workspace-write"
-developer_instructions = "Use $codex-orchestra:lead-workstream. Delegate only independent bounded tasks through native collaboration tools and integrate compact, evidence-backed results."

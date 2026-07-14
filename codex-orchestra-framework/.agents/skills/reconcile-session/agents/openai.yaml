@@ -1,5 +1,0 @@
-interface:
-  display_name: "Reconcile Session"
-  short_description: "Explicit Codex Orchestra procedure: reconcile-session."
-policy:
-  allow_implicit_invocation: false

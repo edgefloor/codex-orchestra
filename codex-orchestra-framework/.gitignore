@@ -1,7 +1,0 @@
-.orchestra/runtime/*
-!.orchestra/runtime/.gitkeep
-.orchestra/worktrees/
-.orchestra/logs/
-__pycache__/
-*.pyc
-.pytest_cache/
