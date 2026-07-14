@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/dark-logo.png">
     <source media="(prefers-color-scheme: light)" srcset="assets/light-logo.png">
-    <img alt="Codex Orchestra — Dynamic, reviewable multi-agent workflows for Codex" src="assets/light-logo.png" height="400" style="margin-bottom: 20px;">
+    <img alt="Codex Orchestra — Dynamic, reviewable multi-agent workflows for Codex" src="assets/light-logo.png" width="700">
   </picture>
 </div>
 
