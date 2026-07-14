@@ -1,0 +1,86 @@
+version: 2
+mode: codex_multi_agent_v2
+physical_topology: bounded_hierarchy
+logical_topology_rule: physical_parent_matches_operational_owner_unless_a_recorded_exception_exists
+global_control_authority: root_conductor
+
+principles:
+  - Child completion belongs to the closest competent parent, not automatically to the operator-facing root.
+  - Only compact branch reports travel upward; task transcripts and raw worker chatter remain in the branch.
+  - A collaboration tool call requires both role authority and a recorded Delegation Permit.
+  - Repository artifacts are durable truth; V2 mailboxes are live transport, not the project database.
+
+spawn_authority:
+  root:
+    allowed_children: [consultant, delivery_architect, manager, quality_governor]
+    purpose: phase_owners_and_operator_facing_governance
+  consultant:
+    allowed_children: [explorer_terra, advisor_sol]
+    purpose: bounded_read_only_grounding_questions
+  delivery_architect:
+    allowed_children: [explorer_terra, advisor_sol]
+    purpose: bounded_read_only_plan_evidence_and_independent_design_challenge
+  manager:
+    allowed_children: [team_leader, role_architect]
+    purpose: people_management_only
+    prohibited_children: [context_engineer, worker_luna, worker_terra, worker_sol, reviewer_terra, verifier_terra]
+  team_leader:
+    allowed_children: [context_engineer, explorer_terra, advisor_sol, worker_luna, worker_terra, worker_sol, reviewer_terra]
+    purpose: one_approved_workstream_wave
+  quality_governor:
+    allowed_children: [verifier_terra, advisor_sol]
+    purpose: independent_assurance_evidence
+  leaf_roles:
+    roles: [role_architect, context_engineer, explorer_terra, advisor_sol, worker_luna, worker_terra, worker_sol, reviewer_terra, verifier_terra]
+    allowed_children: []
+
+persistent_instance_policy:
+  project_resident: [consultant, manager, quality_governor]
+  phase_resident: [delivery_architect]
+  workstream_resident: [team_leader]
+  branch_service_resident: [role_architect, context_engineer]
+  task_scoped: [explorer_terra, advisor_sol, worker_luna, worker_terra, worker_sol, reviewer_terra, verifier_terra]
+  meaning: Persistent means a stable TOML, canonical path, durable role memory, and reusable resident thread; it does not mean an unbounded transcript.
+
+fork_policy:
+  default: none
+  bounded_recent_turns: allowed_for_immediate_parent_child_continuation_only
+  full_history: exceptional_and_recorded
+  full_history_caveat: Cannot combine with agent_type, model, or reasoning_effort overrides.
+
+message_policy:
+  child_to_parent_completion: automatic_v2_notification_plus_typed_result_ref
+  send_message: passive_delta_or_receipt_that_may_wait
+  followup_task: new_work_or_immediate_review_consumes_slot
+  wait_agent: parent_local_event_loop_not_polling
+  list_agents: startup_recovery_path_reconciliation_or_incident_only
+  interrupt_agent: stale_cancelled_runaway_or_policy_stop
+  root_delivery: use_send_message_to_root_for_compact_collaboration_receipts_and_branch_reports
+
+completion_policy:
+  task_transition_requires: [schema_validation, authority_validation, scope_revision, alignment_digest, lease, write_domain, evidence]
+  completion_notification_alone_is_never_authoritative: true
+  upward_summary_limits:
+    key_findings: 5
+    normal_words: 250
+    checkpoint_words: 600
+
+fanout_budget:
+  max_live_threads: 10
+  max_depth: 3
+  max_active_team_leaders: 2
+  max_new_children_per_team_leader_wave: 3
+  max_parallel_writers_per_workstream: 2
+  max_parallel_writers_global: 4
+  max_read_only_children_per_analysis_branch: 4
+  max_dynamic_workflow_nodes_without_operator_override: 12
+  reserve_slots:
+    root_or_manager_control: 1
+    quality_or_emergency: 1
+  hidden_recursive_orchestration: prohibited
+
+reasoning_policy:
+  max: single_agent_extended_reasoning_requires_cost_justification_for_routine_use
+  ultra: orchestration_topology_not_scalar_reasoning
+  ultra_default: prohibited
+  ultra_exception_requires: [named_owner, child_budget, concurrency_budget, token_or_time_budget, isolation_boundary, stop_condition, recorded_authorization]

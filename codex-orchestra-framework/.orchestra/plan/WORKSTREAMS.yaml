@@ -1,0 +1,10 @@
+status: draft
+scope_revision: 0
+workstreams: []
+# - id: platform
+#   mission: <cohesive responsibility>
+#   owns: []
+#   consumes: []
+#   produces: []
+#   integration_boundary: <seam>
+#   accountable_team_leader: null

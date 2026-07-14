@@ -1,0 +1,30 @@
+message_type: portfolio_checkpoint
+message_id: msg-portfolio-m1-001
+project_id: example-project
+phase: EXECUTING
+milestone: M1
+scope_revision: 1
+alignment_digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+sender: /root/manager
+summary: Workstream ownership is stable; one capacity decision is due before the next wave.
+workstreams:
+  - id: platform
+    owner: /root/manager/tl_platform
+    health: on_track
+    active_capacity: 2
+    capacity_limit: 3
+    organizational_consequence: null
+    branch_report_ref: artifact://branch-reports/platform-wave-1
+open_decision_refs:
+  - decision://capacity-platform-wave-2
+drift_alert_refs: []
+assurance_status: Required M1 verification seats remain reserved.
+resource_totals:
+  active_threads: 5
+  reserved_control_threads: 2
+  reserved_verification_threads: 2
+  retries: 0
+recommendation: continue
+evidence_refs:
+  - artifact://portfolio-snapshots/m1-001
+requested_action: Conductor should continue M1 and preserve the reserved verification capacity.

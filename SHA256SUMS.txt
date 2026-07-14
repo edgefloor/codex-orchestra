@@ -1,0 +1,3 @@
+79098f2e9222634799a9adc7db3790507ce685f2657bf2a083df17bde78d4e01  codex-orchestra-r2-assessment-and-design.md
+8a61b85169fd0b7e4ff53a1205732ce52a7780066e164d7340886adf9911b60e  codex-orchestra-r2-example-workflow.yaml
+9fa2a11766df9382658deed35b4de4e10e619be9b7643dabc7570a50e7f9b230  codex-orchestra-r2-workflow.schema.json

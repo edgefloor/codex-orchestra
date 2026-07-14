@@ -1,0 +1,5 @@
+interface:
+  display_name: "Ground Project"
+  short_description: "Explicit Codex Orchestra procedure: ground-project."
+policy:
+  allow_implicit_invocation: false

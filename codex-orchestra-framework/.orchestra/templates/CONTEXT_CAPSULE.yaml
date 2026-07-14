@@ -1,0 +1,64 @@
+identity:
+  capsule_id: capsule-task-example-01-a1
+  task_id: task-example-01
+  project_id: project-example
+  scope_revision: 0
+  alignment_digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  delegation_permit_ref: artifact://permits/permit-api-wave-01
+  role_card_ref: artifact://roles/role-api-worker
+assignment:
+  title: Implement the bounded example API change
+  goal: Deliver the requested API behavior without changing unrelated contracts.
+  definition_of_done:
+    - All acceptance criteria pass.
+  deliverables:
+    - Source changes and focused tests for task-example-01.
+boundaries:
+  writable_paths:
+    - src/example/**
+    - tests/example/**
+  forbidden_paths:
+    - infra/production/**
+  non_goals:
+    - Redesign unrelated APIs.
+constraints:
+  - Preserve backward compatibility outside the named contract.
+interfaces:
+  consumes:
+    - artifact://contracts/example-api-v1
+  produces:
+    - artifact://changes/task-example-01-a1
+context:
+  must_read:
+    - ref: .orchestra/charter/BRIEF.md
+      why: Defines the approved product outcome.
+    - ref: src/example/api.py
+      why: Contains the target implementation surface.
+  read_on_demand:
+    - ref: docs/example-api.md
+      why: Explains the public contract.
+      trigger: Open only when implementation behavior is ambiguous.
+execution:
+  base_revision: 0123456789abcdef0123456789abcdef01234567
+  worktree_ref: worktree://task-example-01-a1
+  dependencies: []
+  stop_conditions:
+    - Scope revision or alignment digest changes.
+    - A write-domain conflict or unsafe action is detected.
+validation:
+  commands:
+    - python -m pytest tests/example -q
+  evidence_required:
+    - Passing focused test output.
+escalation:
+  reports_to: /root/manager/tl_api
+  decision_authority: team-leader-api
+  default_when_reversible: Choose the smallest backward-compatible change.
+output:
+  schema_ref: .orchestra/schemas/result-envelope.schema.json
+  artifact_directory: .orchestra/runtime/artifacts/task-example-01-a1
+budget:
+  target_input_tokens: 6000
+  max_summary_words: 250
+  max_tool_calls: 40
+  max_child_agents: 0

@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "orchestra/message-envelope.schema.json",
+  "title": "Orchestra Message Envelope",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "message_type",
+    "message_id",
+    "project_id",
+    "scope_revision",
+    "alignment_digest",
+    "sender",
+    "summary",
+    "requested_action"
+  ],
+  "properties": {
+    "message_type": {
+      "type": "string",
+      "enum": [
+        "grounding_result",
+        "delivery_plan",
+        "staffing_decision",
+        "phase_recommendation",
+        "delegation_decision",
+        "hire_request",
+        "role_card",
+        "duplicate_role_recommendation",
+        "context_capsule",
+        "tactical_plan",
+        "portfolio_checkpoint",
+        "status",
+        "result",
+        "verification_result",
+        "verifier_request",
+        "gate_plan",
+        "gate_report",
+        "blocker",
+        "decision_request",
+        "drift_alert",
+        "handoff"
+      ]
+    },
+    "message_id": {
+      "type": "string",
+      "minLength": 4
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scope_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "alignment_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "sender": {
+      "type": "string",
+      "minLength": 1
+    },
+    "recipient": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "requested_action": {
+      "type": "string",
+      "minLength": 1
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 50
+    },
+    "artifact_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 50
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

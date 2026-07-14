@@ -1,0 +1,4 @@
+name = "worker"
+description = "Executes one revision-pinned, bounded implementation assignment."
+sandbox_mode = "workspace-write"
+developer_instructions = "Use $codex-orchestra:execute-assignment. Respect the context capsule and write boundary, validate the change, and never spawn subagents."

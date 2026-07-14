@@ -1,0 +1,34 @@
+permit_id: permit-api-wave-01
+project_id: project-example
+issued_by: /root/manager
+parent_path: /root/manager/tl_api
+parent_role: team_leader
+scope_revision: 0
+alignment_digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+purpose_refs:
+  - artifact://waves/api-wave-01
+allowed_child_types:
+  - context_engineer
+  - worker_terra
+  - reviewer_terra
+allowed_task_refs:
+  - task-example-01
+budget:
+  max_children: 3
+  max_concurrency: 2
+  max_total_attempts: 4
+  token_or_time_class: standard
+write_policy:
+  max_parallel_writers: 2
+  require_worktree: true
+  allowed_domains:
+    - src/example/**
+    - tests/example/**
+valid_from: "2026-07-14T00:00:00Z"
+expires_at: "2026-07-15T00:00:00Z"
+stop_conditions:
+  - Wave checkpoint reached.
+  - Scope revision or alignment digest changes.
+  - A write-domain conflict or policy violation is detected.
+exception_authorization_ref: null
+status: active

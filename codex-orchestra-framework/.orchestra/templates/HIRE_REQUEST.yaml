@@ -1,0 +1,30 @@
+message_type: hire_request
+request_id: hire-api-worker-01
+requester: team-leader-api
+requester_path: /root/manager/tl_api
+reports_to: team-leader-api
+physical_parent_path: /root/manager/tl_api
+capability_gap: The workstream needs an isolated API implementation owner.
+required_outcomes:
+  - Implement and test task-example-01 inside its assigned write domain.
+outcomes_unlocked:
+  - The API milestone can proceed without blocking the Team Leader's integration work.
+why_current_team_cannot_absorb: Existing seats are occupied by integration and independent review.
+expected_lifetime: one_task
+estimated_utilization: one bounded implementation attempt
+urgency: normal
+cost_of_delay: The API milestone remains blocked.
+access_requirements:
+  sandbox: workspace-write
+  tools:
+    - shell
+  data_classification: internal
+independence_constraints:
+  - Must not self-approve the change.
+suggested_archetype: worker_terra
+tasks_or_milestones:
+  - task-example-01
+delegation_budget_needed:
+  seat_count: 1
+  max_concurrency: 1
+  expected_attempts: 1

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-orchestra.local/schemas/run-state.schema.json",
+  "title": "Codex Orchestra run state",
+  "type": "object",
+  "required": ["run_id", "charter_revision", "plan_revision", "status", "updated_at"],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1},
+    "charter_revision": {"type": "string", "minLength": 1},
+    "plan_revision": {"type": "string", "minLength": 1},
+    "status": {"enum": ["grounding", "planning", "executing", "verifying", "blocked", "closed"]},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "next_action": {"type": "string"}
+  },
+  "additionalProperties": false
+}

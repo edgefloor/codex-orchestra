@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-orchestra.local/schemas/result.schema.json",
+  "title": "Codex Orchestra assignment result",
+  "type": "object",
+  "required": ["task_id", "status", "summary", "changed_files", "checks"],
+  "properties": {
+    "task_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["complete", "blocked", "failed"]},
+    "summary": {"type": "string", "minLength": 1},
+    "changed_files": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "checks": {"type": "array", "items": {"type": "string"}},
+    "residual_risks": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

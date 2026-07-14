@@ -1,0 +1,39 @@
+version: 1
+baseline_gates:
+  - id: acceptance-trace
+    evidence: Every acceptance item maps to executable or inspectable evidence.
+  - id: changed-surface-tests
+    evidence: Tests/checks cover the behavior changed by the milestone.
+  - id: integration-review
+    evidence: Team Leader confirms interface and write-domain conformance.
+  - id: residual-risk
+    evidence: Known residual risks and assumptions are explicit.
+conditional_rules:
+  - when: {maturity: [spike]}
+    require: [timeboxed-learning-note, no-production-deployment]
+  - when: {maturity: [prototype]}
+    require: [smoke-test, operator-demo]
+  - when: {maturity: [beta]}
+    require: [affected-test-suite, peer-review, basic-observability]
+  - when: {maturity: [production, regulated]}
+    require: [full-relevant-suite, independent-review, rollback-plan, operational-docs, observability-check]
+  - when: {maturity: [regulated]}
+    require: [requirements-traceability, compliance-review, audit-evidence-retention]
+  - when: {data_sensitivity: [confidential, restricted]}
+    require: [data-flow-review, secret-scan, access-boundary-test, logging-redaction-check]
+  - when: {data_sensitivity: [restricted]}
+    require: [threat-model, independent-security-review]
+  - when: {blast_radius: [customer, platform]}
+    require: [staged-rollout, rollback-rehearsal, compatibility-review]
+  - when: {reversibility: [migration]}
+    require: [migration-dry-run, backup-or-forward-fix-plan, data-validation]
+  - when: {reversibility: [irreversible]}
+    require: [operator-approval, independent-review, recovery-proof-or-explicit-risk-acceptance]
+  - when: {availability: [critical]}
+    require: [load-or-failure-test, monitoring-alert-review, runbook, recovery-objective-check]
+  - when: {compliance: [policy, regulatory]}
+    require: [control-mapping, named-reviewer, evidence-retention]
+waivers:
+  mandatory_fields: [gate_id, rationale, residual_risk, authority, expires_at, compensating_control]
+  never_implicit: true
+composition: Union all matching requirements, then remove only by an explicitly authorized waiver.

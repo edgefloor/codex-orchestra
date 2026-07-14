@@ -1,0 +1,5 @@
+interface:
+  display_name: "Manage Taskforce"
+  short_description: "Explicit Codex Orchestra procedure: manage-taskforce."
+policy:
+  allow_implicit_invocation: false

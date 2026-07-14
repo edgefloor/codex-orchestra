@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "orchestra/blocker.schema.json",
+  "title": "Blocker",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "message_type",
+    "message_id",
+    "project_id",
+    "scope_revision",
+    "alignment_digest",
+    "sender",
+    "category",
+    "statement",
+    "evidence_refs",
+    "attempts",
+    "impact",
+    "owner",
+    "recommended_recovery",
+    "reversible_default",
+    "requested_action"
+  ],
+  "properties": {
+    "message_type": {
+      "const": "blocker"
+    },
+    "message_id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "scope_revision": {
+      "type": "integer"
+    },
+    "alignment_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-fA-F0-9]{64}$"
+    },
+    "sender": {
+      "type": "string"
+    },
+    "category": {
+      "enum": [
+        "missing_authority_or_credential",
+        "contradictory_binding_requirements",
+        "unavailable_mandatory_dependency",
+        "safety_or_policy_boundary",
+        "irreversible_decision_outside_authority"
+      ]
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "attempts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "impact": {
+      "type": "string"
+    },
+    "owner": {
+      "type": "string"
+    },
+    "recommended_recovery": {
+      "type": "string"
+    },
+    "reversible_default": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "requested_action": {
+      "type": "string"
+    }
+  }
+}

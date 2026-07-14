@@ -1,0 +1,22 @@
+message_type: staffing_decision
+message_id: msg-example-staffing-decision
+project_id: project-example
+scope_revision: 0
+alignment_digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+sender: manager
+summary: Replace with the decision and its people, capacity, or priority consequence.
+decision:
+  kind: appoint_owner # appoint_owner | hire | reject_hire | release | rebalance | priority | pause | continue | replan | reground
+  rationale: Replace with a people, capacity, or priority rationale.
+  effective_at: milestone-example
+assignments: []
+capacity_changes: []
+hire_request_refs: []
+delegation_permit_refs:
+  - .orchestra/runtime/permits/permit-team-leader-example.yaml
+physical_parent_assignments:
+  - child_role: team_leader
+    parent_path: /root/manager
+constraints_for_delegate: []
+follow_up_owner: conductor
+requested_action: apply_staffing_decision

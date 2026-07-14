@@ -1,0 +1,24 @@
+{
+  "name": "codex-orchestra",
+  "version": "0.1.0",
+  "description": "Repository-native orchestration workflows for Codex",
+  "author": {
+    "name": "Codex Orchestra contributors"
+  },
+  "license": "MIT",
+  "keywords": ["orchestration", "multi-agent", "delivery"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Orchestra",
+    "shortDescription": "Coordinate bounded, repository-native Codex delivery.",
+    "longDescription": "Codex-native skills, agent templates, and repository artifacts for planning, delegation, review, verification, recovery, and handoff without an external control plane.",
+    "developerName": "Codex Orchestra contributors",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": [
+      "Orchestrate this repository-native delivery task.",
+      "Ground this project and draft an engagement charter.",
+      "Recover the interrupted Orchestra run."
+    ]
+  }
+}

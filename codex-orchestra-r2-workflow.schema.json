@@ -1,0 +1,773 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:openai:codex-orchestra:workflow:v2alpha1",
+  "title": "Codex Orchestra R2 Workflow",
+  "description": "A durable, policy-admitted work graph executed through Codex App Server.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "orchestra.openai/v2alpha1"
+    },
+    "kind": {
+      "const": "Workflow"
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/WorkflowSpec"
+    }
+  },
+  "$defs": {
+    "Metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,62}$"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 200
+          }
+        }
+      }
+    },
+    "WorkflowSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objective",
+        "budgets",
+        "policies",
+        "graph"
+      ],
+      "properties": {
+        "objective": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "acceptanceCriteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "budgets": {
+          "$ref": "#/$defs/Budgets"
+        },
+        "policies": {
+          "$ref": "#/$defs/Policies"
+        },
+        "graph": {
+          "$ref": "#/$defs/Graph"
+        }
+      }
+    },
+    "Budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxNodes",
+        "maxActiveTurns",
+        "maxWriterAttempts",
+        "maxAttemptsPerNode"
+      ],
+      "properties": {
+        "maxNodes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "maxActiveTurns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "maxWriterAttempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 128
+        },
+        "verificationReserve": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 128
+        },
+        "mergeReserve": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 32
+        },
+        "maxAttemptsPerNode": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "tokenBudget": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "wallTimeSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "costBudgetUsd": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "Policies": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "defaultForkPolicy",
+        "defaultSubagentDepth",
+        "writeIsolation",
+        "graphAdmission"
+      ],
+      "properties": {
+        "defaultForkPolicy": {
+          "enum": [
+            "none",
+            "recent",
+            "all"
+          ]
+        },
+        "defaultSubagentDepth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "writeIsolation": {
+          "enum": [
+            "required",
+            "preferred",
+            "disabled"
+          ]
+        },
+        "graphAdmission": {
+          "enum": [
+            "deterministic",
+            "human-for-expansion",
+            "manual"
+          ]
+        },
+        "secretDelivery": {
+          "enum": [
+            "brokered-tools-only",
+            "scoped-env",
+            "host-env"
+          ]
+        },
+        "irreversibleActionGate": {
+          "enum": [
+            "human",
+            "policy",
+            "disabled"
+          ]
+        },
+        "allowExperimentalCodexApis": {
+          "type": "boolean"
+        },
+        "allowedToolNamespaces": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "Graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nodes"
+      ],
+      "properties": {
+        "allowDynamicExpansion": {
+          "type": "boolean",
+          "default": false
+        },
+        "maxDynamicNodesPerDelta": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/Node"
+          }
+        }
+      }
+    },
+    "Node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "objective"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,127}$"
+        },
+        "kind": {
+          "enum": [
+            "plan",
+            "agent",
+            "tool",
+            "map",
+            "reduce",
+            "join",
+            "evaluator",
+            "human_gate",
+            "merge",
+            "publish"
+          ]
+        },
+        "objective": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "dependsOn": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.-]{0,127}$"
+          }
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          }
+        },
+        "produces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArtifactDeclaration"
+          }
+        },
+        "execution": {
+          "$ref": "#/$defs/Execution"
+        },
+        "workspace": {
+          "$ref": "#/$defs/Workspace"
+        },
+        "context": {
+          "$ref": "#/$defs/ContextPolicy"
+        },
+        "retry": {
+          "$ref": "#/$defs/RetryPolicy"
+        },
+        "assurance": {
+          "$ref": "#/$defs/Assurance"
+        },
+        "cache": {
+          "$ref": "#/$defs/CachePolicy"
+        },
+        "stop": {
+          "$ref": "#/$defs/StopPolicy"
+        },
+        "nodeBudget": {
+          "$ref": "#/$defs/NodeBudget"
+        },
+        "outputSchema": {
+          "type": "object"
+        },
+        "mayProposeGraphDelta": {
+          "type": "boolean",
+          "default": false
+        },
+        "approval": {
+          "$ref": "#/$defs/Approval"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "agent",
+                  "plan",
+                  "evaluator"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "execution"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "human_gate"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "approval"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "merge"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "workspace"
+            ]
+          }
+        }
+      ]
+    },
+    "Execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider"
+      ],
+      "properties": {
+        "provider": {
+          "enum": [
+            "codex",
+            "deterministic",
+            "human"
+          ]
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modelProfile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "threadPolicy": {
+          "enum": [
+            "fresh",
+            "resume",
+            "fork"
+          ]
+        },
+        "forkPolicy": {
+          "enum": [
+            "none",
+            "recent",
+            "all"
+          ]
+        },
+        "forkLastTurns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "sandbox": {
+          "enum": [
+            "read_only",
+            "workspace_write",
+            "full_access"
+          ]
+        },
+        "approvalProfile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceTier": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subagents": {
+          "$ref": "#/$defs/SubagentPolicy"
+        },
+        "toolAllowlist": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "SubagentPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "maxThreads",
+        "maxDepth"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "disabled",
+            "read_only",
+            "bounded_write"
+          ]
+        },
+        "maxThreads": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "maxDepth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "requireExplicitForkNone": {
+          "type": "boolean",
+          "default": true
+        },
+        "allowedRoles": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "Workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "none",
+            "read_only_snapshot",
+            "worktree",
+            "container",
+            "remote"
+          ]
+        },
+        "baseRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branchPrefix": {
+          "type": "string",
+          "minLength": 1
+        },
+        "writeSet": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "cleanup": {
+          "enum": [
+            "retain",
+            "on_success",
+            "always"
+          ]
+        },
+        "readOnly": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ContextPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "enum": [
+            "manifest",
+            "fresh",
+            "fork",
+            "resume"
+          ]
+        },
+        "includeArtifacts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "includeDecisions": {
+          "type": "boolean"
+        },
+        "includeRawTranscript": {
+          "type": "boolean"
+        },
+        "maxInputTokens": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "RetryPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "backoff": {
+          "enum": [
+            "none",
+            "fixed",
+            "exponential"
+          ]
+        },
+        "baseDelaySeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retryOn": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "infrastructure",
+              "rate_limit",
+              "timeout",
+              "verification_failure",
+              "merge_conflict",
+              "model_error"
+            ]
+          }
+        }
+      }
+    },
+    "Assurance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "risk": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "requiredGates": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "independentReviewer": {
+          "type": "boolean"
+        },
+        "independentVerifier": {
+          "type": "boolean"
+        },
+        "evidenceRequired": {
+          "type": "boolean"
+        }
+      }
+    },
+    "CachePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "off",
+            "read",
+            "read_write"
+          ]
+        },
+        "keyInputs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "ttlSeconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "StopPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "onSuccess": {
+          "type": "boolean"
+        },
+        "maxRepairRounds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "noProgressRounds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "onBudgetExhaustion": {
+          "enum": [
+            "fail",
+            "pause",
+            "request_approval"
+          ]
+        }
+      }
+    },
+    "NodeBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tokenBudget": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "wallTimeSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxSubagents": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      }
+    },
+    "Approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "prompt",
+        "requiredRole"
+      ],
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "requiredRole": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expiresAfterSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "onExpiry": {
+          "enum": [
+            "pause",
+            "reject",
+            "cancel"
+          ]
+        }
+      }
+    },
+    "ArtifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "name"
+      ],
+      "properties": {
+        "from": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,127}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "ArtifactDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "mediaType"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentAddressed": {
+          "type": "boolean",
+          "default": true
+        },
+        "retention": {
+          "enum": [
+            "run",
+            "project",
+            "permanent"
+          ]
+        }
+      }
+    }
+  }
+}

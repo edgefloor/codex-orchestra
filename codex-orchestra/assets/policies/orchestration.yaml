@@ -1,0 +1,14 @@
+version: 1
+state_root: .codex/orchestra
+native_only: true
+delegation:
+  parent_owns_join: true
+  default_fork_turns: none
+  leaf_may_spawn: false
+  require_write_boundary: true
+assurance:
+  independent_review_for_code: true
+  evidence_before_acceptance: true
+bootstrap:
+  conductor_must_not_modify_cached_installation: true
+  preserve_known_good_version: true

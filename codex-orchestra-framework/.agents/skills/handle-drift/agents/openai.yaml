@@ -1,0 +1,5 @@
+interface:
+  display_name: "Handle Drift"
+  short_description: "Explicit Codex Orchestra procedure: handle-drift."
+policy:
+  allow_implicit_invocation: false

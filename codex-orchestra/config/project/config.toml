@@ -1,0 +1,8 @@
+# Merge into <repository>/.codex/config.toml after reviewing conflicts.
+# Validated with Codex CLI 0.141.0 using --strict-config on 2026-07-14.
+[features]
+multi_agent = true
+
+[agents]
+max_threads = 6
+max_depth = 3

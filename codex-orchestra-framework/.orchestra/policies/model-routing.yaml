@@ -1,0 +1,59 @@
+version: 2
+last_verified: 2026-07-14
+principle: Use the least expensive route that can reliably exercise the required judgment; escalate from diagnosed evidence, not task prestige.
+routing_axes:
+  cognitive_complexity: causal_and_technical_reasoning
+  taste_and_interface_judgment: UI_API_copy_ergonomics_maintainability
+  uncertainty: discovery_vs_transformation
+  blast_radius_and_reversibility: cost_of_wrong_decision
+  context_volume: amount_and_coupling_of_repository_evidence
+  tools_and_capability: browser_runtime_MCP_or_execution_needs
+  throughput_and_cost: volume_after_quality_is_satisfied
+  independence: need_for_a_genuinely_separate_perspective
+reasoning_effort:
+  low: exact_mechanical_transformation
+  medium: normal_repository_work_and_structured_synthesis
+  high: ambiguity_tradeoffs_architecture_security_or_difficult_debugging
+  xhigh: rare_single_agent_deep_analysis_with_clear_value
+  max: exceptional_single_agent_reasoning_not_multi_agent_fanout
+  ultra: multi_agent_orchestration_topology_not_scalar_effort
+routes:
+  consultant: {agent_type: consultant, model: gpt-5.6-sol, effort: high}
+  delivery_architect: {agent_type: delivery_architect, model: gpt-5.6-sol, effort: high}
+  manager: {agent_type: manager, model: gpt-5.6-sol, effort: high}
+  team_leader: {agent_type: team_leader, model: gpt-5.6-sol, effort: medium}
+  context_engineer: {agent_type: context_engineer, model: gpt-5.6-terra, effort: medium}
+  role_architect: {agent_type: role_architect, model: gpt-5.6-terra, effort: medium}
+  quality_governor: {agent_type: quality_governor, model: gpt-5.6-sol, effort: high}
+  explorer: {agent_type: explorer_terra, model: gpt-5.6-terra, effort: medium}
+  advisor: {agent_type: advisor_sol, model: gpt-5.6-sol, effort: high}
+  reviewer: {agent_type: reviewer_terra, model: gpt-5.6-terra, effort: medium}
+  mechanical_builder: {agent_type: worker_luna, model: gpt-5.6-luna, effort: low}
+  default_builder: {agent_type: worker_terra, model: gpt-5.6-terra, effort: medium}
+  critical_builder: {agent_type: worker_sol, model: gpt-5.6-sol, effort: high}
+  verifier: {agent_type: verifier_terra, model: gpt-5.6-terra, effort: medium}
+escalation_triggers:
+  - irreversible_consequence_or_broad_blast_radius
+  - ambiguous_cross_system_behavior_not_resolved_by_evidence
+  - two_semantic_failures_after_diagnosis_and_repackaging
+  - security_compliance_or_data_loss_critical_path
+  - architecture_sensitive_integration_across_workstreams
+  - independent_review_finds_contested_high_severity_issue
+non_triggers:
+  - large_but_repetitive_and_independently_partitionable_work
+  - uncertainty_before_inspecting_evidence
+  - desire_for_a_more_prestigious_model
+prohibited:
+  - leaf_controlled_delegation
+  - ultra_in_any_agent_archetype
+  - changing_model_mid_attempt_without_a_new_attempt_record
+workflow_shapes:
+  single_owner: coupled_or_high_context_work
+  parallel_map: independent_read_items_or_disjoint_transformations
+  sequential_pipeline: validated_artifact_feeds_next_stage
+  review_loop: independent_implementer_and_reviewer_joined_by_team_leader
+  fanout_verify: bounded_investigators_or_builders_plus_named_join_owner
+ultra_policy:
+  classification: orchestration_topology
+  default: prohibited
+  exception_requires: [named_owner, child_budget, concurrency_budget, token_or_time_budget, isolation_boundary, stop_condition, recorded_authorization]

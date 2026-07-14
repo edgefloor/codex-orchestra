@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "orchestra/role-card.schema.json",
+  "title": "Role Card",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "role_card_id",
+    "request_id",
+    "status",
+    "name",
+    "mission",
+    "reports_to",
+    "lifetime",
+    "archetype",
+    "capabilities",
+    "exclusions",
+    "behavioral_traits",
+    "deliverables",
+    "handoff_behavior",
+    "routing",
+    "independence_constraints"
+  ],
+  "properties": {
+    "role_card_id": {
+      "type": "string"
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "proposed",
+        "approved",
+        "active",
+        "retired"
+      ]
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mission": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reports_to": {
+      "type": "string"
+    },
+    "lifetime": {
+      "enum": [
+        "one_task",
+        "milestone",
+        "recurring"
+      ]
+    },
+    "archetype": {
+      "enum": [
+        "worker_luna",
+        "worker_terra",
+        "worker_sol",
+        "explorer_terra",
+        "verifier_terra",
+        "team_leader",
+        "advisor_sol",
+        "reviewer_terra"
+      ]
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "exclusions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "behavioral_traits": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "deliverables": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "handoff_behavior": {
+      "type": "string",
+      "minLength": 1
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "reasoning_effort",
+        "sandbox_mode",
+        "tools",
+        "mcp_servers"
+      ],
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "sandbox_mode": {
+          "enum": [
+            "read-only",
+            "workspace-write",
+            "danger-full-access"
+          ]
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mcp_servers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "independence_constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "promotion_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "eligible_after_waves",
+        "requires_eval",
+        "approval_owner"
+      ],
+      "properties": {
+        "eligible_after_waves": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "requires_eval": {
+          "type": "boolean"
+        },
+        "approval_owner": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+message_type: branch_report
+message_id: msg-api-wave-01-checkpoint
+project_id: project-example
+sender_path: /root/manager/tl_api
+parent_path: /root/manager
+scope_revision: 0
+alignment_digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+permit_ref: artifact://permits/permit-api-wave-01
+status: checkpoint
+summary: The API worker completed its bounded change; integration review is ready.
+completed_refs:
+  - artifact://results/task-example-01-a1
+key_findings:
+  - The focused API behavior and tests pass.
+evidence_refs:
+  - artifact://evidence/task-example-01-tests
+capacity_effect:
+  released_slots: 1
+  continuing_seats:
+    - team-leader-api
+  requested_delta: 0
+decision_requests: []
+residual_risks: []
+requested_action: continue
