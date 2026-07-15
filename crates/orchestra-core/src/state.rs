@@ -1,4 +1,4 @@
-use crate::{AgentHandle, ExecutionPlan, StepOutputs};
+use crate::{AgentHandle, ExecutionPlan, ResolvedInputs, RunInputs, StepOutputs};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -76,6 +76,10 @@ pub struct RunCheckpoint {
     pub schema_version: u32,
     pub run_id: String,
     pub workflow_sha256: String,
+    #[serde(default)]
+    pub inputs: RunInputs,
+    #[serde(default)]
+    pub inputs_sha256: String,
     pub parent_thread_id: String,
     pub repository: PathBuf,
     pub source_revision: String,
@@ -98,6 +102,7 @@ impl RunStore {
         workflow_sha256: &str,
         parent_thread_id: &str,
         source_revision: String,
+        inputs: &ResolvedInputs,
     ) -> Result<(Self, RunCheckpoint), std::io::Error> {
         let root = repository.join(".codex/orchestra/runs").join(run_id);
         fs::create_dir_all(root.join("outputs"))?;
@@ -106,10 +111,13 @@ impl RunStore {
         fs::create_dir_all(root.join("approvals"))?;
         let store = Self { root };
         atomic_json(&store.root.join("workflow.json"), plan)?;
+        atomic_json(&store.root.join("inputs.json"), &inputs.values)?;
         let checkpoint = RunCheckpoint {
-            schema_version: 2,
+            schema_version: 3,
             run_id: run_id.into(),
             workflow_sha256: workflow_sha256.into(),
+            inputs: inputs.values.clone(),
+            inputs_sha256: inputs.sha256.clone(),
             parent_thread_id: parent_thread_id.into(),
             repository: repository.to_path_buf(),
             source_revision,
@@ -141,6 +149,10 @@ impl RunStore {
 
     pub fn save(&self, checkpoint: &RunCheckpoint) -> Result<(), std::io::Error> {
         atomic_json(&self.root.join("state.json"), checkpoint)
+    }
+    pub fn inputs(&self) -> Result<RunInputs, std::io::Error> {
+        serde_json::from_slice(&fs::read(self.root.join("inputs.json"))?)
+            .map_err(std::io::Error::other)
     }
     pub fn output(&self, step_id: &str, outputs: &StepOutputs) -> Result<(), std::io::Error> {
         atomic_json(

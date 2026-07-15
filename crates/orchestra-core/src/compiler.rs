@@ -429,21 +429,26 @@ fn validate_template(value: &str, offset: usize) -> Result<(), CompileError> {
             });
         };
         let reference = &after[..end];
-        let parts: Vec<_> = reference.split('.').collect();
-        if parts.len() != 4
-            || parts[0] != "steps"
-            || parts[2] != "outputs"
-            || parts[1].is_empty()
-            || parts[3].is_empty()
-        {
+        if !valid_reference(reference) {
             return Err(CompileError {
                 offset,
-                message: "templates may reference only `steps.<id>.outputs.<name>`".into(),
+                message:
+                    "templates may reference only `inputs.<name>` or `steps.<id>.outputs.<name>`"
+                        .into(),
             });
         }
         rest = &after[end + 1..];
     }
     Ok(())
+}
+
+fn valid_reference(reference: &str) -> bool {
+    let parts: Vec<_> = reference.split('.').collect();
+    matches!(parts.as_slice(), ["inputs", name] if !name.is_empty())
+        || matches!(
+            parts.as_slice(),
+            ["steps", step, "outputs", output] if !step.is_empty() && !output.is_empty()
+        )
 }
 
 fn lower_workflow(ast: Ast) -> Result<ExecutionPlan, CompileError> {
@@ -572,7 +577,10 @@ fn ast_to_json(ast: Ast) -> Result<Value, CompileError> {
             .map(Value::Array),
         Ast::Object(entries) => object_to_json(entries).map(Value::Object),
         Ast::Call(name, mut args) if name == "ref" && args.len() == 1 => match args.remove(0) {
-            Ast::String(v) => Ok(Value::String(format!("${{{v}}}"))),
+            Ast::String(v) if valid_reference(&v) => Ok(Value::String(format!("${{{v}}}"))),
+            Ast::String(_) => lower_error(
+                "`ref` may reference only `inputs.<name>` or `steps.<id>.outputs.<name>`",
+            ),
             _ => lower_error("`ref` expects one string"),
         },
         Ast::Call(name, _) => lower_error(&format!("DSL call `{name}` is not valid in this value")),
@@ -656,5 +664,33 @@ export default workflow({ name: "slice", max_parallel: 2, steps: [pipeline([
         let plan = compile_workflow(source).unwrap();
         assert_eq!(plan.name, "native-vertical-slice");
         assert_eq!(plan.steps.len(), 5);
+    }
+
+    #[test]
+    fn compiles_typed_inputs_defaults_and_input_references_as_data() {
+        let source = r#"import { workflow, agent, ref } from "@codex-orchestra/workflow";
+export default workflow({
+  name: "inputs",
+  inputs: {
+    ticket: { type: "string" },
+    base: { type: "string", required: false, default: "main" },
+    payload: { type: "json", default: null }
+  },
+  steps: [agent({ id: "work", prompt: ref("inputs.ticket"), model: "gpt-5.4" })]
+});"#;
+        let plan = compile_workflow(source).unwrap();
+        assert!(plan.inputs["ticket"].required);
+        assert_eq!(
+            plan.inputs["base"].default,
+            crate::InputDefault::Value(Value::String("main".into()))
+        );
+        assert_eq!(
+            plan.inputs["payload"].default,
+            crate::InputDefault::Value(Value::Null)
+        );
+        let Action::Agent(agent) = &plan.steps[0].action else {
+            panic!()
+        };
+        assert_eq!(agent.prompt, "${inputs.ticket}");
     }
 }

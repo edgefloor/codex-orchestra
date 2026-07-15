@@ -105,7 +105,7 @@ In an active task backed by the Orchestra-enabled build, ask Codex:
 Validate and run inspect.workflow.ts with Orchestra. Report the run id and summary.
 ```
 
-The task should call `orchestra_validate` before `orchestra_run`. On success, the `inspect` output is written to `.codex/orchestra/runs/<run-id>/outputs/inspect.json`, check evidence is recorded under `evidence/checks/`, and `summary.md` records the terminal state.
+The task should call `orchestra_validate` before `orchestra_run`. On success, resolved inputs are written to `inputs.json`, the `inspect` output is written to `.codex/orchestra/runs/<run-id>/outputs/inspect.json`, check evidence is recorded under `evidence/checks/`, and `summary.md` records the terminal state.
 
 ## Define a workflow
 
@@ -349,12 +349,15 @@ Agent context is opt-in. `fork_turns` defaults to `"none"`, so declared context 
 | `diff` | `from`, `to`, optional `paths` | `git diff --no-ext-diff --binary` between revisions |
 | `revision` | `revision`, `path` | File contents from `git show <revision>:<path>` |
 | `dependency_output` | `step`, `output` | Pretty-printed JSON from a completed step |
+| `input` | `input` | Exact resolved run-input value |
 
 File and range paths are canonicalized and rejected if they escape the repository, including through symlinks. Revision paths must not begin with `-`. A missing dependency output, invalid range, Git failure, non-UTF-8 file, or path escape fails context materialization.
 
 Sources are concatenated between labeled delimiters in declaration order and hashed with SHA-256. The digest is stored in the step checkpoint and included in the agent prompt.
 
-The authoring package exports `ref()` and the compiler accepts templates such as `` `${steps.plan.outputs.result}` ``. The runtime does not currently expand those markers. Use `dependency_output` for executable data flow; treat `ref()` and output templates as reserved authoring syntax until runtime substitution is implemented.
+Workflows declare JSON-compatible run inputs at the top level. Each input has a `type` (`string`, `number`, `boolean`, `object`, `array`, or `json`), is required by default, and may declare `required: false` or a `default`. The runtime rejects unknown, missing, or wrongly typed values before creating a run.
+
+The authoring package exports `ref()`. Agent prompts may reference `` `${inputs.ticket}` `` directly, or use `ref("inputs.ticket")` when the whole value is the prompt. String values are inserted verbatim; other JSON values use compact JSON. Input references and `input` context sources are resolved by Rust—the TypeScript source is never executed. Step-output templates such as `` `${steps.plan.outputs.result}` `` remain reserved authoring syntax; use `dependency_output` context for executable step data flow.
 
 ### Transcript inheritance
 
@@ -408,7 +411,7 @@ The Rust runtime owns every transition:
 
 ### Resume, cancellation, and cleanup
 
-`orchestra_resume` reopens `workflow.json` and `state.json`; it does not depend on the parent transcript. Completed and cancelled runs return their existing terminal outcome. Interrupted running steps return to pending if attempt budget remains, or fail if interruption exhausted that budget.
+`orchestra_resume` reopens `workflow.json`, `inputs.json`, and `state.json`; it does not depend on the parent transcript. It verifies the resolved-input digest before doing any work. Callers may resupply `inputs`; changed values are rejected. Completed and cancelled runs return their existing terminal outcome. Interrupted running steps return to pending if attempt budget remains, or fail if interruption exhausted that budget.
 
 A failed run is eligible for resume, but already failed steps remain failed in the current implementation, so resume does not repair or rerun them automatically.
 
@@ -423,6 +426,7 @@ All mutable runtime state belongs to the target repository:
 ```text
 .codex/orchestra/runs/<run-id>/
 ├── workflow.json                   compiled execution plan
+├── inputs.json                     immutable resolved run inputs
 ├── state.json                      atomic run checkpoint
 ├── outputs/<step-id>.json          validated step outputs
 ├── evidence/checks/<step>-<n>.json command, timeout, exit code, stdout, stderr
@@ -432,7 +436,7 @@ All mutable runtime state belongs to the target repository:
 └── summary.md                      paused or terminal summary
 ```
 
-The checkpoint records the workflow hash, parent task, repository, source revision, run and promotion status, per-step attempts and rounds, context hashes, outputs, errors, agent handles, and next action. Files are written through temporary files and atomic rename.
+The checkpoint records the workflow and input hashes, resolved inputs, parent task, repository, source revision, run and promotion status, per-step attempts and rounds, context hashes, outputs, errors, agent handles, and next action. Files are written through temporary files and atomic rename.
 
 Installed plugin files and the custom runtime contain no mutable run state. Uninstall preserves `.codex/orchestra/runs/`.
 
@@ -444,6 +448,7 @@ Installed plugin files and the custom runtime contain no mutable run state. Unin
 | --- | --- | --- | --- | --- |
 | `name` | `string` | Yes | — | Must not be blank |
 | `description` | `string` | No | `""` | Stored in the compiled plan |
+| `inputs` | `Record<string, InputDefinition>` | No | `{}` | Typed JSON-compatible inputs resolved before the run starts |
 | `max_parallel` | `number` | No | `4` | Integer from 1 through 32 |
 | `steps` | `StepNode[]` | Yes | — | DSL step calls and wrappers |
 
@@ -502,8 +507,8 @@ All paths are resolved against the active Codex task's repository.
 | Tool | Required input | Optional input | Result |
 | --- | --- | --- | --- |
 | `orchestra_validate` | `workflow_path` | — | `{ valid: true, plan }` or a compile/validation error |
-| `orchestra_run` | `workflow_path` | — | Completed, paused, failed, or cancelled run outcome with checkpoint |
-| `orchestra_resume` | `run_id` | `approval_decision` | Run outcome after checkpoint reconciliation |
+| `orchestra_run` | `workflow_path` | `inputs` | Completed, paused, failed, or cancelled run outcome with checkpoint |
+| `orchestra_resume` | `run_id` | `approval_decision`, `inputs` | Run outcome after checkpoint and input reconciliation |
 | `orchestra_status` | `run_id` | — | Current `RunCheckpoint` |
 | `orchestra_cancel` | `run_id` | — | Updated `RunCheckpoint` |
 
@@ -565,7 +570,7 @@ Implementations must preserve parent-task lineage, return final agent responses,
 
 - Stock Codex cannot dynamically load the Rust extension; the pinned integration patch is required.
 - The repository does not yet automate connecting the custom App Server build to a Codex client.
-- `ref()` and template output markers are not expanded at runtime; use `dependency_output` context.
+- Step-output template markers are not expanded at runtime; use `dependency_output` context.
 - Interactive UI rendering, provider-backed child completion, approval flow, cancellation, and transcript-free recovery remain recorded as human-only pending checks in [`docs/verification/2026-07-14-interactive-baseline.md`](docs/verification/2026-07-14-interactive-baseline.md).
 
 These constraints are tracked explicitly rather than hidden behind an alternate runtime.

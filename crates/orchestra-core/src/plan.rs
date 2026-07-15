@@ -8,9 +8,74 @@ pub struct ExecutionPlan {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub inputs: BTreeMap<String, InputDefinition>,
     #[serde(default = "default_parallel")]
     pub max_parallel: usize,
     pub steps: Vec<Step>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputDefinition {
+    #[serde(rename = "type")]
+    pub kind: InputKind,
+    #[serde(default = "default_true")]
+    pub required: bool,
+    #[serde(default, skip_serializing_if = "InputDefault::is_missing")]
+    pub default: InputDefault,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InputKind {
+    String,
+    Number,
+    Boolean,
+    Object,
+    Array,
+    Json,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum InputDefault {
+    #[default]
+    Missing,
+    Value(Value),
+}
+
+impl InputDefault {
+    pub fn is_missing(&self) -> bool {
+        matches!(self, Self::Missing)
+    }
+
+    pub fn value(&self) -> Option<&Value> {
+        match self {
+            Self::Missing => None,
+            Self::Value(value) => Some(value),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for InputDefault {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Value::deserialize(deserializer).map(Self::Value)
+    }
+}
+
+impl Serialize for InputDefault {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Missing => serializer.serialize_unit(),
+            Self::Value(value) => value.serialize(serializer),
+        }
+    }
 }
 
 fn default_parallel() -> usize {
@@ -143,6 +208,9 @@ pub enum ContextSource {
     DependencyOutput {
         step: String,
         output: String,
+    },
+    Input {
+        input: String,
     },
 }
 

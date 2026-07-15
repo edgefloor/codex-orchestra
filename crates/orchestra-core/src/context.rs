@@ -1,4 +1,5 @@
-use crate::{ContextSource, StepOutputs};
+use crate::inputs::render_value;
+use crate::{ContextSource, RunInputs, StepOutputs};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -29,12 +30,23 @@ pub enum ContextError {
     Git(String),
     #[error("missing dependency output {step}.{output}")]
     MissingOutput { step: String, output: String },
+    #[error("missing run input {0}")]
+    MissingInput(String),
 }
 
 pub fn materialize_context(
     repository: &Path,
     sources: &[ContextSource],
     dependency_outputs: &BTreeMap<String, StepOutputs>,
+) -> Result<ContextBundle, ContextError> {
+    materialize_context_with_inputs(repository, sources, dependency_outputs, &RunInputs::new())
+}
+
+pub fn materialize_context_with_inputs(
+    repository: &Path,
+    sources: &[ContextSource],
+    dependency_outputs: &BTreeMap<String, StepOutputs>,
+    inputs: &RunInputs,
 ) -> Result<ContextBundle, ContextError> {
     let root = repository.canonicalize()?;
     let mut content = String::new();
@@ -100,6 +112,12 @@ pub fn materialize_context(
                     serde_json::to_string_pretty(value).expect("JSON value serializes"),
                 )
             }
+            ContextSource::Input { input } => {
+                let value = inputs
+                    .get(input)
+                    .ok_or_else(|| ContextError::MissingInput(input.clone()))?;
+                (format!("input:{input}"), render_value(value))
+            }
         };
         labels.push(label.clone());
         content.push_str(&format!("<<< ORCHESTRA CONTEXT {label} >>>\n{body}"));
@@ -142,6 +160,7 @@ fn git(repository: &Path, args: &[String]) -> Result<String, ContextError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
     use tempfile::tempdir;
 
     #[test]
@@ -169,6 +188,35 @@ mod tests {
         assert_eq!(one.sha256, two.sha256);
         assert!(one.content.contains("two\nthree"));
         assert!(!one.content.contains("one\n"));
+    }
+
+    #[test]
+    fn run_inputs_are_materialized_as_exact_context() {
+        let dir = tempdir().unwrap();
+        let inputs = RunInputs::from([
+            ("ticket".into(), Value::String("#3".into())),
+            ("metadata".into(), serde_json::json!({"kind":"issue"})),
+        ]);
+        let context = materialize_context_with_inputs(
+            dir.path(),
+            &[
+                ContextSource::Input {
+                    input: "ticket".into(),
+                },
+                ContextSource::Input {
+                    input: "metadata".into(),
+                },
+            ],
+            &BTreeMap::new(),
+            &inputs,
+        )
+        .unwrap();
+        assert!(
+            context
+                .content
+                .contains("<<< ORCHESTRA CONTEXT input:ticket >>>\n#3")
+        );
+        assert!(context.content.contains(r#"{"kind":"issue"}"#));
     }
 
     #[cfg(unix)]

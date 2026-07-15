@@ -1,4 +1,5 @@
-use crate::{Action, ExecutionPlan, ForkTurns, WorktreePolicy};
+use crate::inputs::{kind_name, value_matches};
+use crate::{Action, ContextSource, ExecutionPlan, ForkTurns, InputDefault, WorktreePolicy};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
@@ -16,6 +17,25 @@ pub fn validate_plan(plan: &ExecutionPlan) -> Vec<ValidationError> {
     }
     if !(1..=32).contains(&plan.max_parallel) {
         push(&mut errors, "max_parallel", "must be between 1 and 32");
+    }
+    for (name, definition) in &plan.inputs {
+        let path = format!("inputs.{name}");
+        if !valid_id(name) {
+            push(
+                &mut errors,
+                &path,
+                "must use lowercase letters, digits, `_`, or `-`",
+            );
+        }
+        if let InputDefault::Value(value) = &definition.default
+            && !value_matches(&definition.kind, value)
+        {
+            push(
+                &mut errors,
+                &format!("{path}.default"),
+                &format!("must be {}", kind_name(&definition.kind)),
+            );
+        }
     }
     let mut ids = BTreeSet::new();
     for (index, step) in plan.steps.iter().enumerate() {
@@ -113,10 +133,138 @@ pub fn validate_plan(plan: &ExecutionPlan) -> Vec<ValidationError> {
                 );
             }
         }
+        if let Action::Agent(agent) = &step.action {
+            let prompt_path = format!("steps[{index}].prompt");
+            for reference in template_references(&agent.prompt) {
+                validate_reference(plan, &prompt_path, reference, &mut errors);
+            }
+            let context_path = format!("steps[{index}].context");
+            for source in &agent.context {
+                match source {
+                    ContextSource::Input { input } if !plan.inputs.contains_key(input) => push(
+                        &mut errors,
+                        &context_path,
+                        &format!("unknown input `{input}`"),
+                    ),
+                    ContextSource::DependencyOutput {
+                        step: source_step,
+                        output,
+                    } => validate_output_reference(
+                        plan,
+                        &ids,
+                        &step.id,
+                        &context_path,
+                        source_step,
+                        output,
+                        &mut errors,
+                    ),
+                    _ => {}
+                }
+            }
+        }
     }
     detect_cycles(plan, &mut errors);
     detect_write_conflicts(plan, &mut errors);
     errors
+}
+
+fn template_references(value: &str) -> Vec<&str> {
+    let mut references = Vec::new();
+    let mut rest = value;
+    while let Some(start) = rest.find("${") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find('}') else {
+            break;
+        };
+        references.push(&after[..end]);
+        rest = &after[end + 1..];
+    }
+    references
+}
+
+fn validate_reference(
+    plan: &ExecutionPlan,
+    path: &str,
+    reference: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    let parts: Vec<_> = reference.split('.').collect();
+    match parts.as_slice() {
+        ["inputs", name] if !name.is_empty() => {
+            if !plan.inputs.contains_key(*name) {
+                push(errors, path, &format!("unknown input `{name}`"));
+            }
+        }
+        ["steps", step, "outputs", output] if !step.is_empty() && !output.is_empty() => {}
+        _ => push(
+            errors,
+            path,
+            &format!("unsupported reference `{reference}`"),
+        ),
+    }
+}
+
+fn validate_output_reference(
+    plan: &ExecutionPlan,
+    ids: &BTreeSet<String>,
+    consumer: &str,
+    path: &str,
+    step: &str,
+    output: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    if !ids.contains(step) {
+        push(errors, path, &format!("unknown output step `{step}`"));
+        return;
+    }
+    let Some(source) = plan.steps.iter().find(|candidate| candidate.id == step) else {
+        return;
+    };
+    if !depends_on(plan, consumer, step) {
+        push(
+            errors,
+            path,
+            &format!("output step `{step}` must be a dependency of `{consumer}`"),
+        );
+        return;
+    }
+    let Action::Agent(agent) = &source.action else {
+        push(
+            errors,
+            path,
+            &format!("step `{step}` does not declare outputs"),
+        );
+        return;
+    };
+    if !agent.outputs.iter().any(|candidate| candidate == output) {
+        push(
+            errors,
+            path,
+            &format!("unknown dependency output `{step}.{output}`"),
+        );
+    }
+}
+
+fn depends_on(plan: &ExecutionPlan, consumer: &str, producer: &str) -> bool {
+    fn visit(
+        plan: &ExecutionPlan,
+        current: &str,
+        producer: &str,
+        visited: &mut BTreeSet<String>,
+    ) -> bool {
+        if !visited.insert(current.into()) {
+            return false;
+        }
+        plan.steps
+            .iter()
+            .find(|step| step.id == current)
+            .is_some_and(|step| {
+                step.needs.iter().any(|dependency| {
+                    dependency == producer || visit(plan, dependency, producer, visited)
+                })
+            })
+    }
+    visit(plan, consumer, producer, &mut BTreeSet::new())
 }
 
 fn valid_id(id: &str) -> bool {
@@ -238,6 +386,7 @@ mod tests {
         a.needs = vec!["b".into()];
         b.needs = vec!["a".into(), "missing".into()];
         let errors = validate_plan(&ExecutionPlan {
+            inputs: BTreeMap::new(),
             name: "bad".into(),
             description: String::new(),
             max_parallel: 2,
@@ -267,6 +416,7 @@ mod tests {
         };
         for choices in [vec![], vec![""], vec!["accept", "accept"]] {
             let errors = validate_plan(&ExecutionPlan {
+                inputs: BTreeMap::new(),
                 name: "approval".into(),
                 description: String::new(),
                 max_parallel: 1,
@@ -279,6 +429,7 @@ mod tests {
     #[test]
     fn overlapping_parallel_writers_require_isolation() {
         let plan = ExecutionPlan {
+            inputs: BTreeMap::new(),
             name: "conflict".into(),
             description: String::new(),
             max_parallel: 2,
@@ -304,6 +455,7 @@ mod tests {
         agent.reasoning_effort = Some("high".into());
         assert!(
             validate_plan(&ExecutionPlan {
+                inputs: BTreeMap::new(),
                 name: "fork".into(),
                 description: String::new(),
                 max_parallel: 1,
@@ -311,6 +463,48 @@ mod tests {
             })
             .iter()
             .any(|error| error.message.contains("full-history"))
+        );
+    }
+
+    #[test]
+    fn validates_input_and_forward_output_references_after_collecting_step_ids() {
+        let mut consumer = writer("consumer", "consumer/", WorktreePolicy::Isolated);
+        consumer.needs = vec!["producer".into()];
+        let Action::Agent(agent) = &mut consumer.action else {
+            unreachable!()
+        };
+        agent.prompt = "Use ${inputs.ticket} and ${steps.producer.outputs.result}".into();
+        agent.context = vec![ContextSource::DependencyOutput {
+            step: "producer".into(),
+            output: "result".into(),
+        }];
+        let mut producer = writer("producer", "producer/", WorktreePolicy::Isolated);
+        let Action::Agent(agent) = &mut producer.action else {
+            unreachable!()
+        };
+        agent.outputs = vec!["result".into()];
+        let plan = ExecutionPlan {
+            inputs: BTreeMap::from([(
+                "ticket".into(),
+                crate::InputDefinition {
+                    kind: crate::InputKind::String,
+                    required: true,
+                    default: crate::InputDefault::Missing,
+                },
+            )]),
+            name: "references".into(),
+            description: String::new(),
+            max_parallel: 1,
+            steps: vec![consumer, producer],
+        };
+        assert!(validate_plan(&plan).is_empty());
+
+        let mut concurrent = plan;
+        concurrent.steps[0].needs.clear();
+        assert!(
+            validate_plan(&concurrent)
+                .iter()
+                .any(|error| { error.message.contains("must be a dependency of `consumer`") })
         );
     }
 }

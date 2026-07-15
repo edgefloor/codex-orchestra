@@ -4,7 +4,15 @@ export type ContextSource =
   | { type: "range"; path: string; start: number; end: number }
   | { type: "diff"; from: string; to: string; paths?: string[] }
   | { type: "revision"; revision: string; path: string }
-  | { type: "dependency_output"; step: string; output: string };
+  | { type: "dependency_output"; step: string; output: string }
+  | { type: "input"; input: string };
+
+export type InputType = "string" | "number" | "boolean" | "object" | "array" | "json";
+export interface InputDefinition {
+  type: InputType;
+  required?: boolean;
+  default?: unknown;
+}
 
 export interface CommonStep {
   id: string;
@@ -45,6 +53,7 @@ export interface RepeatPolicy {
 export interface Workflow {
   name: string;
   description?: string;
+  inputs?: Record<string, InputDefinition>;
   max_parallel?: number;
   steps: StepNode[];
 }
@@ -59,4 +68,4 @@ export declare function parallel(steps: StepNode[]): StepNode;
 export declare function pipeline(steps: StepNode[]): StepNode;
 export declare function worktree(step: StepNode, policy: "shared" | "isolated"): StepNode;
 export declare function repeat(step: StepNode, policy: RepeatPolicy): StepNode;
-export declare function ref(path: `steps.${string}.outputs.${string}`): string;
+export declare function ref(path: `inputs.${string}` | `steps.${string}.outputs.${string}`): string;

@@ -303,9 +303,21 @@ struct WorkflowArgs {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RunArgs {
+struct ExecuteArgs {
+    workflow_path: String,
+    inputs: Option<Value>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResumeArgs {
     run_id: String,
     approval_decision: Option<String>,
+    inputs: Option<Value>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RunArgs {
+    run_id: String,
 }
 
 impl ToolExecutor<ToolCall> for OrchestraTool {
@@ -337,30 +349,39 @@ impl OrchestraTool {
             .map_err(|error| FunctionCallError::RespondToModel(error.to_string()))?;
         let repository = thread.config_snapshot().await.cwd().as_path().to_path_buf();
         let value = match self.kind {
-            Kind::Validate | Kind::Run => {
+            Kind::Validate => {
                 let args: WorkflowArgs = parse(&call)?;
                 let path = safe_workflow(&repository, &args.workflow_path)?;
                 let source = std::fs::read_to_string(path).map_err(to_model)?;
                 let plan = compile_workflow(&source).map_err(to_model)?;
-                if matches!(self.kind, Kind::Validate) {
-                    json!({"valid": true, "plan": plan})
-                } else {
-                    json!(
-                        self.runtime
-                            .run(&repository, &self.parent_thread_id, plan)
-                            .await
-                            .map_err(to_model)?
-                    )
-                }
+                json!({"valid": true, "plan": plan})
             }
-            Kind::Resume => {
-                let args: RunArgs = parse(&call)?;
+            Kind::Run => {
+                let args: ExecuteArgs = parse(&call)?;
+                let path = safe_workflow(&repository, &args.workflow_path)?;
+                let source = std::fs::read_to_string(path).map_err(to_model)?;
+                let plan = compile_workflow(&source).map_err(to_model)?;
                 json!(
                     self.runtime
-                        .resume_with_approval(
+                        .run_with_inputs(
+                            &repository,
+                            &self.parent_thread_id,
+                            plan,
+                            args.inputs.as_ref(),
+                        )
+                        .await
+                        .map_err(to_model)?
+                )
+            }
+            Kind::Resume => {
+                let args: ResumeArgs = parse(&call)?;
+                json!(
+                    self.runtime
+                        .resume_with_approval_and_inputs(
                             &repository,
                             &args.run_id,
-                            args.approval_decision.as_deref()
+                            args.approval_decision.as_deref(),
+                            args.inputs.as_ref(),
                         )
                         .await
                         .map_err(to_model)?
@@ -417,6 +438,12 @@ impl Kind {
                 JsonSchema::string(Some(
                     "Optional decision for the pending approval step.".into(),
                 )),
+            );
+        }
+        if matches!(self, Self::Run | Self::Resume) {
+            properties.insert(
+                "inputs".into(),
+                JsonSchema::object(BTreeMap::new(), None, Some(true.into())),
             );
         }
         ToolSpec::Function(ResponsesApiTool {
@@ -478,6 +505,28 @@ mod tests {
                 "orchestra_status",
                 "orchestra_cancel",
             ]
+        );
+    }
+
+    #[test]
+    fn run_and_resume_accept_input_objects_without_changing_other_tool_contracts() {
+        for kind in [Kind::Run, Kind::Resume] {
+            let ToolSpec::Function(tool) = kind.spec() else {
+                panic!()
+            };
+            let inputs = &tool.parameters.properties.as_ref().unwrap()["inputs"];
+            assert!(inputs.additional_properties.is_some());
+        }
+        let ToolSpec::Function(validate) = Kind::Validate.spec() else {
+            panic!()
+        };
+        assert!(
+            !validate
+                .parameters
+                .properties
+                .as_ref()
+                .unwrap()
+                .contains_key("inputs")
         );
     }
 

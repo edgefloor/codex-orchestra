@@ -21,6 +21,7 @@ Runtime-owned target-repository data:
 ```text
 .codex/orchestra/runs/<run-id>/
 ├── workflow.json                   immutable compiled-plan snapshot
+├── inputs.json                     immutable resolved inputs
 ├── state.json                      atomic checkpoint and hashes
 ├── outputs/<step>.json             validated outputs
 ├── evidence/checks/                command evidence

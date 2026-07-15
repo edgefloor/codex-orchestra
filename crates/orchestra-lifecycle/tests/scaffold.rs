@@ -145,6 +145,9 @@ fn five_native_tools_are_registered() {
     ] {
         assert!(source.contains(name));
     }
+    assert!(source.contains("run_with_inputs"));
+    assert!(source.contains("resume_with_approval_and_inputs"));
+    assert!(source.contains("JsonSchema::object(BTreeMap::new(), None, Some(true.into()))"));
 }
 
 #[test]

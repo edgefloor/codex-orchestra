@@ -1,8 +1,9 @@
-use crate::context::materialize_context;
+use crate::context::materialize_context_with_inputs;
 use crate::state::RunStore;
 use crate::{
-    Action, AgentHandle, AgentStatus, ExecutionPlan, NativeHost, PromotionStatus, RunCheckpoint,
-    RunStatus, SpawnRequest, Step, StepOutputs, StepStatus, validate_plan,
+    Action, AgentHandle, AgentStatus, ExecutionPlan, InputError, NativeHost, PromotionStatus,
+    RunCheckpoint, RunStatus, SpawnRequest, Step, StepOutputs, StepStatus, resolve_inputs,
+    resolve_template, validate_plan, verify_inputs,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -30,6 +31,8 @@ pub enum RunOutcome {
 pub enum RunError {
     #[error("workflow validation failed: {0}")]
     Validation(String),
+    #[error("run inputs failed: {0}")]
+    Inputs(#[from] InputError),
     #[error("run storage failed: {0}")]
     Storage(#[from] std::io::Error),
     #[error("native host failed: {0}")]
@@ -71,6 +74,17 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         parent_thread_id: &str,
         plan: ExecutionPlan,
     ) -> Result<RunOutcome, RunError> {
+        self.run_with_inputs(repository, parent_thread_id, plan, None)
+            .await
+    }
+
+    pub async fn run_with_inputs(
+        &self,
+        repository: &Path,
+        parent_thread_id: &str,
+        plan: ExecutionPlan,
+        provided_inputs: Option<&Value>,
+    ) -> Result<RunOutcome, RunError> {
         let errors = validate_plan(&plan);
         if !errors.is_empty() {
             return Err(RunError::Validation(
@@ -81,6 +95,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                     .join("; "),
             ));
         }
+        let inputs = resolve_inputs(&plan.inputs, provided_inputs)?;
         let plan_bytes = serde_json::to_vec(&plan).expect("plan serializes");
         let hash = format!("{:x}", Sha256::digest(&plan_bytes));
         let run_id = new_run_id(&hash);
@@ -92,6 +107,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
             &hash,
             parent_thread_id,
             revision,
+            &inputs,
         )?;
         self.execute(store, plan, checkpoint).await
     }
@@ -106,7 +122,44 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         run_id: &str,
         approval_decision: Option<&str>,
     ) -> Result<RunOutcome, RunError> {
+        self.resume_with_approval_and_inputs(repository, run_id, approval_decision, None)
+            .await
+    }
+
+    pub async fn resume_with_approval_and_inputs(
+        &self,
+        repository: &Path,
+        run_id: &str,
+        approval_decision: Option<&str>,
+        provided_inputs: Option<&Value>,
+    ) -> Result<RunOutcome, RunError> {
         let (store, plan, mut checkpoint) = RunStore::open(repository, run_id)?;
+        verify_inputs(&checkpoint.inputs, &checkpoint.inputs_sha256)?;
+        let persisted_inputs = store.inputs()?;
+        verify_inputs(&persisted_inputs, &checkpoint.inputs_sha256)?;
+        if persisted_inputs != checkpoint.inputs {
+            return Err(InputError::SnapshotMismatch.into());
+        }
+        if let Some(provided) = provided_inputs {
+            let supplied = resolve_inputs(&plan.inputs, Some(provided))?;
+            if supplied.sha256 != checkpoint.inputs_sha256 {
+                let names = plan
+                    .inputs
+                    .keys()
+                    .filter(|name| supplied.values.get(*name) != checkpoint.inputs.get(*name))
+                    .map(|name| format!("`{name}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(InputError::Changed {
+                    names: if names.is_empty() {
+                        "resolved values".into()
+                    } else {
+                        names
+                    },
+                }
+                .into());
+            }
+        }
         if matches!(
             checkpoint.status,
             RunStatus::Completed | RunStatus::Cancelled
@@ -325,7 +378,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
 
             let dependency_outputs = all_outputs(&checkpoint);
             let mut join_set = JoinSet::new();
-            for step in ready
+            for mut step in ready
                 .into_iter()
                 .filter(|step| !matches!(step.action, Action::Approval(_)))
             {
@@ -344,9 +397,15 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                     )
                     .await
                     .map_err(RunError::Host)?;
-                let context = match &step.action {
+                let context = match &mut step.action {
                     Action::Agent(agent) => {
-                        match materialize_context(&workspace, &agent.context, &dependency_outputs) {
+                        agent.prompt = resolve_template(&agent.prompt, &checkpoint.inputs)?;
+                        match materialize_context_with_inputs(
+                            &workspace,
+                            &agent.context,
+                            &dependency_outputs,
+                            &checkpoint.inputs,
+                        ) {
                             Ok(context) => context,
                             Err(error) => {
                                 if step.worktree == crate::WorktreePolicy::Isolated {
@@ -1321,6 +1380,7 @@ mod tests {
             }),
         };
         ExecutionPlan {
+            inputs: BTreeMap::new(),
             name: "integrate".into(),
             description: String::new(),
             max_parallel: 1,
@@ -1337,6 +1397,7 @@ mod tests {
                 repo().path(),
                 "parent",
                 ExecutionPlan {
+                    inputs: BTreeMap::new(),
                     name: "parallel".into(),
                     description: String::new(),
                     max_parallel: 2,
@@ -1373,6 +1434,85 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolves_persists_and_rejects_changed_run_inputs_on_resume() {
+        let repository = repo();
+        let host = FakeHost::new(vec![r#"{"ok":true}"#]);
+        let runtime = OrchestraRuntime::new(host);
+        let mut work = agent("work", vec![]);
+        let Action::Agent(agent) = &mut work.action else {
+            unreachable!()
+        };
+        agent.prompt = "Implement ${inputs.ticket} from ${inputs.base}".into();
+        agent.context = vec![crate::ContextSource::Input {
+            input: "ticket".into(),
+        }];
+        let plan = ExecutionPlan {
+            inputs: BTreeMap::from([
+                (
+                    "ticket".into(),
+                    crate::InputDefinition {
+                        kind: crate::InputKind::String,
+                        required: true,
+                        default: crate::InputDefault::Missing,
+                    },
+                ),
+                (
+                    "base".into(),
+                    crate::InputDefinition {
+                        kind: crate::InputKind::String,
+                        required: false,
+                        default: crate::InputDefault::Value(Value::String("main".into())),
+                    },
+                ),
+            ]),
+            name: "input-run".into(),
+            description: String::new(),
+            max_parallel: 1,
+            steps: vec![work],
+        };
+        let outcome = runtime
+            .run_with_inputs(
+                repository.path(),
+                "parent",
+                plan,
+                Some(&serde_json::json!({"ticket":"#3"})),
+            )
+            .await
+            .unwrap();
+        let RunOutcome::Completed(checkpoint) = outcome else {
+            panic!()
+        };
+        let persisted: Value = serde_json::from_slice(
+            &std::fs::read(
+                repository
+                    .path()
+                    .join(".codex/orchestra/runs")
+                    .join(&checkpoint.run_id)
+                    .join("inputs.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(persisted, serde_json::json!({"base":"main","ticket":"#3"}));
+        let requests = runtime.host.spawned.lock().await;
+        assert!(requests[0].prompt.contains("Implement #3 from main"));
+        assert!(requests[0].prompt.contains("input:ticket >>>\n#3"));
+        drop(requests);
+
+        let error = runtime
+            .resume_with_approval_and_inputs(
+                repository.path(),
+                &checkpoint.run_id,
+                None,
+                Some(&serde_json::json!({"ticket":"#4"})),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("changed run inputs: `ticket`"));
+        assert!(error.to_string().contains("omit `inputs`"));
+    }
+
+    #[tokio::test]
     async fn malformed_output_retries_then_completes() {
         let host = FakeHost::new(vec!["not-json", r#"{"ok":true}"#]);
         let runtime = OrchestraRuntime::new(host);
@@ -1383,6 +1523,7 @@ mod tests {
                 repo().path(),
                 "parent",
                 ExecutionPlan {
+                    inputs: BTreeMap::new(),
                     name: "retry".into(),
                     description: String::new(),
                     max_parallel: 1,
@@ -1413,6 +1554,7 @@ mod tests {
                 repo().path(),
                 "parent",
                 ExecutionPlan {
+                    inputs: BTreeMap::new(),
                     name: "repeat".into(),
                     description: String::new(),
                     max_parallel: 1,
@@ -1453,6 +1595,7 @@ mod tests {
                 dir.path(),
                 "parent",
                 ExecutionPlan {
+                    inputs: BTreeMap::new(),
                     name: "approval".into(),
                     description: String::new(),
                     max_parallel: 1,
@@ -1502,6 +1645,7 @@ mod tests {
                 dir.path(),
                 "parent",
                 ExecutionPlan {
+                    inputs: BTreeMap::new(),
                     name: "check".into(),
                     description: String::new(),
                     max_parallel: 1,
@@ -1539,6 +1683,7 @@ mod tests {
                 repo().path(),
                 "parent",
                 ExecutionPlan {
+                    inputs: BTreeMap::new(),
                     name: "exhaust".into(),
                     description: String::new(),
                     max_parallel: 1,
@@ -1572,6 +1717,7 @@ mod tests {
                     &repository,
                     "parent",
                     ExecutionPlan {
+                        inputs: BTreeMap::new(),
                         name: "cancel".into(),
                         description: String::new(),
                         max_parallel: 1,
@@ -1607,6 +1753,7 @@ mod tests {
                 dir.path(),
                 "parent",
                 ExecutionPlan {
+                    inputs: BTreeMap::new(),
                     name: "done".into(),
                     description: String::new(),
                     max_parallel: 1,
