@@ -5,6 +5,9 @@ description: Run a validated restricted TypeScript workflow through the native R
 
 # Run a workflow
 
+Run only as a native invocation inside the current Codex task. The resulting Root Run is owned by
+this task; Rust schedules canonical V2 children after the tool accepts the invocation.
+
 1. Call `orchestra_validate` with the repository-relative `.workflow.ts` path.
 2. Summarize its parallel stages, writers, checks, repeats, and approvals.
 3. Call `orchestra_run`. The Rust runtime owns compilation, DAG scheduling, exact context hashing, V2 spawning, retries, checks, worktrees, checkpoints, and summaries.

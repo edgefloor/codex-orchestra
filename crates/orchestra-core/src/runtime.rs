@@ -17,7 +17,7 @@ use std::sync::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinSet;
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -44,9 +44,25 @@ pub enum RunError {
     Join(String),
 }
 
+#[derive(Clone)]
 struct ActiveRun {
     cancelled: Arc<AtomicBool>,
-    handles: Arc<Mutex<HashMap<String, AgentHandle>>>,
+    agent_handles: Arc<Mutex<HashMap<String, AgentHandle>>>,
+    step_tasks: Arc<Mutex<HashMap<String, ActiveStepTask>>>,
+    finished: Arc<Notify>,
+    completed: Arc<AtomicBool>,
+}
+
+#[derive(Clone)]
+struct ActiveStepTask {
+    kind: ActiveStepTaskKind,
+    abort: tokio::task::AbortHandle,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ActiveStepTaskKind {
+    Agent,
+    Check,
 }
 
 pub struct OrchestraRuntime<H: NativeHost> {
@@ -240,7 +256,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
             checkpoint.status,
             RunStatus::Completed | RunStatus::Cancelled
         ) {
-            self.cleanup_shared_worktree(&checkpoint).await?;
+            self.cleanup_run_worktrees(&checkpoint).await?;
             return Ok(if checkpoint.status == RunStatus::Completed {
                 RunOutcome::Completed(checkpoint)
             } else {
@@ -293,7 +309,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
             checkpoint.next_action = format!("approval `{step_id}` rejected the verified result");
             store.save(&checkpoint)?;
             store.summary(&summary(&checkpoint))?;
-            self.cleanup_shared_worktree(&checkpoint).await?;
+            self.cleanup_run_worktrees(&checkpoint).await?;
             return Ok(RunOutcome::Cancelled(checkpoint));
         }
         checkpoint.status = RunStatus::Running;
@@ -309,34 +325,64 @@ impl<H: NativeHost> OrchestraRuntime<H> {
     }
 
     pub async fn cancel(&self, repository: &Path, run_id: &str) -> Result<RunCheckpoint, RunError> {
-        if let Some(active) = self.active.lock().await.get(run_id) {
+        if let Some(active) = self.active.lock().await.get(run_id).cloned() {
             active.cancelled.store(true, Ordering::SeqCst);
-            let handles: Vec<_> = active.handles.lock().await.values().cloned().collect();
-            for handle in handles {
+            let agent_handles: Vec<_> = active
+                .agent_handles
+                .lock()
+                .await
+                .values()
+                .cloned()
+                .collect();
+            for handle in agent_handles {
                 self.host.cancel(&handle).await.map_err(RunError::Host)?;
             }
+            let check_tasks: Vec<_> = active
+                .step_tasks
+                .lock()
+                .await
+                .values()
+                .filter(|task| task.kind == ActiveStepTaskKind::Check)
+                .map(|task| task.abort.clone())
+                .collect();
+            for task in check_tasks {
+                task.abort();
+            }
+            let finished = active.finished.notified();
+            if !active.completed.load(Ordering::SeqCst) {
+                finished.await;
+            }
+            let (store, _plan, checkpoint) = RunStore::open(repository, run_id)?;
+            if matches!(
+                checkpoint.status,
+                RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled
+            ) {
+                self.cleanup_run_worktrees(&checkpoint).await?;
+                return Ok(checkpoint);
+            }
+            let mut checkpoint = checkpoint;
+            checkpoint.status = RunStatus::Cancelled;
+            checkpoint.next_action = "run cancelled".into();
+            mark_active_steps_cancelled(&mut checkpoint);
+            store.save(&checkpoint)?;
+            store.summary(&summary(&checkpoint))?;
+            self.cleanup_run_worktrees(&checkpoint).await?;
+            return Ok(checkpoint);
         }
         let (store, _, mut checkpoint) = RunStore::open(repository, run_id)?;
         if matches!(
             checkpoint.status,
             RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled
         ) {
-            self.cleanup_shared_worktree(&checkpoint).await?;
+            self.cleanup_run_worktrees(&checkpoint).await?;
             return Ok(checkpoint);
         }
         checkpoint.status = RunStatus::Cancelled;
         checkpoint.next_action = "run cancelled".into();
-        for step in checkpoint.steps.values_mut() {
-            if matches!(
-                step.status,
-                StepStatus::Running | StepStatus::Retrying | StepStatus::WaitingApproval
-            ) {
-                step.status = StepStatus::Cancelled;
-            }
-        }
+        mark_active_steps_cancelled(&mut checkpoint);
         store.save(&checkpoint)?;
         store.summary(&summary(&checkpoint))?;
-        self.cleanup_shared_worktree(&checkpoint).await?;
+        self.cleanup_run_worktrees(&checkpoint).await?;
         Ok(checkpoint)
     }
 
@@ -348,12 +394,18 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         skill_instructions: BTreeMap<String, String>,
     ) -> Result<RunOutcome, RunError> {
         let cancelled = Arc::new(AtomicBool::new(false));
-        let handles = Arc::new(Mutex::new(HashMap::new()));
+        let agent_handles = Arc::new(Mutex::new(HashMap::new()));
+        let step_tasks = Arc::new(Mutex::new(HashMap::new()));
+        let finished = Arc::new(Notify::new());
+        let completed = Arc::new(AtomicBool::new(false));
         self.active.lock().await.insert(
             checkpoint.run_id.clone(),
             ActiveRun {
                 cancelled: Arc::clone(&cancelled),
-                handles: Arc::clone(&handles),
+                agent_handles: Arc::clone(&agent_handles),
+                step_tasks: Arc::clone(&step_tasks),
+                finished: Arc::clone(&finished),
+                completed: Arc::clone(&completed),
             },
         );
         checkpoint.status = RunStatus::Running;
@@ -460,9 +512,13 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                 .into_iter()
                 .filter(|step| !matches!(step.action, Action::Approval(_)))
             {
+                if cancelled.load(Ordering::SeqCst) {
+                    break;
+                }
                 let mut skill_context = String::new();
                 if let Action::Agent(agent) = &mut step.action {
-                    agent.prompt = resolve_template(&agent.prompt, &checkpoint.inputs)?;
+                    agent.prompt =
+                        resolve_template(&agent.prompt, &checkpoint.inputs, &dependency_outputs)?;
                     skill_context = skill_snapshot_context(
                         agent,
                         &checkpoint,
@@ -518,7 +574,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                 state.context_sha256 = Some(context.sha256.clone());
                 let task = StepTask {
                     host: Arc::clone(&self.host),
-                    handles: Arc::clone(&handles),
+                    handles: Arc::clone(&agent_handles),
                     parent_thread_id: checkpoint.parent_thread_id.clone(),
                     run_id: checkpoint.run_id.clone(),
                     step: step.clone(),
@@ -528,16 +584,31 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                     context,
                     skill_context,
                 };
-                join_set.spawn(async move {
-                    let id = step.id.clone();
+                let step_id = step.id.clone();
+                let abort = join_set.spawn(async move {
                     let workspace = task.workspace.clone();
-                    (id, workspace, task.execute().await)
+                    (step_id, workspace, task.execute().await)
                 });
+                let kind = match &step.action {
+                    Action::Agent(_) => ActiveStepTaskKind::Agent,
+                    Action::Check(_) => ActiveStepTaskKind::Check,
+                    Action::Approval(_) => unreachable!(),
+                };
+                step_tasks
+                    .lock()
+                    .await
+                    .insert(step.id.clone(), ActiveStepTask { kind, abort });
             }
             store.save(&checkpoint)?;
             while let Some(result) = join_set.join_next().await {
-                let (step_id, workspace, mut result) =
-                    result.map_err(|e| RunError::Join(e.to_string()))?;
+                let (step_id, workspace, mut result) = match result {
+                    Ok(result) => result,
+                    Err(error) if cancelled.load(Ordering::SeqCst) && error.is_cancelled() => {
+                        continue;
+                    }
+                    Err(error) => return Err(RunError::Join(error.to_string())),
+                };
+                step_tasks.lock().await.remove(&step_id);
                 let step = plan.steps.iter().find(|step| step.id == step_id).unwrap();
                 if step.worktree == crate::WorktreePolicy::Isolated {
                     if let Ok(step_result) = &mut result
@@ -628,9 +699,14 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                 }
                 store.save(&checkpoint)?;
             }
+            if cancelled.load(Ordering::SeqCst) {
+                checkpoint.status = RunStatus::Cancelled;
+                checkpoint.next_action = "run cancelled".into();
+                mark_active_steps_cancelled(&mut checkpoint);
+                break;
+            }
         }
 
-        self.active.lock().await.remove(&checkpoint.run_id);
         let mut promotion_failed = false;
         if checkpoint.status == RunStatus::Completed
             && checkpoint.promotion == PromotionStatus::Pending
@@ -649,10 +725,10 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         }
         if checkpoint.status != RunStatus::WaitingApproval
             && !promotion_failed
-            && let Err(error) = self.cleanup_shared_worktree(&checkpoint).await
+            && let Err(error) = self.cleanup_run_worktrees(&checkpoint).await
         {
             checkpoint.status = RunStatus::Failed;
-            checkpoint.next_action = format!("clean up shared worktree: {error}");
+            checkpoint.next_action = format!("clean up run worktrees: {error}");
         }
         store.save(&checkpoint)?;
         store.summary(&summary(&checkpoint))?;
@@ -665,6 +741,9 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                 ),
             )
             .await;
+        completed.store(true, Ordering::SeqCst);
+        finished.notify_waiters();
+        self.active.lock().await.remove(&checkpoint.run_id);
         Ok(match checkpoint.status {
             RunStatus::Completed => RunOutcome::Completed(checkpoint),
             RunStatus::Cancelled => RunOutcome::Cancelled(checkpoint),
@@ -724,15 +803,23 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         }
     }
 
-    async fn cleanup_shared_worktree(&self, checkpoint: &RunCheckpoint) -> Result<(), RunError> {
-        let shared = shared_worktree_path(&checkpoint.repository, &checkpoint.run_id);
-        if shared.exists() {
+    async fn cleanup_run_worktrees(&self, checkpoint: &RunCheckpoint) -> Result<(), RunError> {
+        let root = checkpoint.repository.join(".codex/orchestra/worktrees");
+        if !root.exists() {
+            return Ok(());
+        }
+        let prefix = format!("{}-", checkpoint.run_id);
+        for entry in std::fs::read_dir(&root)? {
+            let entry = entry?;
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if !name.starts_with(&prefix) {
+                continue;
+            }
             self.host
-                .remove_worktree(
-                    &checkpoint.parent_thread_id,
-                    &checkpoint.repository,
-                    &shared,
-                )
+                .remove_worktree(&checkpoint.parent_thread_id, &checkpoint.repository, &path)
                 .await
                 .map_err(RunError::Host)?;
         }
@@ -1095,6 +1182,18 @@ fn all_outputs(checkpoint: &RunCheckpoint) -> BTreeMap<String, StepOutputs> {
         .map(|(id, state)| (id.clone(), state.outputs.clone()))
         .collect()
 }
+
+fn mark_active_steps_cancelled(checkpoint: &mut RunCheckpoint) {
+    for step in checkpoint.steps.values_mut() {
+        if matches!(
+            step.status,
+            StepStatus::Running | StepStatus::Retrying | StepStatus::WaitingApproval
+        ) {
+            step.status = StepStatus::Cancelled;
+        }
+    }
+}
+
 fn new_run_id(hash: &str) -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1171,7 +1270,7 @@ mod tests {
     use super::*;
     use crate::{AgentOutcome, CommandOutcome, ForkTurns, WorktreePolicy};
     use async_trait::async_trait;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tempfile::tempdir;
 
     struct FakeHost {
@@ -1447,6 +1546,95 @@ mod tests {
         async fn emit_activity(&self, _: &str, _: &str) {}
     }
 
+    struct BlockingCheckHost {
+        running_checks: AtomicUsize,
+        removed_while_running: AtomicBool,
+    }
+
+    #[async_trait]
+    impl NativeHost for BlockingCheckHost {
+        async fn spawn(&self, _: SpawnRequest) -> Result<AgentHandle, String> {
+            Err("unexpected agent spawn".into())
+        }
+
+        async fn status(&self, _: &AgentHandle) -> Result<AgentStatus, String> {
+            Err("unexpected agent status".into())
+        }
+
+        async fn wait(&self, _: &AgentHandle) -> Result<AgentOutcome, String> {
+            Err("unexpected agent wait".into())
+        }
+
+        async fn cancel(&self, _: &AgentHandle) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn run_command(
+            &self,
+            _: &str,
+            _: &Path,
+            _: &[String],
+            _: Option<&Path>,
+            _: u64,
+        ) -> Result<CommandOutcome, String> {
+            struct RunningCheckGuard<'a>(&'a AtomicUsize);
+            impl Drop for RunningCheckGuard<'_> {
+                fn drop(&mut self) {
+                    self.0.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
+
+            self.running_checks.fetch_add(1, Ordering::SeqCst);
+            let _guard = RunningCheckGuard(&self.running_checks);
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Ok(CommandOutcome {
+                exit_code: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+
+        async fn create_worktree(
+            &self,
+            _: &str,
+            repository: &Path,
+            run_id: &str,
+            step_id: &str,
+            policy: &WorktreePolicy,
+            _: &str,
+        ) -> Result<PathBuf, String> {
+            let path = if *policy == WorktreePolicy::Shared {
+                repository
+                    .join(".codex/orchestra/worktrees")
+                    .join(format!("{run_id}-shared"))
+            } else {
+                repository
+                    .join(".codex/orchestra/worktrees")
+                    .join(format!("{run_id}-{step_id}"))
+            };
+            std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+            Ok(path)
+        }
+
+        async fn remove_worktree(&self, _: &str, _: &Path, path: &Path) -> Result<(), String> {
+            if self.running_checks.load(Ordering::SeqCst) != 0 {
+                self.removed_while_running.store(true, Ordering::SeqCst);
+            }
+            std::fs::remove_dir_all(path).map_err(|e| e.to_string())
+        }
+
+        async fn request_approval(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[String],
+        ) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+
+        async fn emit_activity(&self, _: &str, _: &str) {}
+    }
+
     fn committed_repo() -> tempfile::TempDir {
         let dir = repo();
         std::fs::write(dir.path().join("README.md"), "source\n").unwrap();
@@ -1660,6 +1848,40 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("changed run inputs: `ticket`"));
         assert!(error.to_string().contains("omit `inputs`"));
+    }
+
+    #[tokio::test]
+    async fn resolves_step_output_templates_before_spawning_downstream_agents() {
+        let repository = repo();
+        let host = FakeHost::new(vec![r#"{"ok":"ready"}"#, r#"{"ok":true}"#]);
+        let runtime = OrchestraRuntime::new(host);
+
+        let producer = agent("producer", vec![]);
+        let mut consumer = agent("consumer", vec!["producer"]);
+        let Action::Agent(agent) = &mut consumer.action else {
+            unreachable!()
+        };
+        agent.prompt = "Use ${steps.producer.outputs.ok}".into();
+
+        let outcome = runtime
+            .run(
+                repository.path(),
+                "parent",
+                ExecutionPlan {
+                    inputs: BTreeMap::new(),
+                    name: "step-output-templates".into(),
+                    description: String::new(),
+                    max_parallel: 1,
+                    steps: vec![producer, consumer],
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(outcome, RunOutcome::Completed(_)));
+
+        let requests = runtime.host.spawned.lock().await;
+        assert!(requests[1].prompt.contains("Use ready"));
+        assert!(!requests[1].prompt.contains("${steps.producer.outputs.ok}"));
     }
 
     #[tokio::test]
@@ -2021,6 +2243,69 @@ mod tests {
         runtime.cancel(dir.path(), &run_id).await.unwrap();
         assert!(matches!(task.await.unwrap(), RunOutcome::Cancelled(_)));
         assert_eq!(runtime.host.cancelled.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn cancellation_waits_for_running_check_before_cleaning_worktree() {
+        let runtime = OrchestraRuntime::new(BlockingCheckHost {
+            running_checks: AtomicUsize::new(0),
+            removed_while_running: AtomicBool::new(false),
+        });
+        let dir = repo();
+        let runner = runtime.clone();
+        let repository = dir.path().to_path_buf();
+        let task = tokio::spawn(async move {
+            runner
+                .run(
+                    &repository,
+                    "parent",
+                    ExecutionPlan {
+                        inputs: BTreeMap::new(),
+                        name: "cancel-check".into(),
+                        description: String::new(),
+                        max_parallel: 1,
+                        steps: vec![Step {
+                            id: "check".into(),
+                            needs: vec![],
+                            max_attempts: 1,
+                            repeat: None,
+                            worktree: WorktreePolicy::Shared,
+                            write_scope: vec![],
+                            action: Action::Check(crate::CheckStep {
+                                command: vec!["sleep".into()],
+                                cwd: None,
+                                timeout_ms: 60_000,
+                            }),
+                        }],
+                    },
+                )
+                .await
+                .unwrap()
+        });
+        let runs = dir.path().join(".codex/orchestra/runs");
+        let run_id = loop {
+            if let Ok(mut entries) = std::fs::read_dir(&runs)
+                && let Some(Ok(entry)) = entries.next()
+            {
+                break entry.file_name().to_string_lossy().into_owned();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        };
+        while runtime.host.running_checks.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+
+        let cancelled = runtime.cancel(dir.path(), &run_id).await.unwrap();
+        assert_eq!(cancelled.status, RunStatus::Cancelled);
+        assert!(matches!(task.await.unwrap(), RunOutcome::Cancelled(_)));
+        assert_eq!(runtime.host.running_checks.load(Ordering::SeqCst), 0);
+        assert!(!runtime.host.removed_while_running.load(Ordering::SeqCst));
+        assert!(
+            !dir.path()
+                .join(".codex/orchestra/worktrees")
+                .join(format!("{run_id}-shared"))
+                .exists()
+        );
     }
 
     #[tokio::test]

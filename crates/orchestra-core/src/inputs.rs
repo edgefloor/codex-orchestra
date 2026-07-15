@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 pub type RunInputs = BTreeMap<String, Value>;
+pub type TemplateOutputs = BTreeMap<String, BTreeMap<String, Value>>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedInputs {
@@ -26,7 +27,7 @@ pub enum InputError {
         expected: &'static str,
         actual: &'static str,
     },
-    #[error("unknown input reference `{0}`")]
+    #[error("unknown template reference `{0}`")]
     UnknownReference(String),
     #[error("unterminated template reference")]
     UnterminatedReference,
@@ -86,7 +87,11 @@ pub fn verify_inputs(values: &RunInputs, expected_sha256: &str) -> Result<(), In
     }
 }
 
-pub fn resolve_template(template: &str, inputs: &RunInputs) -> Result<String, InputError> {
+pub fn resolve_template(
+    template: &str,
+    inputs: &RunInputs,
+    step_outputs: &TemplateOutputs,
+) -> Result<String, InputError> {
     let mut result = String::new();
     let mut rest = template;
     while let Some(start) = rest.find("${") {
@@ -104,9 +109,11 @@ pub fn resolve_template(template: &str, inputs: &RunInputs) -> Result<String, In
                 result.push_str(&render_value(value));
             }
             ["steps", step, "outputs", output] if !step.is_empty() && !output.is_empty() => {
-                result.push_str("${");
-                result.push_str(reference);
-                result.push('}');
+                let value = step_outputs
+                    .get(*step)
+                    .and_then(|outputs| outputs.get(*output))
+                    .ok_or_else(|| InputError::UnknownReference(reference.into()))?;
+                result.push_str(&render_value(value));
             }
             _ => return Err(InputError::UnsupportedReference(reference.into())),
         }
@@ -270,9 +277,13 @@ mod tests {
             resolve_template(
                 "Implement ${inputs.ticket} with ${inputs.flags}: ${steps.plan.outputs.summary}",
                 &inputs,
+                &BTreeMap::from([(
+                    "plan".into(),
+                    BTreeMap::from([("summary".into(), Value::String("ready".into()))]),
+                )]),
             )
             .unwrap(),
-            "Implement #3 with [\"one\",\"two\"]: ${steps.plan.outputs.summary}"
+            "Implement #3 with [\"one\",\"two\"]: ready"
         );
     }
 }

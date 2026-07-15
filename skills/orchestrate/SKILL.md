@@ -7,6 +7,9 @@ description: Route creation, validation, execution, status, cancellation, and re
 
 This skill is a user-facing layer over the Rust extension. It is not the scheduler.
 
+Every workflow invocation belongs to the current Codex task. The skill may call native Orchestra
+tools from that task, but it must never create or imply detached host execution.
+
 1. Inspect `.codex/orchestra/runs/` for a matching incomplete run.
 2. Resume an existing run with `orchestra_resume`; pass an approval decision only when the user explicitly supplied it.
 3. Validate an existing `.workflow.ts` with `orchestra_validate`, then run it with `orchestra_run`.

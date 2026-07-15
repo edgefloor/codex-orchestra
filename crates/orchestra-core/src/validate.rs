@@ -136,7 +136,7 @@ pub fn validate_plan(plan: &ExecutionPlan) -> Vec<ValidationError> {
         if let Action::Agent(agent) = &step.action {
             let prompt_path = format!("steps[{index}].prompt");
             for reference in template_references(&agent.prompt) {
-                validate_reference(plan, &prompt_path, reference, &mut errors);
+                validate_reference(plan, &ids, &step.id, &prompt_path, reference, &mut errors);
             }
             let context_path = format!("steps[{index}].context");
             for source in &agent.context {
@@ -192,6 +192,8 @@ fn template_references(value: &str) -> Vec<&str> {
 
 fn validate_reference(
     plan: &ExecutionPlan,
+    ids: &BTreeSet<String>,
+    consumer: &str,
     path: &str,
     reference: &str,
     errors: &mut Vec<ValidationError>,
@@ -203,7 +205,9 @@ fn validate_reference(
                 push(errors, path, &format!("unknown input `{name}`"));
             }
         }
-        ["steps", step, "outputs", output] if !step.is_empty() && !output.is_empty() => {}
+        ["steps", step, "outputs", output] if !step.is_empty() && !output.is_empty() => {
+            validate_output_reference(plan, ids, consumer, path, step, output, errors);
+        }
         _ => push(
             errors,
             path,
@@ -515,5 +519,63 @@ mod tests {
                 .iter()
                 .any(|error| { error.message.contains("must be a dependency of `consumer`") })
         );
+    }
+
+    #[test]
+    fn prompt_output_references_must_target_declared_dependency_outputs() {
+        let mut producer = writer("producer", "producer/", WorktreePolicy::Isolated);
+        let Action::Agent(agent) = &mut producer.action else {
+            unreachable!()
+        };
+        agent.outputs = vec!["result".into()];
+
+        let mut consumer = writer("consumer", "consumer/", WorktreePolicy::Isolated);
+        consumer.needs = vec!["producer".into()];
+        let Action::Agent(agent) = &mut consumer.action else {
+            unreachable!()
+        };
+        agent.prompt = "Use ${steps.producer.outputs.result}".into();
+
+        let plan = ExecutionPlan {
+            inputs: BTreeMap::new(),
+            name: "prompt-output".into(),
+            description: String::new(),
+            max_parallel: 1,
+            steps: vec![producer.clone(), consumer.clone()],
+        };
+        assert!(validate_plan(&plan).is_empty());
+
+        let mut missing_dependency = consumer.clone();
+        missing_dependency.needs.clear();
+        let errors = validate_plan(&ExecutionPlan {
+            inputs: BTreeMap::new(),
+            name: "prompt-output".into(),
+            description: String::new(),
+            max_parallel: 1,
+            steps: vec![producer.clone(), missing_dependency],
+        });
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("must be a dependency of `consumer`"))
+        );
+
+        let mut wrong_output = producer;
+        let Action::Agent(agent) = &mut wrong_output.action else {
+            unreachable!()
+        };
+        agent.outputs = vec!["other".into()];
+        let errors = validate_plan(&ExecutionPlan {
+            inputs: BTreeMap::new(),
+            name: "prompt-output".into(),
+            description: String::new(),
+            max_parallel: 1,
+            steps: vec![wrong_output, consumer],
+        });
+        assert!(errors.iter().any(|error| {
+            error
+                .message
+                .contains("unknown dependency output `producer.result`")
+        }));
     }
 }

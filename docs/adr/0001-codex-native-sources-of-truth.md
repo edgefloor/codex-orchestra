@@ -2,6 +2,9 @@
 status: accepted
 ---
 
+ADR 0014 supersedes this decision's prohibition on bounded host-local product projection state.
+Repository-local checkpoints remain authoritative for workflow execution and effects.
+
 # Keep execution Codex-native and state repository-local
 
 The active Codex agent executes workflows through native collaboration, worktrees, approvals, and ordinary tools. Workflow definitions, run state, step results, evidence, and summaries are repository artifacts; Git preserves source and change history. Messages and transcripts are coordination context, not durable state.

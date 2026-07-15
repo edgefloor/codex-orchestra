@@ -14,8 +14,92 @@ Orchestra is a workflow runtime for composing task-specific Codex agents, checks
 
 Orchestra is useful when a task needs more structure than a single prompt: parallel investigation, explicit implementation and verification stages, bounded retries, human approval, or recovery after interruption. Agents remain native Codex child tasks; Orchestra does not introduce a daemon, MCP server, external scheduler, or separate agent service.
 
+Workflows are task-native. A user instruction or Orchestra skill/tool call inside a Codex task invokes a Root Run owned by that task; Rust then schedules the declared graph through the task's native V2 control path. A future workflow picker may initiate the same task action, but neither the renderer nor a separate host starts detached Runs.
+
+The invoking native tool remains active until the Run completes or durably pauses. Interrupting the
+turn fences active work and leaves a recoverable suspended Run; it does not create background
+execution.
+
+Observation is split by consumer: the UI composes task-scoped replay streams for inspection, while
+the root model receives a bounded replaceable Run Digest, distilled results, attention events, and
+on-demand expansion instead of raw event accumulation.
+
+The Run Digest uses Codex's extension-owned World State snapshot-and-diff seam, so refreshed
+coordination state replaces stale context rather than appending another transcript message.
+Actionable failures, gates, permissions, and human-input requests remain explicit attention events.
+
+Digest generation is deterministic under a hard context budget. It prioritizes required actions,
+failures, and unresolved gates; active work; new outcomes and material changes; blocked work and
+next actions; then older successful detail. Stable IDs and omission counts always remain available
+for expansion.
+
+Workflow agents remain native Codex agents and can be steered by the user or responsible root
+agent. Orchestra extends the existing Codex steer path only to record Attempt ownership, provenance,
+revision, and delivery outcome so recovery never silently loses or duplicates an instruction.
+
+The long-term product maintains selective upstream-tracking forks of Codex and the T3Code-derived
+desktop. Orchestra reuses their native primitives first and adds behavior where the owning product
+semantics belong; it is not designed as a compatibility layer that will later be removed.
+
+In the desktop target, Codex's existing `app-server-protocol` crate owns the generated
+Codex-plus-Orchestra wire surface. `orchestra-core` continues to own workflow execution and durable
+state, with explicit conversions between protocol DTOs and domain types.
+
+The desktop target extends Codex's existing rollout-backed thread store and SQLite `StateRuntime`
+for task sequencing, bounded replay, product snapshots, attachments, and renderer recovery. It does
+not introduce a separate Host-store subsystem. Orchestra publishes typed transitions after
+checkpoint commits but never treats Codex projection state as execution authority.
+
+Replay is task-local in the MVP: Codex and Orchestra events in one task share a sequence. Global
+account, configuration, update, and host-health notifications rehydrate through existing reads and
+continue live without durable cursors or cross-task ordering.
+
+A task snapshot composes the existing Codex `thread/read` result with Orchestra's execution
+projection at one replay barrier. It does not store another full copy of the Codex conversation;
+Codex history and repository checkpoints remain the respective authorities.
+
+The Orchestra snapshot section carries only the current inspectable Run Tree, Attempts, statuses,
+gates, digests, and stable evidence references. Full transition history and large payloads remain
+available through bounded, authorized reads when the UI or root task asks to expand them.
+
+Canonical semantic history stays in Codex rollout records without desktop transport fields.
+Task-local sequences and bounded raw replay tails extend `StateRuntime`; losing them triggers fresh
+snapshot hydration instead of rewriting conversation history.
+
+Orchestra lifecycle history extends Codex's existing `TurnItem::Extension` path with one namespaced
+variant that maps to App Server `ThreadItem::Orchestra`. Its generated `OrchestraThreadItem` union
+provides typed Run, Step, Attempt, gate, effect, and agent members carrying stable identities,
+bounded display summaries, and references—not generic JSON, full checkpoints, or large evidence
+payloads.
+
+Each lifecycle item has a stable ID and append-only semantic revisions. Codex `thread/read`
+collapses those revisions to the latest visible item, while the independent task-local replay
+sequence orders delivery across the task.
+
+Raw child-agent events remain in each child's native task stream. Parent tasks carry bounded typed
+Orchestra items referencing child task IDs, and the desktop subscribes to a child's detailed stream
+only when that detail is expanded. This Context economy rule also governs model input: preserve
+canonical detail once, coordinate through bounded summaries, and retrieve specifics on demand.
+
+Targeted expansion is one bounded, authorized query service in `orchestra-core`. A native Codex task
+tool and typed App Server methods adapt that service for the root model and renderer respectively;
+they share selectors, identity, authorization, pagination, and authoritative reads while enforcing
+different output budgets and presentation schemas.
+
+The MVP query API uses fixed typed selectors for Runs, Steps, Attempts, agents, gates, effects,
+outputs, evidence, and history pages. It does not introduce a general graph-query language.
+
+Replay cursors are supplied only when subscribing to an individual task stream. App Server
+`initialize` negotiates the pinned bundle, schemas, capabilities, retention boundaries, and limits;
+it does not enumerate task cursors.
+
 > [!IMPORTANT]
 > Orchestra is experimental and source-first. The authoring skills can load on stock Codex, but the five native workflow tools require the Codex revision pinned in [`integration/codex/UPSTREAM_REVISION`](integration/codex/UPSTREAM_REVISION) with Orchestra's integration patch. The repository does not yet provide a complete end-user installer for that custom App Server build.
+
+The verified implementation today is the task-native tool surface in that patched build. The
+single-process desktop host mode and extended pinned App Server desktop protocol in ADR 0015 are the
+accepted MVP target and are not yet implemented; dated verification records describe only what was
+actually observed.
 
 ## Prerequisites
 
@@ -106,6 +190,9 @@ Validate and run inspect.workflow.ts with Orchestra. Report the run id and summa
 ```
 
 The task should call `orchestra_validate` before `orchestra_run`. On success, resolved inputs are written to `inputs.json`, the `inspect` output is written to `.codex/orchestra/runs/<run-id>/outputs/inspect.json`, check evidence is recorded under `evidence/checks/`, and `summary.md` records the terminal state.
+
+`orchestra_run` is a native task tool, not a renderer RPC or external scheduler. The invocation is
+recorded against the current parent task, and every agent step uses canonical Codex child lineage.
 
 ## Define a workflow
 

@@ -2,6 +2,9 @@
 status: accepted
 ---
 
+ADR 0014 supersedes this decision's always-human approval model with separate Permission Request,
+Decision Gate, Gate Policy, and authority semantics.
+
 # Resolve and snapshot skills before native workflow execution
 
 Skill-backed workflows declare exact skill requirements, typed run inputs, human interactions, and
@@ -37,6 +40,11 @@ environment variables, ambient files, and transcript text are not implicit input
 runtime validate the values, serialize them canonically, hash them, and persist the resolved object
 before selecting a dependency-ready step. Sensitive values are not supported until Orchestra has a
 redacted secret-reference contract; workflows must pass identifiers rather than secret material.
+
+Invocation is a native action inside the owning Codex task. A task instruction or skill/tool call
+may initiate it; an eventual workflow picker may only submit the equivalent task-bound action. No
+renderer or external host starts a detached Run, and no model is responsible for scheduling after
+the native runtime accepts the invocation.
 
 The immutable run snapshot consists of the compiled workflow, resolved inputs, source revision,
 skill manifest and bytes, and their digests. A new run resolves current skill installations. Resume

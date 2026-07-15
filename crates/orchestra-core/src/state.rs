@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -249,7 +253,45 @@ fn atomic_json<T: Serialize>(path: &Path, value: &T) -> Result<(), std::io::Erro
 }
 
 fn atomic_write(path: &Path, data: &[u8]) -> Result<(), std::io::Error> {
-    let temp = path.with_extension(format!("tmp-{}", std::process::id()));
+    let nonce = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temp = path.with_extension(format!("tmp-{}-{nanos}-{nonce}", std::process::id()));
     fs::write(&temp, data)?;
     fs::rename(temp, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn atomic_write_uses_distinct_temp_paths_for_concurrent_writers() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let writer_a = std::thread::spawn({
+            let path = path.clone();
+            move || atomic_write(&path, br#"{"writer":"a"}"#)
+        });
+        let writer_b = std::thread::spawn({
+            let path = path.clone();
+            move || atomic_write(&path, br#"{"writer":"b"}"#)
+        });
+        writer_a.join().unwrap().unwrap();
+        writer_b.join().unwrap().unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content == r#"{"writer":"a"}"# || content == r#"{"writer":"b"}"#);
+        assert_eq!(
+            fs::read_dir(dir.path())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp-"))
+                .count(),
+            0
+        );
+    }
 }
