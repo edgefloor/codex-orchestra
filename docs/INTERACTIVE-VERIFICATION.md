@@ -23,6 +23,15 @@ truncation with stable omission references, and identical bounded query selectio
 task-tool and App Server adapters. Keep these checks pending until the desktop host exists and each
 behavior is directly observed.
 
+The disposable issue #20 harness now automates the protocol/reducer subset above with deterministic
+fixtures. `scripts/desktop-host-prototype.sh` directly observed exact negotiation, `thread/read`
+hydration plus a composed snapshot, replay-to-live delivery, stable lifecycle revisions, lazy child
+stream attachment, World State replacement, query parity and denial, reload, restart with an expired
+cursor, slow-consumer reset, bundle mismatch, redaction, and separate inherited confirmation-pipe
+plumbing. This does not change the production Electron/React, Codex `StateRuntime`, native
+macOS confirmation and renderer-isolation proof, and provider-backed rows from `pending`; see the
+dated issue #20 record.
+
 ## Stage 4 — recovery and self-hosting
 
 Interrupt a resident workflow invocation and verify active Attempts are fenced, child cancellation is requested, and the Run durably suspends rather than continuing in the background. Resume it through a later task-native invocation and verify checkpoint reconciliation. Create a conflicting target edit and verify promotion preserves it, retains the shared worktree, and succeeds after the conflict is resolved and the run is resumed. Use an installed version to validate a source-checkout candidate without changing the installed cache; promote only after all required checks and approval pass.

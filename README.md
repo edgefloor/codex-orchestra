@@ -672,6 +672,22 @@ The current Codex implementation is `CodexHost` in [`integration/codex/overlay/c
 
 Implementations must preserve parent-task lineage, return final agent responses, honor cancellation and command timeouts, provide absolute workspaces, and leave durable run state to `OrchestraRuntime`. See [`crates/orchestra-core/src/host.rs`](crates/orchestra-core/src/host.rs) for the trait and the fake host in the runtime tests for a minimal example.
 
+## Disposable desktop-host prototype
+
+The issue #20 architecture gate is runnable without provider calls:
+
+```bash
+scripts/desktop-host-prototype.sh
+```
+
+It builds an explicitly disposable Rust fixture, bridges its bounded length-prefixed JSON frames
+through a real `MessagePort`, and drives a T3Code-derived pure renderer adapter through task
+hydration, replay-to-live delivery, typed Orchestra lifecycle updates, lazy child attachment, World
+State replacement, query parity, reload/restart recovery, overload, bundle mismatch, and a private
+confirmation pipe. It does not replace the production Codex overlay or constitute a second runtime;
+its remaining gaps and deletion criteria are recorded in
+[`docs/verification/2026-07-15-issue-20-disposable-host-prototype.md`](docs/verification/2026-07-15-issue-20-disposable-host-prototype.md).
+
 ## Current limitations
 
 - Stock Codex cannot dynamically load the Rust extension; the pinned integration patch is required.

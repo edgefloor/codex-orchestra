@@ -12,6 +12,7 @@
 | Lifecycle doctor | | pending | |
 | Plugin validator | | pending | |
 | Pinned Codex apply/build | | pending | |
+| Disposable desktop-host gate | `scripts/desktop-host-prototype.sh` | pending | |
 
 ## Human UI evidence
 
@@ -33,6 +34,7 @@
 | Typed Orchestra thread items hydrate from rollout revisions | pending | |
 | Run Digest refresh replaces extension-owned World State and truncates deterministically | pending | |
 | Native task and App Server query adapters return the same authorized bounded selection | pending | |
+| Private confirmation reaches Electron main without entering the renderer data port | pending | |
 | Installed cache remains byte-identical | pending | |
 
 ## Verdict

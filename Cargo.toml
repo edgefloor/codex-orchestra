@@ -1,5 +1,9 @@
 [workspace]
-members = ["crates/orchestra-core", "crates/orchestra-lifecycle"]
+members = [
+    "crates/orchestra-core",
+    "crates/orchestra-host-prototype",
+    "crates/orchestra-lifecycle",
+]
 resolver = "2"
 
 [workspace.package]
