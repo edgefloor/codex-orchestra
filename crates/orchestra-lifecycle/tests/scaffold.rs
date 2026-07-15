@@ -306,3 +306,43 @@ fn mutable_run_state_is_not_tracked() {
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
 }
+
+#[test]
+fn skill_backed_workflow_contract_and_tracker_operations_are_documented() {
+    let root = root();
+    let adr =
+        fs::read_to_string(root.join("docs/adr/0013-skill-backed-workflow-contract.md")).unwrap();
+    for required in [
+        "Skill identity and requirement closure",
+        "Inputs and immutable snapshots",
+        "Human interaction and acceptance authority",
+        "Tracker authority and external effects",
+        "Recovery",
+        "AgentControl",
+    ] {
+        assert!(
+            adr.contains(required),
+            "missing contract section: {required}"
+        );
+    }
+    for forbidden in ["MCP server", "App Server client", "daemon", "sidecar"] {
+        assert!(!adr.contains(&format!("introduce a {forbidden}")));
+    }
+
+    let tracker = fs::read_to_string(root.join("docs/agents/issue-tracker.md")).unwrap();
+    for required in [
+        "edgefloor/codex-orchestra",
+        "--add-blocked-by",
+        "--parent",
+        "Wayfinding operations",
+        "Git-backed local Markdown fallback",
+        ".scratch/<feature-slug>/issues/",
+        "schema_version: 1",
+        "external-effect receipt",
+    ] {
+        assert!(
+            tracker.contains(required),
+            "missing tracker operation: {required}"
+        );
+    }
+}

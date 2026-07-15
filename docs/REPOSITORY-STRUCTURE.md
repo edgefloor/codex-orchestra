@@ -13,6 +13,7 @@ assets/templates/                   .workflow.ts and summary templates
 evals/workflows/                    compiler/runtime fixtures
 evals/scenarios/                    behavioral acceptance scenarios
 docs/adr/                           architecture decisions
+docs/agents/                        tracker and agent-operation contracts
 ```
 
 Runtime-owned target-repository data:
