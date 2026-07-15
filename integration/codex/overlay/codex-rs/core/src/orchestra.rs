@@ -132,10 +132,7 @@ impl OrchestraControl {
             .control
             .spawn_agent_with_metadata(
                 config,
-                vec![UserInput::Text {
-                    text: request.prompt,
-                    text_elements: Vec::new(),
-                }],
+                orchestra_initial_input(request.prompt),
                 Some(source),
                 SpawnAgentOptions {
                     fork_parent_spawn_call_id: fork_mode
@@ -222,5 +219,89 @@ impl OrchestraControl {
             stdout: output.stdout.text,
             stderr: output.stderr.text,
         })
+    }
+}
+
+fn orchestra_initial_input(prompt: String) -> Vec<UserInput> {
+    vec![UserInput::Text {
+        text: prompt,
+        text_elements: Vec::new(),
+    }]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::collect_explicit_skill_mentions;
+    use codex_core_skills::{SkillMetadata, SkillPolicy};
+    use codex_protocol::protocol::SkillScope;
+    use std::collections::{HashMap, HashSet};
+    use std::path::PathBuf;
+
+    fn skill(name: &str, path: &str, allow_implicit_invocation: bool) -> SkillMetadata {
+        SkillMetadata {
+            name: name.into(),
+            description: format!("{name} description"),
+            short_description: None,
+            interface: None,
+            dependencies: None,
+            policy: Some(SkillPolicy {
+                allow_implicit_invocation: Some(allow_implicit_invocation),
+                products: Vec::new(),
+            }),
+            path_to_skills_md: AbsolutePathBuf::try_from(PathBuf::from(path)).unwrap(),
+            scope: SkillScope::User,
+            plugin_id: None,
+        }
+    }
+
+    #[test]
+    fn explicit_skill_mention_is_preserved_as_user_text() {
+        let input = orchestra_initial_input("Use $wayfinder for this task.".into());
+        let [
+            UserInput::Text {
+                text,
+                text_elements,
+            },
+        ] = input.as_slice()
+        else {
+            panic!("Orchestra prompt should be submitted as one text input");
+        };
+
+        assert_eq!(text, "Use $wayfinder for this task.");
+        assert!(text_elements.is_empty());
+    }
+
+    #[test]
+    fn explicit_mention_selects_a_skill_hidden_from_implicit_invocation() {
+        let inputs = orchestra_initial_input("Use $wayfinder for this task.".into());
+        let skills = vec![skill(
+            "wayfinder",
+            "/tmp/wayfinder/SKILL.md",
+            /*allow_implicit_invocation*/ false,
+        )];
+
+        let selected =
+            collect_explicit_skill_mentions(&inputs, &skills, &HashSet::new(), &HashMap::new());
+
+        assert_eq!(selected, skills);
+    }
+
+    #[test]
+    fn missing_and_ambiguous_plain_skill_mentions_do_not_select_a_skill() {
+        let skills = vec![
+            skill("wayfinder", "/tmp/one/SKILL.md", false),
+            skill("wayfinder", "/tmp/two/SKILL.md", false),
+        ];
+
+        for prompt in ["Use $missing.", "Use $wayfinder."] {
+            let selected = collect_explicit_skill_mentions(
+                &orchestra_initial_input(prompt.into()),
+                &skills,
+                &HashSet::new(),
+                &HashMap::new(),
+            );
+            assert!(selected.is_empty(), "unexpected selection for {prompt}");
+        }
     }
 }

@@ -6,6 +6,7 @@ crates/orchestra-lifecycle/         preview-first plugin configuration lifecycle
 sdk/                                TypeScript authoring declarations (never executed)
 integration/codex/                  pinned revision, minimal patch, and Codex overlay crates
 scripts/codex-integration.sh        deterministic apply/build verification
+scripts/characterize-pinned-skills.sh pinned native skill boundary verification
 skills/                             user-facing native-tool guidance
 config/                             optional project/global Codex configuration
 assets/templates/                   .workflow.ts and summary templates
