@@ -369,6 +369,21 @@ The authoring package exports `ref()`. Agent prompts may reference `` `${inputs.
 
 Every agent still requires an explicit `model`. Recursive delegation defaults to `false` and also depends on the repository's Codex depth configuration.
 
+### Skill requirements
+
+Agent steps declare the complete skill closure they need. Each entry has a `name`, optional `requires`, and optional repository-safe paths in `resources`:
+
+```ts
+skills: [
+  { name: "implement", requires: ["tdd"] },
+  { name: "tdd", resources: ["references/testing.md"] },
+]
+```
+
+Every named transitive requirement must appear in the same agent step. Cycles, conflicting declarations, duplicate requirements, and absolute or escaping resource paths fail workflow validation. The native Codex host resolves plain names only when they identify one enabled skill; qualified plugin identities disambiguate duplicates.
+
+Before creating the run, Orchestra snapshots the exact `SKILL.md`, declared resource bytes, canonical identity, source locator, plugin identity, and native tool-dependency metadata. Agent prompts receive the recorded instructions and paths to recorded resources. Resume verifies and uses this evidence without reloading the installed skill, so ambient edits cannot change an in-progress run.
+
 ## Outputs and validation
 
 An agent must return exactly one JSON object. When `outputs` is nonempty, Orchestra extracts those named keys and rejects a response that omits any of them. When `outputs` is empty, every property in the returned object becomes a step output.
@@ -430,13 +445,15 @@ All mutable runtime state belongs to the target repository:
 ├── state.json                      atomic run checkpoint
 ├── outputs/<step-id>.json          validated step outputs
 ├── evidence/checks/<step>-<n>.json command, timeout, exit code, stdout, stderr
+├── evidence/skills/manifest.json   resolved identities, artifact paths, and digests
+├── evidence/skills/<skill>/        exact SKILL.md and declared resource bytes
 ├── evidence/changes/<step>-<n>.patch isolated attempt patches
 ├── evidence/changes/promoted.patch aggregate verified promotion patch
 ├── approvals/<step-id>.json        explicit approval decision
 └── summary.md                      paused or terminal summary
 ```
 
-The checkpoint records the workflow and input hashes, resolved inputs, parent task, repository, source revision, run and promotion status, per-step attempts and rounds, context hashes, outputs, errors, agent handles, and next action. Files are written through temporary files and atomic rename.
+The checkpoint records the workflow, input, and skill-manifest hashes, resolved inputs and skill identities, parent task, repository, source revision, run and promotion status, per-step attempts and rounds, context hashes, outputs, errors, agent handles, and next action. Files are written through temporary files and atomic rename.
 
 Installed plugin files and the custom runtime contain no mutable run state. Uninstall preserves `.codex/orchestra/runs/`.
 
@@ -471,6 +488,7 @@ Installed plugin files and the custom runtime contain no mutable run state. Unin
 | `service_tier` | `string` | No | inherited/unspecified |
 | `fork_turns` | `"none" \| "all" \| { last: number }` | No | `"none"` |
 | `context` | `ContextSource[]` | No | `[]` |
+| `skills` | `SkillRequirement[]` | No | `[]` |
 | `outputs` | `string[]` | No | `[]` |
 | `allow_delegation` | `boolean` | No | `false` |
 
@@ -556,6 +574,7 @@ Project installation state is stored in `.codex/orchestra/install-state.json`. U
 
 The core runtime is host-independent Rust. `NativeHost` is the boundary for an embedding that can:
 
+- resolve enabled skills and read their instructions/resources through the owning filesystem;
 - spawn, inspect, wait for, and cancel an agent;
 - execute sandboxed commands;
 - create and remove worktrees;

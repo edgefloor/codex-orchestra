@@ -1,5 +1,6 @@
 use crate::context::materialize_context_with_inputs;
-use crate::state::RunStore;
+use crate::skills::{collect_requirements, prepare_skills, verify_and_load};
+use crate::state::{RunCreation, RunStore};
 use crate::{
     Action, AgentHandle, AgentStatus, ExecutionPlan, InputError, NativeHost, PromotionStatus,
     RunCheckpoint, RunStatus, SpawnRequest, Step, StepOutputs, StepStatus, resolve_inputs,
@@ -33,6 +34,8 @@ pub enum RunError {
     Validation(String),
     #[error("run inputs failed: {0}")]
     Inputs(#[from] InputError),
+    #[error("skill requirements failed: {0}")]
+    Skills(#[from] crate::SkillError),
     #[error("run storage failed: {0}")]
     Storage(#[from] std::io::Error),
     #[error("native host failed: {0}")]
@@ -96,20 +99,72 @@ impl<H: NativeHost> OrchestraRuntime<H> {
             ));
         }
         let inputs = resolve_inputs(&plan.inputs, provided_inputs)?;
+        let skill_requirements = collect_requirements(plan.steps.iter().filter_map(|step| {
+            let Action::Agent(agent) = &step.action else {
+                return None;
+            };
+            Some(agent.skills.clone())
+        }))?;
         let plan_bytes = serde_json::to_vec(&plan).expect("plan serializes");
         let hash = format!("{:x}", Sha256::digest(&plan_bytes));
         let run_id = new_run_id(&hash);
         let revision = git_revision(repository)?;
-        let (store, checkpoint) = RunStore::create(
+        let resolved_skills = if skill_requirements.is_empty() {
+            self.host
+                .resolve_skills(parent_thread_id, repository, &revision, &[])
+                .await
+                .map_err(RunError::Host)?
+        } else {
+            let workspace = self
+                .host
+                .create_worktree(
+                    parent_thread_id,
+                    repository,
+                    &run_id,
+                    "skill-resolution",
+                    &crate::WorktreePolicy::Isolated,
+                    &revision,
+                )
+                .await
+                .map_err(RunError::Host)?;
+            let resolution = self
+                .host
+                .resolve_skills(
+                    parent_thread_id,
+                    &workspace,
+                    &revision,
+                    &skill_requirements.values().cloned().collect::<Vec<_>>(),
+                )
+                .await;
+            let cleanup = self
+                .host
+                .remove_worktree(parent_thread_id, repository, &workspace)
+                .await;
+            match (resolution, cleanup) {
+                (Ok(skills), Ok(())) => skills,
+                (Err(error), Ok(())) => return Err(RunError::Host(error)),
+                (Ok(_), Err(error)) => return Err(RunError::Host(error)),
+                (Err(error), Err(cleanup)) => {
+                    return Err(RunError::Host(format!(
+                        "{error}; skill-resolution cleanup failed: {cleanup}"
+                    )));
+                }
+            }
+        };
+        let skills = prepare_skills(&skill_requirements, resolved_skills)?;
+        let (store, checkpoint) = RunStore::create(RunCreation {
             repository,
-            &run_id,
-            &plan,
-            &hash,
+            run_id: &run_id,
+            plan: &plan,
+            workflow_sha256: &hash,
             parent_thread_id,
-            revision,
-            &inputs,
-        )?;
-        self.execute(store, plan, checkpoint).await
+            source_revision: revision,
+            inputs: &inputs,
+            skills: &skills,
+        })?;
+        let skill_instructions = verify_and_load(store.root(), &skills.manifest, &skills.sha256)?;
+        self.execute(store, plan, checkpoint, skill_instructions)
+            .await
     }
 
     pub async fn resume(&self, repository: &Path, run_id: &str) -> Result<RunOutcome, RunError> {
@@ -134,12 +189,33 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         provided_inputs: Option<&Value>,
     ) -> Result<RunOutcome, RunError> {
         let (store, plan, mut checkpoint) = RunStore::open(repository, run_id)?;
+        let workflow_sha256 = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&plan).expect("plan serializes"))
+        );
+        if workflow_sha256 != checkpoint.workflow_sha256 {
+            return Err(RunError::Validation(
+                "recorded workflow does not match its checkpoint digest".into(),
+            ));
+        }
         verify_inputs(&checkpoint.inputs, &checkpoint.inputs_sha256)?;
         let persisted_inputs = store.inputs()?;
         verify_inputs(&persisted_inputs, &checkpoint.inputs_sha256)?;
         if persisted_inputs != checkpoint.inputs {
             return Err(InputError::SnapshotMismatch.into());
         }
+        let skill_instructions = if checkpoint.schema_version >= 4 {
+            let persisted_skills = store.skill_manifest()?;
+            if persisted_skills != checkpoint.skills {
+                return Err(crate::SkillError::ArtifactChanged(
+                    "evidence/skills/manifest.json".into(),
+                )
+                .into());
+            }
+            verify_and_load(store.root(), &checkpoint.skills, &checkpoint.skills_sha256)?
+        } else {
+            BTreeMap::new()
+        };
         if let Some(provided) = provided_inputs {
             let supplied = resolve_inputs(&plan.inputs, Some(provided))?;
             if supplied.sha256 != checkpoint.inputs_sha256 {
@@ -223,7 +299,8 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         checkpoint.status = RunStatus::Running;
         checkpoint.next_action = "resume dependency-ready steps from checkpoint".into();
         store.save(&checkpoint)?;
-        self.execute(store, plan, checkpoint).await
+        self.execute(store, plan, checkpoint, skill_instructions)
+            .await
     }
 
     pub async fn status(&self, repository: &Path, run_id: &str) -> Result<RunCheckpoint, RunError> {
@@ -268,6 +345,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         store: RunStore,
         plan: ExecutionPlan,
         mut checkpoint: RunCheckpoint,
+        skill_instructions: BTreeMap<String, String>,
     ) -> Result<RunOutcome, RunError> {
         let cancelled = Arc::new(AtomicBool::new(false));
         let handles = Arc::new(Mutex::new(HashMap::new()));
@@ -382,6 +460,16 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                 .into_iter()
                 .filter(|step| !matches!(step.action, Action::Approval(_)))
             {
+                let mut skill_context = String::new();
+                if let Action::Agent(agent) = &mut step.action {
+                    agent.prompt = resolve_template(&agent.prompt, &checkpoint.inputs)?;
+                    skill_context = skill_snapshot_context(
+                        agent,
+                        &checkpoint,
+                        store.root(),
+                        &skill_instructions,
+                    )?;
+                }
                 let state = checkpoint.steps.get_mut(&step.id).unwrap();
                 state.status = StepStatus::Running;
                 state.attempts += 1;
@@ -399,7 +487,6 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                     .map_err(RunError::Host)?;
                 let context = match &mut step.action {
                     Action::Agent(agent) => {
-                        agent.prompt = resolve_template(&agent.prompt, &checkpoint.inputs)?;
                         match materialize_context_with_inputs(
                             &workspace,
                             &agent.context,
@@ -439,6 +526,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                     round: state.rounds + 1,
                     workspace,
                     context,
+                    skill_context,
                 };
                 join_set.spawn(async move {
                     let id = step.id.clone();
@@ -730,6 +818,39 @@ impl<H: NativeHost> OrchestraRuntime<H> {
     }
 }
 
+fn skill_snapshot_context(
+    agent: &crate::AgentStep,
+    checkpoint: &RunCheckpoint,
+    run_root: &Path,
+    instructions: &BTreeMap<String, String>,
+) -> Result<String, crate::SkillError> {
+    let mut context = String::new();
+    for requirement in &agent.skills {
+        let entry = checkpoint
+            .skills
+            .entries
+            .get(&requirement.name)
+            .ok_or_else(|| crate::SkillError::Missing(requirement.name.clone()))?;
+        let text = instructions
+            .get(&requirement.name)
+            .ok_or_else(|| crate::SkillError::Missing(requirement.name.clone()))?;
+        context.push_str(&format!(
+            "\n\n<<< ORCHESTRA SKILL {} >>>\nSource: {}\n{}\n<<< END ORCHESTRA SKILL >>>",
+            entry.identity.canonical_name, entry.identity.source_locator, text
+        ));
+        if !entry.resources.is_empty() {
+            context.push_str("\nSnapshotted skill resources:");
+            for (name, artifact) in &entry.resources {
+                context.push_str(&format!(
+                    "\n- {name}: {}",
+                    run_root.join(&artifact.path).display()
+                ));
+            }
+        }
+    }
+    Ok(context)
+}
+
 struct StepTask<H: NativeHost> {
     host: Arc<H>,
     handles: Arc<Mutex<HashMap<String, AgentHandle>>>,
@@ -740,6 +861,7 @@ struct StepTask<H: NativeHost> {
     round: u32,
     workspace: PathBuf,
     context: crate::ContextBundle,
+    skill_context: String,
 }
 
 struct StepResult {
@@ -801,6 +923,7 @@ impl<H: NativeHost> StepTask<H> {
                         self.attempt
                     ),
                     prompt,
+                    skill_context: self.skill_context.clone(),
                     cwd: self.workspace.clone(),
                     model: agent.model.clone(),
                     reasoning_effort: agent.reasoning_effort.clone(),
@@ -1039,6 +1162,7 @@ fn summary(checkpoint: &RunCheckpoint) -> String {
     }
     text.push_str(&format!("\nNext action: {}\n", checkpoint.next_action));
     text.push_str(&format!("Promotion: `{:?}`\n", checkpoint.promotion));
+    text.push_str(&format!("Skill snapshot: `{}`\n", checkpoint.skills_sha256));
     text
 }
 
@@ -1058,6 +1182,8 @@ mod tests {
         cancelled: AtomicUsize,
         running: AtomicUsize,
         max_running: AtomicUsize,
+        resolved_skills: Mutex<Vec<crate::ResolvedSkill>>,
+        skill_resolution_roots: Mutex<Vec<PathBuf>>,
     }
     impl FakeHost {
         fn new(responses: Vec<&str>) -> Self {
@@ -1069,11 +1195,34 @@ mod tests {
                 cancelled: AtomicUsize::new(0),
                 running: AtomicUsize::new(0),
                 max_running: AtomicUsize::new(0),
+                resolved_skills: Mutex::new(vec![]),
+                skill_resolution_roots: Mutex::new(vec![]),
             }
+        }
+        fn with_skills(mut self, skills: Vec<crate::ResolvedSkill>) -> Self {
+            *self.resolved_skills.get_mut() = skills;
+            self
         }
     }
     #[async_trait]
     impl NativeHost for FakeHost {
+        async fn resolve_skills(
+            &self,
+            _: &str,
+            repository: &Path,
+            _: &str,
+            requirements: &[crate::SkillRequirement],
+        ) -> Result<Vec<crate::ResolvedSkill>, String> {
+            self.skill_resolution_roots
+                .lock()
+                .await
+                .push(repository.to_path_buf());
+            if requirements.is_empty() {
+                Ok(vec![])
+            } else {
+                Ok(self.resolved_skills.lock().await.clone())
+            }
+        }
         async fn spawn(&self, request: SpawnRequest) -> Result<AgentHandle, String> {
             self.spawned.lock().await.push(request.clone());
             let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
@@ -1344,6 +1493,7 @@ mod tests {
                 service_tier: None,
                 fork_turns: ForkTurns::None,
                 context: vec![],
+                skills: vec![],
                 outputs: vec!["ok".into()],
                 allow_delegation: false,
             }),
@@ -1510,6 +1660,135 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("changed run inputs: `ticket`"));
         assert!(error.to_string().contains("omit `inputs`"));
+    }
+
+    #[tokio::test]
+    async fn snapshots_required_skills_before_pause_and_resumes_from_recorded_bytes() {
+        let repository = repo();
+        let resolved = crate::ResolvedSkill {
+            requirement: "wayfinder".into(),
+            identity: crate::SkillIdentity {
+                canonical_name: "wayfinder".into(),
+                source_kind: crate::SkillSourceKind::User,
+                source_locator: "/skills/wayfinder/SKILL.md".into(),
+                plugin_id: None,
+            },
+            instructions: b"Use one question at a time.".to_vec(),
+            resources: BTreeMap::from([(
+                "references/checklist.md".into(),
+                b"Check the domain language.".to_vec(),
+            )]),
+            tool_dependencies: vec![],
+        };
+        let host = FakeHost::new(vec![r#"{"ok":true}"#]).with_skills(vec![resolved]);
+        let runtime = OrchestraRuntime::new(host);
+        let approval = Step {
+            id: "accept".into(),
+            needs: vec![],
+            max_attempts: 1,
+            repeat: None,
+            worktree: WorktreePolicy::Shared,
+            write_scope: vec![],
+            action: Action::Approval(crate::ApprovalStep {
+                prompt: "continue?".into(),
+                choices: vec!["accept".into(), "reject".into()],
+            }),
+        };
+        let mut work = agent("work", vec!["accept"]);
+        let Action::Agent(agent) = &mut work.action else {
+            unreachable!()
+        };
+        agent.skills = vec![crate::SkillRequirement {
+            name: "wayfinder".into(),
+            requires: vec![],
+            resources: vec!["references/checklist.md".into()],
+        }];
+        let plan = ExecutionPlan {
+            inputs: BTreeMap::new(),
+            name: "skills".into(),
+            description: String::new(),
+            max_parallel: 1,
+            steps: vec![approval, work],
+        };
+        let RunOutcome::Paused(checkpoint) = runtime
+            .run(repository.path(), "parent", plan)
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        let run_root = repository
+            .path()
+            .join(".codex/orchestra/runs")
+            .join(&checkpoint.run_id);
+        let resolution_roots = runtime.host.skill_resolution_roots.lock().await;
+        assert_eq!(resolution_roots.len(), 1);
+        assert!(
+            resolution_roots[0]
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with("-skill-resolution")
+        );
+        assert!(!resolution_roots[0].exists());
+        drop(resolution_roots);
+        assert!(run_root.join("evidence/skills/manifest.json").is_file());
+        let entry = &checkpoint.skills.entries["wayfinder"];
+        assert_eq!(
+            std::fs::read(run_root.join(&entry.instructions.path)).unwrap(),
+            b"Use one question at a time."
+        );
+        let workflow_path = run_root.join("workflow.json");
+        let workflow_bytes = std::fs::read(&workflow_path).unwrap();
+        let mut changed_workflow: Value = serde_json::from_slice(&workflow_bytes).unwrap();
+        changed_workflow["steps"][1]["skills"] = Value::Array(vec![]);
+        std::fs::write(
+            &workflow_path,
+            serde_json::to_vec(&changed_workflow).unwrap(),
+        )
+        .unwrap();
+        let error = runtime
+            .resume_with_approval(repository.path(), &checkpoint.run_id, Some("accept"))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("workflow does not match"));
+        std::fs::write(&workflow_path, workflow_bytes).unwrap();
+        std::fs::write(
+            run_root.join(&entry.instructions.path),
+            b"tampered snapshot",
+        )
+        .unwrap();
+        let error = runtime
+            .resume_with_approval(repository.path(), &checkpoint.run_id, Some("accept"))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("snapshot artifact changed"));
+        std::fs::write(
+            run_root.join(&entry.instructions.path),
+            b"Use one question at a time.",
+        )
+        .unwrap();
+        runtime.host.resolved_skills.lock().await[0].instructions =
+            b"changed ambient body".to_vec();
+
+        let outcome = runtime
+            .resume_with_approval(repository.path(), &checkpoint.run_id, Some("accept"))
+            .await
+            .unwrap();
+        assert!(matches!(outcome, RunOutcome::Completed(_)));
+        let requests = runtime.host.spawned.lock().await;
+        assert!(
+            requests[0]
+                .skill_context
+                .contains("Use one question at a time.")
+        );
+        assert!(!requests[0].skill_context.contains("changed ambient body"));
+        assert!(
+            requests[0]
+                .skill_context
+                .contains("references/checklist.md")
+        );
+        assert!(!requests[0].prompt.contains("Use one question at a time."));
     }
 
     #[tokio::test]

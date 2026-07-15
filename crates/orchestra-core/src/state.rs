@@ -1,4 +1,5 @@
-use crate::{AgentHandle, ExecutionPlan, ResolvedInputs, RunInputs, StepOutputs};
+use crate::skills::PreparedSkills;
+use crate::{AgentHandle, ExecutionPlan, ResolvedInputs, RunInputs, SkillManifest, StepOutputs};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -80,6 +81,10 @@ pub struct RunCheckpoint {
     pub inputs: RunInputs,
     #[serde(default)]
     pub inputs_sha256: String,
+    #[serde(default)]
+    pub skills: SkillManifest,
+    #[serde(default)]
+    pub skills_sha256: String,
     pub parent_thread_id: String,
     pub repository: PathBuf,
     pub source_revision: String,
@@ -94,30 +99,57 @@ pub(crate) struct RunStore {
     root: PathBuf,
 }
 
+pub(crate) struct RunCreation<'a> {
+    pub repository: &'a Path,
+    pub run_id: &'a str,
+    pub plan: &'a ExecutionPlan,
+    pub workflow_sha256: &'a str,
+    pub parent_thread_id: &'a str,
+    pub source_revision: String,
+    pub inputs: &'a ResolvedInputs,
+    pub skills: &'a PreparedSkills,
+}
+
 impl RunStore {
-    pub fn create(
-        repository: &Path,
-        run_id: &str,
-        plan: &ExecutionPlan,
-        workflow_sha256: &str,
-        parent_thread_id: &str,
-        source_revision: String,
-        inputs: &ResolvedInputs,
-    ) -> Result<(Self, RunCheckpoint), std::io::Error> {
+    pub fn create(request: RunCreation<'_>) -> Result<(Self, RunCheckpoint), std::io::Error> {
+        let RunCreation {
+            repository,
+            run_id,
+            plan,
+            workflow_sha256,
+            parent_thread_id,
+            source_revision,
+            inputs,
+            skills,
+        } = request;
         let root = repository.join(".codex/orchestra/runs").join(run_id);
         fs::create_dir_all(root.join("outputs"))?;
         fs::create_dir_all(root.join("evidence/checks"))?;
         fs::create_dir_all(root.join("evidence/changes"))?;
+        fs::create_dir_all(root.join("evidence/skills"))?;
         fs::create_dir_all(root.join("approvals"))?;
         let store = Self { root };
         atomic_json(&store.root.join("workflow.json"), plan)?;
         atomic_json(&store.root.join("inputs.json"), &inputs.values)?;
+        for (path, bytes) in &skills.files {
+            let path = store.root.join(path);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            atomic_write(&path, bytes)?;
+        }
+        atomic_json(
+            &store.root.join("evidence/skills/manifest.json"),
+            &skills.manifest,
+        )?;
         let checkpoint = RunCheckpoint {
-            schema_version: 3,
+            schema_version: 4,
             run_id: run_id.into(),
             workflow_sha256: workflow_sha256.into(),
             inputs: inputs.values.clone(),
             inputs_sha256: inputs.sha256.clone(),
+            skills: skills.manifest.clone(),
+            skills_sha256: skills.sha256.clone(),
             parent_thread_id: parent_thread_id.into(),
             repository: repository.to_path_buf(),
             source_revision,
@@ -152,6 +184,13 @@ impl RunStore {
     }
     pub fn inputs(&self) -> Result<RunInputs, std::io::Error> {
         serde_json::from_slice(&fs::read(self.root.join("inputs.json"))?)
+            .map_err(std::io::Error::other)
+    }
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+    pub fn skill_manifest(&self) -> Result<SkillManifest, std::io::Error> {
+        serde_json::from_slice(&fs::read(self.root.join("evidence/skills/manifest.json"))?)
             .map_err(std::io::Error::other)
     }
     pub fn output(&self, step_id: &str, outputs: &StepOutputs) -> Result<(), std::io::Error> {

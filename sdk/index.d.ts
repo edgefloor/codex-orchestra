@@ -14,6 +14,12 @@ export interface InputDefinition {
   default?: unknown;
 }
 
+export interface SkillRequirement {
+  name: string;
+  requires?: string[];
+  resources?: string[];
+}
+
 export interface CommonStep {
   id: string;
   needs?: string[];
@@ -28,6 +34,7 @@ export interface AgentStep extends CommonStep {
   service_tier?: string;
   fork_turns?: ForkTurns;
   context?: ContextSource[];
+  skills?: SkillRequirement[];
   outputs?: string[];
   allow_delegation?: boolean;
 }

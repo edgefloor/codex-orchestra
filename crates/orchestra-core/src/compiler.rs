@@ -693,4 +693,27 @@ export default workflow({
         };
         assert_eq!(agent.prompt, "${inputs.ticket}");
     }
+
+    #[test]
+    fn compiles_explicit_skill_requirement_closure_as_data() {
+        let source = r#"import { workflow, agent } from "@codex-orchestra/workflow";
+export default workflow({
+  name: "skills",
+  steps: [agent({
+    id: "work",
+    prompt: "Implement",
+    model: "gpt-5.4",
+    skills: [
+      { name: "implement", requires: ["tdd"] },
+      { name: "tdd", resources: ["references/testing.md"] }
+    ]
+  })]
+});"#;
+        let plan = compile_workflow(source).unwrap();
+        let Action::Agent(agent) = &plan.steps[0].action else {
+            panic!()
+        };
+        assert_eq!(agent.skills[0].requires, ["tdd"]);
+        assert_eq!(agent.skills[1].resources, ["references/testing.md"]);
+    }
 }

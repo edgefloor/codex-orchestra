@@ -7,16 +7,23 @@ use crate::agent::control::{AgentControl, SpawnAgentForkMode, SpawnAgentOptions}
 use crate::agent::next_thread_spawn_depth;
 use crate::config::Config;
 use crate::exec::{ExecCapturePolicy, ExecExpiration, ExecParams, process_exec_tool_call};
+use crate::skills::skills_load_input_from_config;
 use crate::windows_sandbox::windows_sandbox_level_from_config;
+use codex_core_plugins::PluginsManager;
+use codex_core_skills::injection::ORCHESTRA_LITERAL_TASK_MARKER;
+use codex_core_skills::{SkillLoadOutcome, SkillMetadata, SkillsService};
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
 use codex_protocol::error::{CodexErr, Result as CodexResult};
 use codex_protocol::models::SandboxPermissions;
 use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::{AgentStatus, SessionSource, SubAgentSource};
+use codex_protocol::protocol::{AgentStatus, SessionSource, SkillScope, SubAgentSource};
 use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub enum OrchestraForkTurns {
@@ -29,6 +36,7 @@ pub enum OrchestraForkTurns {
 pub struct OrchestraSpawnRequest {
     pub task_name: String,
     pub prompt: String,
+    pub skill_context: String,
     pub cwd: AbsolutePathBuf,
     pub model: String,
     pub reasoning_effort: Option<ReasoningEffort>,
@@ -57,12 +65,50 @@ pub struct OrchestraCommandOutput {
     pub stderr: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct OrchestraSkillRequirement {
+    pub name: String,
+    pub resources: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct OrchestraResolvedSkill {
+    pub requirement: String,
+    pub canonical_name: String,
+    pub source_kind: OrchestraSkillSourceKind,
+    pub source_locator: String,
+    pub plugin_id: Option<String>,
+    pub instructions: Vec<u8>,
+    pub resources: BTreeMap<String, Vec<u8>>,
+    pub tool_dependencies: Vec<OrchestraSkillToolDependency>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum OrchestraSkillSourceKind {
+    Admin,
+    User,
+    Repo,
+    System,
+}
+
+#[derive(Clone, Debug)]
+pub struct OrchestraSkillToolDependency {
+    pub kind: String,
+    pub value: String,
+    pub description: Option<String>,
+    pub transport: Option<String>,
+    pub command: Option<String>,
+    pub url: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct OrchestraControl {
     control: AgentControl,
     parent_thread_id: ThreadId,
     parent_source: SessionSource,
     config: Config,
+    skills_service: Arc<SkillsService>,
+    plugins_manager: Arc<PluginsManager>,
 }
 
 impl OrchestraControl {
@@ -71,13 +117,127 @@ impl OrchestraControl {
         parent_thread_id: ThreadId,
         parent_source: SessionSource,
         config: Config,
+        skills_service: Arc<SkillsService>,
+        plugins_manager: Arc<PluginsManager>,
     ) -> Self {
         Self {
             control,
             parent_thread_id,
             parent_source,
             config,
+            skills_service,
+            plugins_manager,
         }
+    }
+
+    pub async fn resolve_skills(
+        &self,
+        cwd: AbsolutePathBuf,
+        source_revision: &str,
+        requirements: &[OrchestraSkillRequirement],
+    ) -> CodexResult<Vec<OrchestraResolvedSkill>> {
+        let mut config = self.config.clone();
+        config.cwd = cwd;
+        let plugins_input = config.plugins_config_input();
+        let plugin_outcome = self
+            .plugins_manager
+            .plugins_for_config(&plugins_input)
+            .await;
+        let skill_input =
+            skills_load_input_from_config(&config, plugin_outcome.effective_plugin_skill_roots())
+                .with_plugin_skill_snapshots(
+                    self.plugins_manager
+                        .plugin_skill_snapshots_for_config(&plugins_input),
+                );
+        let snapshot = self
+            .skills_service
+            .snapshot_for_config(&skill_input, None)
+            .await;
+        let outcome = snapshot.outcome();
+        let connector_slugs = if requirements.iter().any(|item| !item.name.contains(':')) {
+            crate::connectors::list_accessible_connectors_from_mcp_tools_with_options(
+                &config, false,
+            )
+            .await
+            .map_err(|error| {
+                CodexErr::InvalidRequest(format!(
+                    "failed to validate required skill names against connectors: {error}"
+                ))
+            })?
+            .iter()
+            .map(codex_connectors::metadata::connector_mention_slug)
+            .collect::<BTreeSet<_>>()
+        } else {
+            BTreeSet::new()
+        };
+        let mut resolved = Vec::new();
+        for requirement in requirements {
+            let skill = resolve_required_skill(outcome, &requirement.name, &connector_slugs)?;
+            let instructions = snapshot
+                .read_skill_text(skill)
+                .await
+                .map_err(|error| {
+                    CodexErr::InvalidRequest(format!(
+                        "failed to read required skill `{}`: {error}",
+                        requirement.name
+                    ))
+                })?
+                .into_bytes();
+            let mut resources = BTreeMap::new();
+            for resource in &requirement.resources {
+                let bytes = snapshot
+                    .read_skill_resource(skill, resource)
+                    .await
+                    .map_err(|error| {
+                        CodexErr::InvalidRequest(format!(
+                            "failed to read resource `{resource}` for skill `{}`: {error}",
+                            requirement.name
+                        ))
+                    })?;
+                resources.insert(resource.clone(), bytes);
+            }
+            let canonical_name = skill
+                .plugin_id
+                .as_ref()
+                .map(|plugin| format!("{plugin}:{}", skill.name))
+                .unwrap_or_else(|| skill.name.clone());
+            let source_kind = match skill.scope {
+                SkillScope::Admin => OrchestraSkillSourceKind::Admin,
+                SkillScope::User => OrchestraSkillSourceKind::User,
+                SkillScope::Repo => OrchestraSkillSourceKind::Repo,
+                SkillScope::System => OrchestraSkillSourceKind::System,
+            };
+            let tool_dependencies = skill
+                .dependencies
+                .as_ref()
+                .map(|dependencies| {
+                    dependencies
+                        .tools
+                        .iter()
+                        .map(|tool| OrchestraSkillToolDependency {
+                            kind: tool.r#type.clone(),
+                            value: tool.value.clone(),
+                            description: tool.description.clone(),
+                            transport: tool.transport.clone(),
+                            command: tool.command.clone(),
+                            url: tool.url.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let source_locator = skill_source_locator(skill, &config.cwd, source_revision)?;
+            resolved.push(OrchestraResolvedSkill {
+                requirement: requirement.name.clone(),
+                canonical_name,
+                source_kind,
+                source_locator,
+                plugin_id: skill.plugin_id.clone(),
+                instructions,
+                resources,
+                tool_dependencies,
+            });
+        }
+        Ok(resolved)
     }
 
     pub async fn spawn(&self, request: OrchestraSpawnRequest) -> CodexResult<OrchestraAgentHandle> {
@@ -111,6 +271,13 @@ impl OrchestraControl {
         }
         let child_depth = next_thread_spawn_depth(&self.parent_source);
         config.cwd = request.cwd;
+        config.include_skill_instructions = false;
+        if !request.skill_context.is_empty() {
+            config.developer_instructions = Some(orchestra_developer_instructions(
+                config.developer_instructions.take(),
+                request.skill_context,
+            ));
+        }
         if !request.allow_delegation {
             config.agent_max_depth = child_depth;
         }
@@ -222,11 +389,93 @@ impl OrchestraControl {
     }
 }
 
+fn resolve_required_skill<'a>(
+    outcome: &'a SkillLoadOutcome,
+    requirement: &str,
+    connector_slugs: &BTreeSet<String>,
+) -> CodexResult<&'a SkillMetadata> {
+    if !requirement.contains(':') && connector_slugs.contains(requirement) {
+        return Err(CodexErr::InvalidRequest(format!(
+            "required skill `{requirement}` collides with a connector; use a qualified name"
+        )));
+    }
+    let matches: Vec<_> = outcome
+        .skills
+        .iter()
+        .filter(|skill| {
+            let canonical = skill
+                .plugin_id
+                .as_ref()
+                .map(|plugin| format!("{plugin}:{}", skill.name))
+                .unwrap_or_else(|| skill.name.clone());
+            if requirement.contains(':') {
+                canonical == requirement
+            } else {
+                skill.name == requirement
+            }
+        })
+        .collect();
+    let enabled: Vec<_> = matches
+        .iter()
+        .copied()
+        .filter(|skill| outcome.is_skill_enabled(skill))
+        .collect();
+    match enabled.as_slice() {
+        [skill] => Ok(*skill),
+        [] if !matches.is_empty() => Err(CodexErr::InvalidRequest(format!(
+            "required skill `{requirement}` is disabled"
+        ))),
+        [] => Err(CodexErr::InvalidRequest(format!(
+            "required skill `{requirement}` is not installed"
+        ))),
+        _ => Err(CodexErr::InvalidRequest(format!(
+            "required skill `{requirement}` is ambiguous; use its qualified name"
+        ))),
+    }
+}
+
+fn skill_source_locator(
+    skill: &SkillMetadata,
+    cwd: &AbsolutePathBuf,
+    source_revision: &str,
+) -> CodexResult<String> {
+    if skill.scope != SkillScope::Repo {
+        return Ok(skill.path_to_skills_md.to_string_lossy().into_owned());
+    }
+    let relative = skill
+        .path_to_skills_md
+        .strip_prefix(cwd.as_path())
+        .map_err(|_| {
+            CodexErr::InvalidRequest(format!(
+                "repo skill `{}` is outside the source-revision checkout",
+                skill.name
+            ))
+        })?;
+    Ok(format!(
+        "git:{source_revision}:{}",
+        relative.to_string_lossy()
+    ))
+}
+
 fn orchestra_initial_input(prompt: String) -> Vec<UserInput> {
-    vec![UserInput::Text {
-        text: prompt,
-        text_elements: Vec::new(),
-    }]
+    vec![
+        UserInput::Text {
+            text: prompt,
+            text_elements: Vec::new(),
+        },
+        UserInput::Mention {
+            name: "Orchestra literal task".into(),
+            path: ORCHESTRA_LITERAL_TASK_MARKER.into(),
+        },
+    ]
+}
+
+fn orchestra_developer_instructions(existing: Option<String>, prompt: String) -> String {
+    let orchestra = format!("# Orchestra skill snapshot\n\n{prompt}");
+    match existing {
+        Some(existing) => format!("{existing}\n\n{orchestra}"),
+        None => orchestra,
+    }
 }
 
 #[cfg(test)]
@@ -255,26 +504,47 @@ mod tests {
         }
     }
 
+    fn text_input(text: &str) -> Vec<UserInput> {
+        vec![UserInput::Text {
+            text: text.into(),
+            text_elements: Vec::new(),
+        }]
+    }
+
     #[test]
-    fn explicit_skill_mention_is_preserved_as_user_text() {
-        let input = orchestra_initial_input("Use $wayfinder for this task.".into());
+    fn orchestra_initial_input_cannot_select_ambient_skills() {
+        let input = orchestra_initial_input("Use $wayfinder literally.".into());
         let [
             UserInput::Text {
                 text,
                 text_elements,
             },
+            UserInput::Mention { path, .. },
         ] = input.as_slice()
         else {
             panic!("Orchestra prompt should be submitted as one text input");
         };
 
-        assert_eq!(text, "Use $wayfinder for this task.");
+        assert_eq!(text, "Use $wayfinder literally.");
+        assert_eq!(path, ORCHESTRA_LITERAL_TASK_MARKER);
         assert!(text_elements.is_empty());
+        let skills = vec![skill("wayfinder", "/tmp/wayfinder/SKILL.md", false)];
+        assert!(
+            collect_explicit_skill_mentions(&input, &skills, &HashSet::new(), &HashMap::new(),)
+                .is_empty()
+        );
+        assert_eq!(
+            orchestra_developer_instructions(
+                Some("Parent policy".into()),
+                "Recorded $wayfinder instructions".into(),
+            ),
+            "Parent policy\n\n# Orchestra skill snapshot\n\nRecorded $wayfinder instructions"
+        );
     }
 
     #[test]
     fn explicit_mention_selects_a_skill_hidden_from_implicit_invocation() {
-        let inputs = orchestra_initial_input("Use $wayfinder for this task.".into());
+        let inputs = text_input("Use $wayfinder for this task.");
         let skills = vec![skill(
             "wayfinder",
             "/tmp/wayfinder/SKILL.md",
@@ -296,12 +566,81 @@ mod tests {
 
         for prompt in ["Use $missing.", "Use $wayfinder."] {
             let selected = collect_explicit_skill_mentions(
-                &orchestra_initial_input(prompt.into()),
+                &text_input(prompt),
                 &skills,
                 &HashSet::new(),
                 &HashMap::new(),
             );
             assert!(selected.is_empty(), "unexpected selection for {prompt}");
         }
+    }
+
+    #[test]
+    fn required_skill_resolution_rejects_missing_disabled_and_ambiguous_names() {
+        let one = skill("wayfinder", "/tmp/one/SKILL.md", false);
+        let two = skill("wayfinder", "/tmp/two/SKILL.md", false);
+        let mut outcome = SkillLoadOutcome::default();
+        outcome.skills = vec![one.clone(), two];
+        assert!(
+            resolve_required_skill(&outcome, "missing", &BTreeSet::new())
+                .unwrap_err()
+                .to_string()
+                .contains("not installed")
+        );
+        assert!(
+            resolve_required_skill(&outcome, "wayfinder", &BTreeSet::new())
+                .unwrap_err()
+                .to_string()
+                .contains("ambiguous")
+        );
+        outcome.skills.pop();
+        outcome.disabled_paths.insert(one.path_to_skills_md.clone());
+        assert!(
+            resolve_required_skill(&outcome, "wayfinder", &BTreeSet::new())
+                .unwrap_err()
+                .to_string()
+                .contains("disabled")
+        );
+    }
+
+    #[test]
+    fn qualified_plugin_skill_identity_disambiguates_plain_duplicates() {
+        let one = skill("review", "/tmp/one/SKILL.md", true);
+        let mut two = skill("review", "/tmp/two/SKILL.md", true);
+        two.plugin_id = Some("plugin-two".into());
+        let mut outcome = SkillLoadOutcome::default();
+        outcome.skills = vec![one, two.clone()];
+        assert_eq!(
+            resolve_required_skill(&outcome, "plugin-two:review", &BTreeSet::new()).unwrap(),
+            &two
+        );
+    }
+
+    #[test]
+    fn plain_skill_names_reject_connector_collisions() {
+        let mut outcome = SkillLoadOutcome::default();
+        outcome.skills = vec![skill("calendar", "/tmp/calendar/SKILL.md", false)];
+        let connectors = BTreeSet::from(["calendar".to_string()]);
+        assert!(
+            resolve_required_skill(&outcome, "calendar", &connectors)
+                .unwrap_err()
+                .to_string()
+                .contains("collides with a connector")
+        );
+    }
+
+    #[test]
+    fn repo_skill_locator_is_revision_qualified_and_checkout_independent() {
+        let mut repo_skill = skill(
+            "review",
+            "/tmp/checkout/.agents/skills/review/SKILL.md",
+            false,
+        );
+        repo_skill.scope = SkillScope::Repo;
+        let cwd = AbsolutePathBuf::try_from(PathBuf::from("/tmp/checkout")).unwrap();
+        assert_eq!(
+            skill_source_locator(&repo_skill, &cwd, "abc123").unwrap(),
+            "git:abc123:.agents/skills/review/SKILL.md"
+        );
     }
 }

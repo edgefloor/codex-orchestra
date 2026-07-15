@@ -125,7 +125,14 @@ fn pinned_integration_is_explicit_and_minimal() {
             .unwrap();
     assert!(adapter.contains("AgentControl"));
     assert!(adapter.contains("process_exec_tool_call"));
-    for forbidden in ["reqwest", "mcp", "codex exec", "Command::new(\"codex\")"] {
+    assert!(adapter.contains("resolve_skills"));
+    assert!(patch.contains("read_skill_resource"));
+    for forbidden in [
+        "reqwest",
+        "McpManager",
+        "codex exec",
+        "Command::new(\"codex\")",
+    ] {
         assert!(!adapter.contains(forbidden));
     }
 }

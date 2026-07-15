@@ -125,9 +125,21 @@ pub struct AgentStep {
     #[serde(default)]
     pub context: Vec<ContextSource>,
     #[serde(default)]
+    pub skills: Vec<SkillRequirement>,
+    #[serde(default)]
     pub outputs: Vec<String>,
     #[serde(default)]
     pub allow_delegation: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillRequirement {
+    pub name: String,
+    #[serde(default)]
+    pub requires: Vec<String>,
+    #[serde(default)]
+    pub resources: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use codex_core::ThreadManager;
 use codex_core::orchestra::{
     OrchestraAgentHandle, OrchestraCommandRequest, OrchestraControl, OrchestraForkTurns,
-    OrchestraSpawnRequest,
+    OrchestraSkillRequirement, OrchestraSpawnRequest,
 };
 use codex_extension_api::{
     ExtensionData, FunctionCallError, JsonToolOutput, ToolCall, ToolContributor, ToolExecutor,
@@ -10,7 +10,8 @@ use codex_extension_api::{
 };
 use codex_orchestra_core::{
     AgentHandle, AgentOutcome, AgentStatus, CommandOutcome, ForkTurns, NativeHost,
-    OrchestraRuntime, SpawnRequest, WorktreePolicy, compile_workflow,
+    OrchestraRuntime, ResolvedSkill, SkillIdentity, SkillRequirement, SkillSourceKind,
+    SkillToolDependency, SpawnRequest, WorktreePolicy, compile_workflow,
 };
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AgentStatus as CodexAgentStatus;
@@ -42,6 +43,70 @@ impl CodexHost {
 
 #[async_trait]
 impl NativeHost for CodexHost {
+    async fn resolve_skills(
+        &self,
+        parent_thread_id: &str,
+        repository: &Path,
+        source_revision: &str,
+        requirements: &[SkillRequirement],
+    ) -> Result<Vec<ResolvedSkill>, String> {
+        let resolved = self
+            .control(parent_thread_id)
+            .await?
+            .resolve_skills(
+                AbsolutePathBuf::try_from(repository.to_path_buf())
+                    .map_err(|error| error.to_string())?,
+                source_revision,
+                &requirements
+                    .iter()
+                    .map(|requirement| OrchestraSkillRequirement {
+                        name: requirement.name.clone(),
+                        resources: requirement.resources.clone(),
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(resolved
+            .into_iter()
+            .map(|skill| ResolvedSkill {
+                requirement: skill.requirement,
+                identity: SkillIdentity {
+                    canonical_name: skill.canonical_name,
+                    source_kind: match skill.source_kind {
+                        codex_core::orchestra::OrchestraSkillSourceKind::Admin => {
+                            SkillSourceKind::Admin
+                        }
+                        codex_core::orchestra::OrchestraSkillSourceKind::User => {
+                            SkillSourceKind::User
+                        }
+                        codex_core::orchestra::OrchestraSkillSourceKind::Repo => {
+                            SkillSourceKind::Repo
+                        }
+                        codex_core::orchestra::OrchestraSkillSourceKind::System => {
+                            SkillSourceKind::System
+                        }
+                    },
+                    source_locator: skill.source_locator,
+                    plugin_id: skill.plugin_id,
+                },
+                instructions: skill.instructions,
+                resources: skill.resources,
+                tool_dependencies: skill
+                    .tool_dependencies
+                    .into_iter()
+                    .map(|tool| SkillToolDependency {
+                        kind: tool.kind,
+                        value: tool.value,
+                        description: tool.description,
+                        transport: tool.transport,
+                        command: tool.command,
+                        url: tool.url,
+                    })
+                    .collect(),
+            })
+            .collect())
+    }
     async fn spawn(&self, request: SpawnRequest) -> Result<AgentHandle, String> {
         let control = self.control(&request.parent_thread_id).await?;
         let reasoning_effort = request
@@ -60,6 +125,7 @@ impl NativeHost for CodexHost {
             .spawn(OrchestraSpawnRequest {
                 task_name: request.task_name,
                 prompt: request.prompt,
+                skill_context: request.skill_context,
                 cwd: AbsolutePathBuf::try_from(request.cwd).map_err(|error| error.to_string())?,
                 model: request.model,
                 reasoning_effort,
@@ -157,7 +223,8 @@ impl NativeHost for CodexHost {
             if *policy == WorktreePolicy::Shared {
                 return Ok(path);
             }
-            self.remove_worktree(parent_thread_id, repository, &path).await?;
+            self.remove_worktree(parent_thread_id, repository, &path)
+                .await?;
         }
         let outcome = self
             .run_command(

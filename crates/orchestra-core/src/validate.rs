@@ -163,6 +163,14 @@ pub fn validate_plan(plan: &ExecutionPlan) -> Vec<ValidationError> {
             }
         }
     }
+    if let Err(error) = crate::skills::collect_requirements(plan.steps.iter().filter_map(|step| {
+        let Action::Agent(agent) = &step.action else {
+            return None;
+        };
+        Some(agent.skills.clone())
+    })) {
+        push(&mut errors, "steps.skills", &error.to_string());
+    }
     detect_cycles(plan, &mut errors);
     detect_write_conflicts(plan, &mut errors);
     errors
@@ -373,6 +381,7 @@ mod tests {
                 service_tier: None,
                 fork_turns: ForkTurns::None,
                 context: vec![],
+                skills: vec![],
                 outputs: vec![],
                 allow_delegation: false,
             }),

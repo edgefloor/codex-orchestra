@@ -40,6 +40,88 @@ index 5dc066a..a5794f2 100644
 +    codex_orchestra_extension::install(&mut builder, thread_manager.clone());
      if let Some(state_db) = state_db {
          codex_goal_extension::install_with_backend(
+diff --git a/codex-rs/core-skills/src/injection.rs b/codex-rs/core-skills/src/injection.rs
+index 9ec060b..3e4b44d 100644
+--- a/codex-rs/core-skills/src/injection.rs
++++ b/codex-rs/core-skills/src/injection.rs
+@@ -146,10 +146,20 @@
+ /// Complexity: `O(T + (N_s + N_t) * S)` time, `O(S + M)` space, where:
+ /// `S` = number of skills, `T` = total text length, `N_s` = number of structured skill inputs,
+ /// `N_t` = number of text inputs, `M` = max mentions parsed from a single text input.
++pub const ORCHESTRA_LITERAL_TASK_MARKER: &str = "orchestra://literal-task";
++
+ pub fn collect_explicit_skill_mentions(
+     inputs: &[UserInput],
+     skills: &[SkillMetadata],
+     disabled_paths: &HashSet<AbsolutePathBuf>,
+     connector_slug_counts: &HashMap<String, usize>,
+ ) -> Vec<SkillMetadata> {
++    if inputs.iter().any(|input| {
++        matches!(
++            input,
++            UserInput::Mention { path, .. } if path == ORCHESTRA_LITERAL_TASK_MARKER
++        )
++    }) {
++        return Vec::new();
++    }
+     let skill_name_counts = build_skill_name_counts(skills, disabled_paths).0;
+diff --git a/codex-rs/core-skills/src/model.rs b/codex-rs/core-skills/src/model.rs
+index 6afbde6cc9..11350ab8bf 100644
+--- a/codex-rs/core-skills/src/model.rs
++++ b/codex-rs/core-skills/src/model.rs
+@@ -2,4 +2,6 @@ use std::collections::HashMap;
+ use std::collections::HashSet;
+ use std::fmt;
+ use std::io;
++use std::path::Component;
++use std::path::Path;
+ use std::sync::Arc;
+@@ -156,4 +158,45 @@ impl HostSkillsSnapshot {
+         let path = PathUri::from_abs_path(&skill.path_to_skills_md);
+         fs.read_file_text(&path, /*sandbox*/ None).await
+     }
++
++    pub async fn read_skill_resource(
++        &self,
++        skill: &SkillMetadata,
++        relative: &str,
++    ) -> io::Result<Vec<u8>> {
++        let relative = Path::new(relative);
++        if relative.to_string_lossy().contains('\\')
++            || relative.is_absolute()
++            || !relative
++                .components()
++                .all(|component| matches!(component, Component::Normal(_)))
++        {
++            return Err(io::Error::new(
++                io::ErrorKind::InvalidInput,
++                "skill resource path must be safe and relative",
++            ));
++        }
++        let parent = skill.path_to_skills_md.parent().ok_or_else(|| {
++            io::Error::new(io::ErrorKind::InvalidInput, "skill path has no parent")
++        })?;
++        let fs = self
++            .outcome
++            .file_system_for_skill(skill)
++            .unwrap_or_else(|| Arc::clone(&LOCAL_FS));
++        let parent = PathUri::from_abs_path(&parent);
++        let candidate = parent
++            .join(relative.to_str().ok_or_else(|| {
++                io::Error::new(io::ErrorKind::InvalidInput, "resource path is not UTF-8")
++            })?)
++            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
++        let canonical_parent = fs.canonicalize(&parent, None).await?;
++        let canonical_candidate = fs.canonicalize(&candidate, None).await?;
++        if !canonical_candidate.starts_with(&canonical_parent) {
++            return Err(io::Error::new(
++                io::ErrorKind::InvalidInput,
++                "skill resource path escapes the skill directory",
++            ));
++        }
++        fs.read_file(&canonical_candidate, None).await
++    }
+ }
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
 index 1dca2a0..17e23e7 100644
 --- a/codex-rs/core/src/lib.rs
@@ -55,7 +137,7 @@ diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.
 index e548cf2..8bc848a 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
-@@ -599,5 +599,16 @@ impl CodexThread {
+@@ -599,5 +599,18 @@ impl CodexThread {
          self.codex.session.get_config().await
      }
 
@@ -67,6 +149,8 @@ index e548cf2..8bc848a 100644
 +            self.session_configured.thread_id,
 +            self.session_source.clone(),
 +            (*self.config().await).clone(),
++            self.codex.session.services.skills_service.clone(),
++            self.codex.session.services.plugins_manager.clone(),
 +        )
 +    }
 +

@@ -40,5 +40,6 @@ if [[ "$MODE" == "apply" ]]; then
 fi
 
 cargo test --manifest-path "$DESTINATION/codex-rs/Cargo.toml" -p codex-orchestra-core -p codex-orchestra-extension
+cargo test --manifest-path "$DESTINATION/codex-rs/Cargo.toml" -p codex-core orchestra::tests
 cargo check --manifest-path "$DESTINATION/codex-rs/Cargo.toml" -p codex-app-server
 echo "Pinned Codex integration verified at $REVISION"

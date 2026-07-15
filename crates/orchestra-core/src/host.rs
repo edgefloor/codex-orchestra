@@ -1,7 +1,44 @@
-use crate::{ForkTurns, StepOutputs, WorktreePolicy};
+use crate::{ForkTurns, SkillRequirement, StepOutputs, WorktreePolicy};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedSkill {
+    pub requirement: String,
+    pub identity: SkillIdentity,
+    pub instructions: Vec<u8>,
+    pub resources: BTreeMap<String, Vec<u8>>,
+    pub tool_dependencies: Vec<SkillToolDependency>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SkillIdentity {
+    pub canonical_name: String,
+    pub source_kind: SkillSourceKind,
+    pub source_locator: String,
+    pub plugin_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillSourceKind {
+    Admin,
+    User,
+    Repo,
+    System,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SkillToolDependency {
+    pub kind: String,
+    pub value: String,
+    pub description: Option<String>,
+    pub transport: Option<String>,
+    pub command: Option<String>,
+    pub url: Option<String>,
+}
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct AgentHandle {
@@ -15,6 +52,7 @@ pub struct SpawnRequest {
     pub parent_thread_id: String,
     pub task_name: String,
     pub prompt: String,
+    pub skill_context: String,
     pub cwd: PathBuf,
     pub model: String,
     pub reasoning_effort: Option<String>,
@@ -47,6 +85,19 @@ pub struct CommandOutcome {
 
 #[async_trait]
 pub trait NativeHost: Send + Sync + 'static {
+    async fn resolve_skills(
+        &self,
+        _parent_thread_id: &str,
+        _repository: &Path,
+        _source_revision: &str,
+        requirements: &[SkillRequirement],
+    ) -> Result<Vec<ResolvedSkill>, String> {
+        if requirements.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Err("native host does not support skill resolution".into())
+        }
+    }
     async fn spawn(&self, request: SpawnRequest) -> Result<AgentHandle, String>;
     async fn status(&self, handle: &AgentHandle) -> Result<AgentStatus, String>;
     async fn wait(&self, handle: &AgentHandle) -> Result<AgentOutcome, String>;
