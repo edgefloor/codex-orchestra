@@ -21,8 +21,9 @@ use codex_orchestra_core::{
     ForkTurns, HistoryCursor, HistoryReadRequest, InheritedCodexPolicy, NativeHost,
     OrchestraRuntime, ResolvedSkill, RunCheckpoint, RunDigest, RunOutcome, RunStatus,
     SkillIdentity, SkillRequirement, SkillSourceKind, SkillToolDependency, SpawnRequest,
-    WorktreePolicy, automation_claim_liveness, compile_workflow, normalize_linear_issue,
-    normalize_linear_issue_page, repository_revision, validate_automation_profile,
+    WorktreePolicy, automation_claim_liveness, automation_source_sha256, compile_workflow,
+    normalize_linear_issue, normalize_linear_issue_page, repository_revision,
+    validate_automation_profile,
 };
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AgentStatus as CodexAgentStatus;
@@ -669,6 +670,18 @@ impl OrchestraService {
         let profile = validation
             .profile
             .ok_or("valid Automation profile is missing its canonical snapshot")?;
+        self.read_linear_automation_with_profile(&profile, kind, after, first, issue_identifier)
+            .await
+    }
+
+    async fn read_linear_automation_with_profile(
+        &self,
+        profile: &AutomationProfile,
+        kind: AutomationLinearReadKind,
+        after: Option<&str>,
+        first: Option<u32>,
+        issue_identifier: Option<&str>,
+    ) -> Result<AutomationLinearRead, String> {
         let credential = match profile.tracker.credential.kind {
             AutomationSecretKind::Environment => {
                 std::env::var(&profile.tracker.credential.reference)
@@ -683,8 +696,7 @@ impl OrchestraService {
                 issues: Vec::new(),
                 has_next_page: false,
                 end_cursor: None,
-                next_action: "configure the referenced Linear credential to opt into live reads"
-                    .into(),
+                next_action: "re-resolve the referenced Linear credential, then retry".into(),
             });
         };
         validate_linear_endpoint(&profile.tracker.endpoint)?;
@@ -810,18 +822,39 @@ impl OrchestraService {
         })
         .map_err(|error| error.to_string())?;
         self.automation_shutdown.track(&repository, &root.run_id);
-        let tracker_terminal = profile
+        if profile_digest != root.profile_digest
+            && root.profile_revision.pending_digest.as_deref() != Some(&profile_digest)
+        {
+            store
+                .stage_profile_revision(&mut root, &profile, &profile_digest)
+                .map_err(|error| error.to_string())?;
+        } else if profile_digest == root.profile_digest
+            && root.profile_revision.status
+                != codex_orchestra_core::AutomationProfileRevisionStatus::Active
+        {
+            store
+                .confirm_active_profile(&mut root)
+                .map_err(|error| error.to_string())?;
+        }
+        let existing_claim_id = root
+            .claims
+            .values()
+            .find(|claim| claim.issue_id == fixture_issue.id)
+            .map(|claim| claim.claim_id.clone());
+        let dispatch_profile = if let Some(claim_id) = existing_claim_id.as_deref() {
+            store
+                .load_profile_revision(&root.claims[claim_id].profile_digest)
+                .map_err(|error| error.to_string())?
+        } else {
+            profile.clone()
+        };
+        let tracker_terminal = dispatch_profile
             .tracker
             .terminal_states
             .iter()
             .any(|state| state.eq_ignore_ascii_case(&fixture_issue.state));
         if tracker_terminal {
-            if let Some(claim_id) = root
-                .claims
-                .values()
-                .find(|claim| claim.issue_id == fixture_issue.id)
-                .map(|claim| claim.claim_id.clone())
-            {
+            if let Some(claim_id) = existing_claim_id {
                 store
                     .update_claim(&mut root, &claim_id, |claim| {
                         claim.tracker_state = fixture_issue.state.clone();
@@ -841,7 +874,7 @@ impl OrchestraService {
                 fixture_issue.identifier
             ));
         }
-        validate_fixture_eligibility(&profile, &fixture_issue)?;
+        validate_fixture_eligibility(&dispatch_profile, &fixture_issue)?;
         let coordination = store
             .coordinate_fixture(
                 &mut root,
@@ -869,6 +902,24 @@ impl OrchestraService {
                 };
                 (claim_id, false, reason)
             };
+
+        if is_new_claim {
+            store
+                .update_claim(&mut root, &claim_id, |claim| {
+                    claim.task_prompt.clone_from(&task_prompt);
+                })
+                .map_err(|error| error.to_string())?;
+        }
+        let claim = root.claims[&claim_id].clone();
+        let execution_profile = store
+            .load_profile_revision(&claim.profile_digest)
+            .map_err(|error| error.to_string())?;
+        let execution_profile_digest = claim.profile_digest.clone();
+        let execution_task_prompt = if claim.task_prompt.is_empty() {
+            task_prompt.clone()
+        } else {
+            claim.task_prompt.clone()
+        };
 
         let (worktree, issue_handle) = if is_new_claim {
             let requested_worktree = root.claims[&claim_id].worktree.clone();
@@ -907,7 +958,7 @@ impl OrchestraService {
                 serde_json::to_string_pretty(&fixture_issue).map_err(|error| error.to_string())?;
             let bootstrap_prompt = format!(
                 "You are the persistent Issue task for `{}`. The native Orchestra runtime will execute the selected typed Workflow under this task after this initialization turn. Retain the issue context below and return exactly {{\"ready\":true}}.\n\n{}\n\nIssue snapshot:\n{}",
-                fixture_issue.identifier, task_prompt, issue_json
+                fixture_issue.identifier, execution_task_prompt, issue_json
             );
             let issue_handle = match self
                 .host
@@ -972,14 +1023,31 @@ impl OrchestraService {
             (claim.worktree.clone(), issue_handle)
         };
 
-        let workflow_source = std::fs::read_to_string(&profile.orchestra.workflow_path)
+        let workflow_source = std::fs::read_to_string(&execution_profile.orchestra.workflow_path)
             .map_err(|error| error.to_string())?;
+        if automation_source_sha256(&workflow_source) != execution_profile.orchestra.workflow_sha256
+        {
+            store
+                .schedule_claim_retry(
+                    &mut root,
+                    &claim_id,
+                    &execution_profile,
+                    unix_epoch_millis(),
+                    "pinned Automation workflow source changed",
+                )
+                .map_err(|error| error.to_string())?;
+            root.next_action = format!(
+                "claim `{claim_id}` is recoverable after restoring its pinned workflow source"
+            );
+            store.save(&mut root).map_err(|error| error.to_string())?;
+            return Ok(root);
+        }
         let plan = compile_workflow(&workflow_source).map_err(|error| error.to_string())?;
         let normalized_inputs = json!({
             "issue": fixture_issue,
-            "task_prompt": task_prompt,
+            "task_prompt": execution_task_prompt,
             "automation": {
-                "profileDigest": profile_digest,
+                "profileDigest": execution_profile_digest,
                 "claimId": claim_id,
                 "attempt": root.claims[&claim_id].workflow_invocations.saturating_add(1),
                 "reason": dispatch_reason,
@@ -1021,7 +1089,7 @@ impl OrchestraService {
                     .schedule_claim_retry(
                         &mut root,
                         &claim_id,
-                        &profile,
+                        &execution_profile,
                         unix_epoch_millis(),
                         &error.to_string(),
                     )
@@ -1041,7 +1109,7 @@ impl OrchestraService {
         )
         .await?;
         let effect_status = if matches!(&outcome, RunOutcome::Completed(_))
-            && profile
+            && execution_profile
                 .orchestra
                 .effects
                 .contains(&codex_orchestra_core::AutomationEffect::TrackerComment)
@@ -1052,7 +1120,7 @@ impl OrchestraService {
                     .resolve_tracker_comment(
                         &mut root,
                         &claim_id,
-                        &profile,
+                        &execution_profile,
                         &body,
                         AutomationGatePolicy::AutoAccept,
                         |request| execute_fixture_tracker_comment(&repository, request),
@@ -1091,7 +1159,7 @@ impl OrchestraService {
                     .schedule_claim_retry(
                         &mut root,
                         &claim_id,
-                        &profile,
+                        &execution_profile,
                         unix_epoch_millis(),
                         "Workflow or Tracker effect failed",
                     )
@@ -1111,7 +1179,7 @@ impl OrchestraService {
                     .record_completed_invocation(
                         &mut root,
                         &claim_id,
-                        &profile,
+                        &execution_profile,
                         true,
                         unix_epoch_millis(),
                     )
@@ -1242,14 +1310,6 @@ impl OrchestraService {
         let mut root = store.load().map_err(|error| error.to_string())?;
         authorize_automation_root(&root, parent_thread_id)?;
         self.automation_shutdown.track(&repository, run_id);
-        if root.status == AutomationRootStatus::Running {
-            store
-                .pause(&mut root, "native reconciliation refresh")
-                .map_err(|error| error.to_string())?;
-        }
-        store
-            .begin_reconciliation(&mut root)
-            .map_err(|error| error.to_string())?;
         let pinned_profile = store.load_profile().map_err(|error| error.to_string())?;
         let fixture = root
             .claims
@@ -1291,18 +1351,74 @@ impl OrchestraService {
         let validation = self
             .validate_automation(parent_thread_id, profile_path, fixture, None)
             .await?;
-        if !validation.valid || validation.profile_digest.as_deref() != Some(&root.profile_digest) {
-            return Err(
-                "Automation profile revision differs from the pinned Root Run snapshot".into(),
-            );
+        if !validation.valid {
+            let diagnostics = validation
+                .diagnostics
+                .iter()
+                .map(|diagnostic| format!("{}: {}", diagnostic.path, diagnostic.message))
+                .collect::<Vec<_>>();
+            store
+                .reject_profile_revision(
+                    &mut root,
+                    validation.profile_digest.as_deref(),
+                    &diagnostics,
+                )
+                .map_err(|error| error.to_string())?;
+            return Ok(root);
         }
+        let candidate_profile = validation
+            .profile
+            .ok_or("valid Automation profile is missing its canonical snapshot")?;
+        let candidate_digest = validation
+            .profile_digest
+            .ok_or("valid Automation profile is missing its digest")?;
+        if candidate_digest != root.profile_digest
+            && root.profile_revision.pending_digest.as_deref() != Some(&candidate_digest)
+        {
+            if let Err(error) =
+                store.stage_profile_revision(&mut root, &candidate_profile, &candidate_digest)
+            {
+                if matches!(
+                    error,
+                    codex_orchestra_core::AutomationRunError::ProfileProjectMismatch
+                ) {
+                    store
+                        .reject_profile_revision(
+                            &mut root,
+                            Some(&candidate_digest),
+                            &["tracker.projectSlug: cannot change for a resident Root Run".into()],
+                        )
+                        .map_err(|storage| storage.to_string())?;
+                    return Ok(root);
+                }
+                return Err(error.to_string());
+            }
+        } else if candidate_digest == root.profile_digest
+            && root.profile_revision.status
+                != codex_orchestra_core::AutomationProfileRevisionStatus::Active
+        {
+            store
+                .confirm_active_profile(&mut root)
+                .map_err(|error| error.to_string())?;
+        }
+
+        if root.status == AutomationRootStatus::Running {
+            store
+                .pause(&mut root, "native reconciliation refresh")
+                .map_err(|error| error.to_string())?;
+        }
+        store
+            .begin_reconciliation(&mut root)
+            .map_err(|error| error.to_string())?;
 
         let mut tracker_issues = Vec::new();
         for claim in root.claims.values() {
+            let claim_profile = store
+                .load_profile_revision(&claim.profile_digest)
+                .map_err(|error| error.to_string())?;
             let read = self
-                .read_linear_automation(
-                    parent_thread_id,
-                    profile_path,
+                .read_linear_automation_with_profile(
+                    &claim_profile,
                     AutomationLinearReadKind::Refresh,
                     None,
                     Some(1),
@@ -1316,6 +1432,9 @@ impl OrchestraService {
 
         let mut observations = Vec::new();
         for claim in root.claims.values() {
+            let claim_profile = store
+                .load_profile_revision(&claim.profile_digest)
+                .map_err(|error| error.to_string())?;
             let issue_task_active = match claim.issue_task.as_ref() {
                 Some(handle) => self.host.status(handle).await.is_ok_and(|status| {
                     !matches!(status, AgentStatus::Cancelled | AgentStatus::Failed(_))
@@ -1333,7 +1452,7 @@ impl OrchestraService {
             };
             let terminal = tracker_issues.iter().any(|issue| {
                 issue.id == claim.issue_id
-                    && pinned_profile
+                    && claim_profile
                         .tracker
                         .terminal_states
                         .iter()
@@ -1358,6 +1477,7 @@ impl OrchestraService {
                 claim_id: claim.claim_id.clone(),
                 issue_task_active,
                 descendants_cancelled,
+                tracker_terminal: terminal,
                 workflow_status,
             });
         }

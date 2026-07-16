@@ -1041,7 +1041,7 @@ index c1c43bd656..431e836cd2 100644
        "properties": {
          "id": {
 diff --git a/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json b/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json
-index 7c974ae4ae..130f7bbb02 100644
+index 7c974ae4ae..bc58b107ce 100644
 --- a/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json
 +++ b/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json
 @@ -716,13 +716,13 @@
@@ -5520,7 +5520,7 @@ index 7c974ae4ae..130f7bbb02 100644
      "ParsedCommand": {
        "oneOf": [
          {
-@@ -7014,1426 +7511,1507 @@
+@@ -7014,3271 +7511,2958 @@
          ],
          "type": "string"
        },
@@ -6371,6 +6371,30 @@ index 7c974ae4ae..130f7bbb02 100644
 -          "tty": {
 -            "description": "Enable PTY mode.\n\nThis implies `streamStdin` and `streamStdoutStderr`.",
 -            "type": "boolean"
+-          }
+-        },
+-        "required": [
+-          "command"
+-        ],
+-        "title": "CommandExecParams",
+-        "type": "object"
+-      },
+-      "CommandExecResizeParams": {
+-        "$schema": "http://json-schema.org/draft-07/schema#",
+-        "description": "Resize a running PTY-backed `command/exec` session.",
+-        "properties": {
+-          "processId": {
+-            "description": "Client-supplied, connection-scoped `processId` from the original `command/exec` request.",
++          "profileDigest": {
+             "type": "string"
+           },
+-          "size": {
+-            "allOf": [
++          "profileRevision": {
++            "format": "uint64",
++            "minimum": 0.0,
++            "type": "integer"
++          },
 +          "sourceRevision": {
 +            "type": "string"
 +          },
@@ -6388,12 +6412,15 @@ index 7c974ae4ae..130f7bbb02 100644
 +          },
 +          "workflowStatus": {
 +            "anyOf": [
-+              {
+               {
+-                "$ref": "#/definitions/v2/CommandExecTerminalSize"
 +                "$ref": "#/definitions/v2/OrchestraRunStatus"
 +              },
 +              {
 +                "type": "null"
-+              }
+               }
+-            ],
+-            "description": "New PTY size in character cells."
 +            ]
 +          },
 +          "worktree": {
@@ -6401,7 +6428,8 @@ index 7c974ae4ae..130f7bbb02 100644
            }
          },
          "required": [
--          "command"
+-          "processId",
+-          "size"
 +          "attempt",
 +          "claimId",
 +          "effects",
@@ -6409,15 +6437,21 @@ index 7c974ae4ae..130f7bbb02 100644
 +          "issueIdentifier",
 +          "issueTitle",
 +          "nextAction",
++          "profileDigest",
++          "profileRevision",
 +          "sourceRevision",
 +          "status",
 +          "trackerState",
 +          "worktree"
          ],
--        "title": "CommandExecParams",
+-        "title": "CommandExecResizeParams",
          "type": "object"
        },
--      "CommandExecResizeParams": {
+-      "CommandExecResizeResponse": {
+-        "$schema": "http://json-schema.org/draft-07/schema#",
+-        "description": "Empty success response for `command/exec/resize`.",
+-        "title": "CommandExecResizeResponse",
+-        "type": "object"
 +      "AutomationLinearReadKind": {
 +        "enum": [
 +          "candidates",
@@ -6425,20 +6459,25 @@ index 7c974ae4ae..130f7bbb02 100644
 +          "refresh"
 +        ],
 +        "type": "string"
-+      },
+       },
+-      "CommandExecResponse": {
 +      "AutomationLinearReadParams": {
          "$schema": "http://json-schema.org/draft-07/schema#",
--        "description": "Resize a running PTY-backed `command/exec` session.",
+-        "description": "Final buffered result for `command/exec`.",
 +        "additionalProperties": false,
          "properties": {
--          "processId": {
--            "description": "Client-supplied, connection-scoped `processId` from the original `command/exec` request.",
+-          "exitCode": {
+-            "description": "Process exit code.",
+-            "format": "int32",
+-            "type": "integer"
 +          "after": {
 +            "type": [
 +              "string",
 +              "null"
 +            ]
-+          },
+           },
+-          "stderr": {
+-            "description": "Buffered stderr capture.\n\nEmpty when stderr was streamed via `command/exec/outputDelta`.",
 +          "first": {
 +            "format": "uint32",
 +            "minimum": 0.0,
@@ -6459,40 +6498,45 @@ index 7c974ae4ae..130f7bbb02 100644
 +          "profilePath": {
              "type": "string"
            },
--          "size": {
--            "allOf": [
--              {
--                "$ref": "#/definitions/v2/CommandExecTerminalSize"
--              }
--            ],
--            "description": "New PTY size in character cells."
+-          "stdout": {
+-            "description": "Buffered stdout capture.\n\nEmpty when stdout was streamed via `command/exec/outputDelta`.",
 +          "threadId": {
-+            "type": "string"
+             "type": "string"
            }
          },
          "required": [
--          "processId",
--          "size"
+-          "exitCode",
+-          "stderr",
+-          "stdout"
 +          "kind",
 +          "profilePath",
 +          "threadId"
          ],
--        "title": "CommandExecResizeParams",
+-        "title": "CommandExecResponse",
 +        "title": "AutomationLinearReadParams",
          "type": "object"
        },
--      "CommandExecResizeResponse": {
+-      "CommandExecTerminalSize": {
+-        "description": "PTY size in character cells for `command/exec` PTY sessions.",
 +      "AutomationLinearReadResponse": {
-         "$schema": "http://json-schema.org/draft-07/schema#",
--        "description": "Empty success response for `command/exec/resize`.",
--        "title": "CommandExecResizeResponse",
-+        "properties": {
++        "$schema": "http://json-schema.org/draft-07/schema#",
+         "properties": {
+-          "cols": {
+-            "description": "Terminal width in character cells.",
+-            "format": "uint16",
+-            "minimum": 0.0,
+-            "type": "integer"
 +          "endCursor": {
 +            "type": [
 +              "string",
 +              "null"
 +            ]
-+          },
+           },
+-          "rows": {
+-            "description": "Terminal height in character cells.",
+-            "format": "uint16",
+-            "minimum": 0.0,
+-            "type": "integer"
 +          "hasNextPage": {
 +            "type": "boolean"
 +          },
@@ -6507,20 +6551,22 @@ index 7c974ae4ae..130f7bbb02 100644
 +          },
 +          "status": {
 +            "$ref": "#/definitions/v2/AutomationLinearReadStatus"
-+          }
-+        },
-+        "required": [
+           }
+         },
+         "required": [
+-          "cols",
+-          "rows"
 +          "hasNextPage",
 +          "issues",
 +          "nextAction",
 +          "status"
-+        ],
+         ],
 +        "title": "AutomationLinearReadResponse",
          "type": "object"
        },
--      "CommandExecResponse": {
+-      "CommandExecTerminateParams": {
 -        "$schema": "http://json-schema.org/draft-07/schema#",
--        "description": "Final buffered result for `command/exec`.",
+-        "description": "Terminate a running `command/exec` session.",
 +      "AutomationLinearReadStatus": {
 +        "enum": [
 +          "ready",
@@ -6530,23 +6576,17 @@ index 7c974ae4ae..130f7bbb02 100644
 +      },
 +      "AutomationOrchestraProfile": {
          "properties": {
--          "exitCode": {
--            "description": "Process exit code.",
--            "format": "int32",
--            "type": "integer"
+-          "processId": {
+-            "description": "Client-supplied, connection-scoped `processId` from the original `command/exec` request.",
 +          "effects": {
 +            "items": {
 +              "$ref": "#/definitions/v2/AutomationEffect"
 +            },
 +            "type": "array"
-           },
--          "stderr": {
--            "description": "Buffered stderr capture.\n\nEmpty when stderr was streamed via `command/exec/outputDelta`.",
++          },
 +          "workflowName": {
-             "type": "string"
-           },
--          "stdout": {
--            "description": "Buffered stdout capture.\n\nEmpty when stdout was streamed via `command/exec/outputDelta`.",
++            "type": "string"
++          },
 +          "workflowPath": {
 +            "type": "string"
 +          },
@@ -6555,59 +6595,79 @@ index 7c974ae4ae..130f7bbb02 100644
            }
          },
          "required": [
--          "exitCode",
--          "stderr",
--          "stdout"
+-          "processId"
 +          "effects",
 +          "workflowName",
 +          "workflowPath",
 +          "workflowSha256"
          ],
--        "title": "CommandExecResponse",
+-        "title": "CommandExecTerminateParams",
+-        "type": "object"
+-      },
+-      "CommandExecTerminateResponse": {
+-        "$schema": "http://json-schema.org/draft-07/schema#",
+-        "description": "Empty success response for `command/exec/terminate`.",
+-        "title": "CommandExecTerminateResponse",
          "type": "object"
        },
--      "CommandExecTerminalSize": {
--        "description": "PTY size in character cells for `command/exec` PTY sessions.",
+-      "CommandExecWriteParams": {
+-        "$schema": "http://json-schema.org/draft-07/schema#",
+-        "description": "Write stdin bytes to a running `command/exec` session, close stdin, or both.",
 +      "AutomationPollingProfile": {
          "properties": {
--          "cols": {
--            "description": "Terminal width in character cells.",
--            "format": "uint16",
--            "minimum": 0.0,
--            "type": "integer"
+-          "closeStdin": {
+-            "description": "Close stdin after writing `deltaBase64`, if present.",
+-            "type": "boolean"
 -          },
--          "rows": {
--            "description": "Terminal height in character cells.",
--            "format": "uint16",
+-          "deltaBase64": {
+-            "description": "Optional base64-encoded stdin bytes to write.",
+-            "type": [
+-              "string",
+-              "null"
+-            ]
+-          },
+-          "processId": {
+-            "description": "Client-supplied, connection-scoped `processId` from the original `command/exec` request.",
+-            "type": "string"
 +          "intervalMs": {
 +            "format": "uint64",
-             "minimum": 0.0,
-             "type": "integer"
++            "minimum": 0.0,
++            "type": "integer"
            }
          },
          "required": [
--          "cols",
--          "rows"
+-          "processId"
 +          "intervalMs"
          ],
+-        "title": "CommandExecWriteParams",
+-        "type": "object"
+-      },
+-      "CommandExecWriteResponse": {
+-        "$schema": "http://json-schema.org/draft-07/schema#",
+-        "description": "Empty success response for `command/exec/write`.",
+-        "title": "CommandExecWriteResponse",
          "type": "object"
        },
--      "CommandExecTerminateParams": {
+-      "CommandExecutionOutputDeltaNotification": {
 -        "$schema": "http://json-schema.org/draft-07/schema#",
--        "description": "Terminate a running `command/exec` session.",
 +      "AutomationProfile": {
          "properties": {
--          "processId": {
--            "description": "Client-supplied, connection-scoped `processId` from the original `command/exec` request.",
+-          "delta": {
+-            "type": "string"
 +          "agent": {
 +            "$ref": "#/definitions/v2/AutomationAgentProfile"
-+          },
+           },
+-          "itemId": {
+-            "type": "string"
 +          "codex": {
 +            "$ref": "#/definitions/v2/AutomationCodexPolicy"
-+          },
+           },
+-          "threadId": {
+-            "type": "string"
 +          "hooks": {
 +            "$ref": "#/definitions/v2/AutomationHooksProfile"
-+          },
+           },
+-          "turnId": {
 +          "orchestra": {
 +            "$ref": "#/definitions/v2/AutomationOrchestraProfile"
 +          },
@@ -6625,7 +6685,10 @@ index 7c974ae4ae..130f7bbb02 100644
            }
          },
          "required": [
--          "processId"
+-          "delta",
+-          "itemId",
+-          "threadId",
+-          "turnId"
 +          "agent",
 +          "codex",
 +          "hooks",
@@ -6635,553 +6698,91 @@ index 7c974ae4ae..130f7bbb02 100644
 +          "tracker",
 +          "workspace"
          ],
--        "title": "CommandExecTerminateParams",
+-        "title": "CommandExecutionOutputDeltaNotification",
          "type": "object"
        },
--      "CommandExecTerminateResponse": {
--        "$schema": "http://json-schema.org/draft-07/schema#",
--        "description": "Empty success response for `command/exec/terminate`.",
--        "title": "CommandExecTerminateResponse",
--        "type": "object"
+-      "CommandExecutionSource": {
++      "AutomationProfileRevisionStatus": {
+         "enum": [
+-          "agent",
+-          "userShell",
+-          "unifiedExecStartup",
+-          "unifiedExecInteraction"
++          "active",
++          "pending_valid",
++          "rejected"
+         ],
+         "type": "string"
+       },
+-      "CommandExecutionStatus": {
 +      "AutomationQueueCategory": {
-+        "enum": [
+         "enum": [
+-          "inProgress",
+-          "completed",
+-          "failed",
+-          "declined"
 +          "queued",
 +          "running",
 +          "blocked",
 +          "waiting_gate",
 +          "handoff",
 +          "terminal"
-+        ],
-+        "type": "string"
+         ],
+         "type": "string"
        },
--      "CommandExecWriteParams": {
--        "$schema": "http://json-schema.org/draft-07/schema#",
--        "description": "Write stdin bytes to a running `command/exec` session, close stdin, or both.",
+-      "CommandMigration": {
+-        "properties": {
+-          "name": {
+-            "type": "string"
+-          }
+-        },
+-        "required": [
+-          "name"
+-        ],
+-        "type": "object"
+-      },
+-      "ComputerUseRequirements": {
 +      "AutomationQueueCounts": {
          "properties": {
--          "closeStdin": {
--            "description": "Close stdin after writing `deltaBase64`, if present.",
--            "type": "boolean"
+-          "allowLockedComputerUse": {
+-            "type": [
+-              "boolean",
+-              "null"
+-            ]
+-          }
+-        },
+-        "type": "object"
+-      },
+-      "Config": {
+-        "additionalProperties": true,
+-        "properties": {
+-          "analytics": {
+-            "anyOf": [
+-              {
+-                "$ref": "#/definitions/v2/AnalyticsConfig"
+-              },
+-              {
+-                "type": "null"
+-              }
+-            ]
 +          "blocked": {
 +            "format": "uint32",
 +            "minimum": 0.0,
 +            "type": "integer"
            },
--          "deltaBase64": {
--            "description": "Optional base64-encoded stdin bytes to write.",
--            "type": [
--              "string",
--              "null"
+-          "approval_policy": {
+-            "anyOf": [
+-              {
+-                "$ref": "#/definitions/v2/AskForApproval"
+-              },
+-              {
+-                "type": "null"
+-              }
 -            ]
 +          "handoff": {
 +            "format": "uint32",
 +            "minimum": 0.0,
 +            "type": "integer"
-           },
--          "processId": {
--            "description": "Client-supplied, connection-scoped `processId` from the original `command/exec` request.",
--            "type": "string"
-+          "queued": {
-+            "format": "uint32",
-+            "minimum": 0.0,
-+            "type": "integer"
-+          },
-+          "running": {
-+            "format": "uint32",
-+            "minimum": 0.0,
-+            "type": "integer"
-+          },
-+          "terminal": {
-+            "format": "uint32",
-+            "minimum": 0.0,
-+            "type": "integer"
-+          },
-+          "waitingGate": {
-+            "format": "uint32",
-+            "minimum": 0.0,
-+            "type": "integer"
-           }
-         },
-         "required": [
--          "processId"
-+          "blocked",
-+          "handoff",
-+          "queued",
-+          "running",
-+          "terminal",
-+          "waitingGate"
-         ],
--        "title": "CommandExecWriteParams",
-         "type": "object"
-       },
--      "CommandExecWriteResponse": {
--        "$schema": "http://json-schema.org/draft-07/schema#",
--        "description": "Empty success response for `command/exec/write`.",
--        "title": "CommandExecWriteResponse",
--        "type": "object"
--      },
--      "CommandExecutionOutputDeltaNotification": {
--        "$schema": "http://json-schema.org/draft-07/schema#",
-+      "AutomationQueueItemProjection": {
-         "properties": {
--          "delta": {
--            "type": "string"
-+          "category": {
-+            "$ref": "#/definitions/v2/AutomationQueueCategory"
-           },
--          "itemId": {
-+          "claimId": {
-+            "type": [
-+              "string",
-+              "null"
-+            ]
-+          },
-+          "issueId": {
-             "type": "string"
-           },
--          "threadId": {
-+          "issueIdentifier": {
-             "type": "string"
-           },
--          "turnId": {
-+          "issueTitle": {
-+            "$ref": "#/definitions/v2/OrchestraBoundedText"
-+          },
-+          "nextAction": {
-+            "$ref": "#/definitions/v2/OrchestraBoundedText"
-+          },
-+          "priority": {
-+            "format": "int64",
-+            "type": [
-+              "integer",
-+              "null"
-+            ]
-+          },
-+          "state": {
-             "type": "string"
-           }
-         },
-         "required": [
--          "delta",
--          "itemId",
--          "threadId",
--          "turnId"
-+          "category",
-+          "issueId",
-+          "issueIdentifier",
-+          "issueTitle",
-+          "nextAction",
-+          "state"
-         ],
--        "title": "CommandExecutionOutputDeltaNotification",
-         "type": "object"
-       },
--      "CommandExecutionSource": {
-+      "AutomationQueueReadParams": {
-+        "$schema": "http://json-schema.org/draft-07/schema#",
-+        "additionalProperties": false,
-+        "properties": {
-+          "category": {
-+            "$ref": "#/definitions/v2/AutomationQueueCategory"
-+          },
-+          "limit": {
-+            "format": "uint32",
-+            "minimum": 0.0,
-+            "type": [
-+              "integer",
-+              "null"
-+            ]
-+          },
-+          "offset": {
-+            "format": "uint32",
-+            "minimum": 0.0,
-+            "type": [
-+              "integer",
-+              "null"
-+            ]
-+          },
-+          "runId": {
-+            "type": "string"
-+          },
-+          "threadId": {
-+            "type": "string"
-+          }
-+        },
-+        "required": [
-+          "category",
-+          "runId",
-+          "threadId"
-+        ],
-+        "title": "AutomationQueueReadParams",
-+        "type": "object"
-+      },
-+      "AutomationQueueReadResponse": {
-+        "$schema": "http://json-schema.org/draft-07/schema#",
-+        "properties": {
-+          "category": {
-+            "$ref": "#/definitions/v2/AutomationQueueCategory"
-+          },
-+          "items": {
-+            "items": {
-+              "$ref": "#/definitions/v2/AutomationQueueItemProjection"
-+            },
-+            "type": "array"
-+          },
-+          "nextOffset": {
-+            "format": "uint32",
-+            "minimum": 0.0,
-+            "type": [
-+              "integer",
-+              "null"
-+            ]
-+          },
-+          "total": {
-+            "format": "uint32",
-+            "minimum": 0.0,
-+            "type": "integer"
-+          }
-+        },
-+        "required": [
-+          "category",
-+          "items",
-+          "total"
-+        ],
-+        "title": "AutomationQueueReadResponse",
-+        "type": "object"
-+      },
-+      "AutomationReconcileParams": {
-+        "$schema": "http://json-schema.org/draft-07/schema#",
-+        "additionalProperties": false,
-+        "properties": {
-+          "profilePath": {
-+            "type": "string"
-+          },
-+          "runId": {
-+            "type": "string"
-+          },
-+          "threadId": {
-+            "type": "string"
-+          }
-+        },
-+        "required": [
-+          "profilePath",
-+          "runId",
-+          "threadId"
-+        ],
-+        "title": "AutomationReconcileParams",
-+        "type": "object"
-+      },
-+      "AutomationReconciliationStatus": {
-         "enum": [
--          "agent",
--          "userShell",
--          "unifiedExecStartup",
--          "unifiedExecInteraction"
-+          "complete",
-+          "required",
-+          "in_progress",
-+          "blocked"
-         ],
-         "type": "string"
-       },
--      "CommandExecutionStatus": {
-+      "AutomationRootStatus": {
-         "enum": [
--          "inProgress",
--          "completed",
--          "failed",
--          "declined"
-+          "running",
-+          "suspended",
-+          "cancelled",
-+          "failed"
-         ],
-         "type": "string"
-       },
--      "CommandMigration": {
-+      "AutomationRunFixtureParams": {
-+        "$schema": "http://json-schema.org/draft-07/schema#",
-         "properties": {
--          "name": {
-+          "attempt": {
-+            "format": "uint32",
-+            "minimum": 0.0,
-+            "type": [
-+              "integer",
-+              "null"
-+            ]
-+          },
-+          "fixtureIssue": {
-+            "$ref": "#/definitions/v2/AutomationIssue"
-+          },
-+          "profilePath": {
-+            "type": "string"
-+          },
-+          "threadId": {
-             "type": "string"
-           }
-         },
-         "required": [
--          "name"
-+          "fixtureIssue",
-+          "profilePath",
-+          "threadId"
-         ],
-+        "title": "AutomationRunFixtureParams",
-         "type": "object"
-       },
--      "ComputerUseRequirements": {
-+      "AutomationRunParams": {
-+        "$schema": "http://json-schema.org/draft-07/schema#",
-+        "additionalProperties": false,
-         "properties": {
--          "allowLockedComputerUse": {
-+          "runId": {
-+            "type": "string"
-+          },
-+          "threadId": {
-+            "type": "string"
-+          }
-+        },
-+        "required": [
-+          "runId",
-+          "threadId"
-+        ],
-+        "title": "AutomationRunParams",
-+        "type": "object"
-+      },
-+      "AutomationRunProjection": {
-+        "properties": {
-+          "claims": {
-+            "items": {
-+              "$ref": "#/definitions/v2/AutomationIssueClaimProjection"
-+            },
-+            "type": "array"
-+          },
-+          "claimsTotal": {
-+            "format": "uint32",
-+            "minimum": 0.0,
-+            "type": "integer"
-+          },
-+          "leaseEpoch": {
-+            "format": "uint64",
-+            "minimum": 0.0,
-+            "type": "integer"
-+          },
-+          "nextAction": {
-+            "$ref": "#/definitions/v2/OrchestraBoundedText"
-+          },
-+          "ownerThreadId": {
-+            "type": "string"
-+          },
-+          "profileDigest": {
-+            "type": "string"
-+          },
-+          "queueCounts": {
-+            "$ref": "#/definitions/v2/AutomationQueueCounts"
-+          },
-+          "queuePreview": {
-+            "items": {
-+              "$ref": "#/definitions/v2/AutomationQueueItemProjection"
-+            },
-+            "type": "array"
-+          },
-+          "queuePreviewTruncated": {
-+            "type": "boolean"
-+          },
-+          "reconciliation": {
-+            "$ref": "#/definitions/v2/AutomationReconciliationStatus"
-+          },
-+          "revision": {
-+            "format": "uint64",
-+            "minimum": 0.0,
-+            "type": "integer"
-+          },
-+          "runId": {
-+            "type": "string"
-+          },
-+          "schemaVersion": {
-+            "format": "uint32",
-+            "minimum": 0.0,
-+            "type": "integer"
-+          },
-+          "sourceRevision": {
-+            "type": "string"
-+          },
-+          "status": {
-+            "$ref": "#/definitions/v2/AutomationRootStatus"
-+          },
-+          "trackerProjectSlug": {
-+            "type": "string"
-+          }
-+        },
-+        "required": [
-+          "claims",
-+          "claimsTotal",
-+          "leaseEpoch",
-+          "nextAction",
-+          "ownerThreadId",
-+          "profileDigest",
-+          "queueCounts",
-+          "queuePreview",
-+          "queuePreviewTruncated",
-+          "reconciliation",
-+          "revision",
-+          "runId",
-+          "schemaVersion",
-+          "sourceRevision",
-+          "status",
-+          "trackerProjectSlug"
-+        ],
-+        "type": "object"
-+      },
-+      "AutomationRunResponse": {
-+        "$schema": "http://json-schema.org/draft-07/schema#",
-+        "properties": {
-+          "run": {
-+            "$ref": "#/definitions/v2/AutomationRunProjection"
-+          }
-+        },
-+        "required": [
-+          "run"
-+        ],
-+        "title": "AutomationRunResponse",
-+        "type": "object"
-+      },
-+      "AutomationSecretKind": {
-+        "enum": [
-+          "environment",
-+          "inline_digest"
-+        ],
-+        "type": "string"
-+      },
-+      "AutomationSecretReference": {
-+        "properties": {
-+          "digest": {
-+            "type": "string"
-+          },
-+          "kind": {
-+            "$ref": "#/definitions/v2/AutomationSecretKind"
-+          },
-+          "reference": {
-+            "type": "string"
-+          }
-+        },
-+        "required": [
-+          "digest",
-+          "kind",
-+          "reference"
-+        ],
-+        "type": "object"
-+      },
-+      "AutomationTrackerProfile": {
-+        "properties": {
-+          "activeStates": {
-+            "items": {
-+              "type": "string"
-+            },
-+            "type": "array"
-+          },
-+          "credential": {
-+            "$ref": "#/definitions/v2/AutomationSecretReference"
-+          },
-+          "endpoint": {
-+            "type": "string"
-+          },
-+          "kind": {
-+            "type": "string"
-+          },
-+          "projectSlug": {
-+            "type": "string"
-+          },
-+          "requiredLabels": {
-+            "items": {
-+              "type": "string"
-+            },
-+            "type": "array"
-+          },
-+          "terminalStates": {
-+            "items": {
-+              "type": "string"
-+            },
-+            "type": "array"
-+          }
-+        },
-+        "required": [
-+          "activeStates",
-+          "credential",
-+          "endpoint",
-+          "kind",
-+          "projectSlug",
-+          "requiredLabels",
-+          "terminalStates"
-+        ],
-+        "type": "object"
-+      },
-+      "AutomationValidateParams": {
-+        "$schema": "http://json-schema.org/draft-07/schema#",
-+        "properties": {
-+          "attempt": {
-+            "format": "uint32",
-+            "minimum": 0.0,
-             "type": [
--              "boolean",
-+              "integer",
-               "null"
-             ]
-+          },
-+          "fixtureIssue": {
-+            "$ref": "#/definitions/v2/AutomationIssue"
-+          },
-+          "profilePath": {
-+            "type": "string"
-+          },
-+          "threadId": {
-+            "type": "string"
-           }
-         },
-+        "required": [
-+          "fixtureIssue",
-+          "profilePath",
-+          "threadId"
-+        ],
-+        "title": "AutomationValidateParams",
-         "type": "object"
-       },
--      "Config": {
--        "additionalProperties": true,
-+      "AutomationValidateResponse": {
-+        "$schema": "http://json-schema.org/draft-07/schema#",
-         "properties": {
--          "analytics": {
-+          "diagnostics": {
-+            "items": {
-+              "$ref": "#/definitions/v2/AutomationDiagnostic"
-+            },
-+            "type": "array"
-+          },
-+          "preview": {
-             "anyOf": [
-               {
--                "$ref": "#/definitions/v2/AnalyticsConfig"
-+                "$ref": "#/definitions/v2/AutomationWorkflowPreview"
-               },
-               {
-                 "type": "null"
-               }
-             ]
-           },
--          "approval_policy": {
-+          "profile": {
-             "anyOf": [
-               {
--                "$ref": "#/definitions/v2/AskForApproval"
-+                "$ref": "#/definitions/v2/AutomationProfile"
-               },
-               {
-                 "type": "null"
-               }
-             ]
            },
 -          "approvals_reviewer": {
 -            "anyOf": [
@@ -7193,26 +6794,60 @@ index 7c974ae4ae..130f7bbb02 100644
 -              }
 -            ],
 -            "description": "[UNSTABLE] Optional default for where approval requests are routed for review."
--          },
++          "queued": {
++            "format": "uint32",
++            "minimum": 0.0,
++            "type": "integer"
+           },
 -          "compact_prompt": {
 -            "type": [
 -              "string",
 -              "null"
 -            ]
--          },
++          "running": {
++            "format": "uint32",
++            "minimum": 0.0,
++            "type": "integer"
+           },
 -          "desktop": {
 -            "additionalProperties": true,
 -            "type": [
 -              "object",
 -              "null"
 -            ]
--          },
++          "terminal": {
++            "format": "uint32",
++            "minimum": 0.0,
++            "type": "integer"
+           },
 -          "developer_instructions": {
--            "type": [
--              "string",
--              "null"
--            ]
--          },
++          "waitingGate": {
++            "format": "uint32",
++            "minimum": 0.0,
++            "type": "integer"
++          }
++        },
++        "required": [
++          "blocked",
++          "handoff",
++          "queued",
++          "running",
++          "terminal",
++          "waitingGate"
++        ],
++        "type": "object"
++      },
++      "AutomationQueueItemProjection": {
++        "properties": {
++          "category": {
++            "$ref": "#/definitions/v2/AutomationQueueCategory"
++          },
++          "claimId": {
+             "type": [
+               "string",
+               "null"
+             ]
+           },
 -          "forced_chatgpt_workspace_id": {
 -            "anyOf": [
 -              {
@@ -7222,7 +6857,9 @@ index 7c974ae4ae..130f7bbb02 100644
 -                "type": "null"
 -              }
 -            ]
--          },
++          "issueId": {
++            "type": "string"
+           },
 -          "forced_login_method": {
 -            "anyOf": [
 -              {
@@ -7232,26 +6869,33 @@ index 7c974ae4ae..130f7bbb02 100644
 -                "type": "null"
 -              }
 -            ]
--          },
++          "issueIdentifier": {
++            "type": "string"
+           },
 -          "instructions": {
 -            "type": [
 -              "string",
 -              "null"
 -            ]
--          },
++          "issueTitle": {
++            "$ref": "#/definitions/v2/OrchestraBoundedText"
+           },
 -          "model": {
 -            "type": [
 -              "string",
 -              "null"
 -            ]
--          },
++          "nextAction": {
++            "$ref": "#/definitions/v2/OrchestraBoundedText"
+           },
 -          "model_auto_compact_token_limit": {
--            "format": "int64",
--            "type": [
--              "integer",
--              "null"
--            ]
--          },
++          "priority": {
+             "format": "int64",
+             "type": [
+               "integer",
+               "null"
+             ]
+           },
 -          "model_auto_compact_token_limit_scope": {
 -            "anyOf": [
 -              {
@@ -7261,14 +6905,37 @@ index 7c974ae4ae..130f7bbb02 100644
 -                "type": "null"
 -              }
 -            ]
--          },
++          "state": {
++            "type": "string"
++          }
++        },
++        "required": [
++          "category",
++          "issueId",
++          "issueIdentifier",
++          "issueTitle",
++          "nextAction",
++          "state"
++        ],
++        "type": "object"
++      },
++      "AutomationQueueReadParams": {
++        "$schema": "http://json-schema.org/draft-07/schema#",
++        "additionalProperties": false,
++        "properties": {
++          "category": {
++            "$ref": "#/definitions/v2/AutomationQueueCategory"
+           },
 -          "model_context_window": {
 -            "format": "int64",
--            "type": [
--              "integer",
--              "null"
--            ]
--          },
++          "limit": {
++            "format": "uint32",
++            "minimum": 0.0,
+             "type": [
+               "integer",
+               "null"
+             ]
+           },
 -          "model_provider": {
 -            "type": [
 -              "string",
@@ -7306,12 +6973,11 @@ index 7c974ae4ae..130f7bbb02 100644
 -            ]
 -          },
 -          "review_model": {
-+          "profileDigest": {
-             "type": [
-               "string",
-               "null"
-             ]
-           },
+-            "type": [
+-              "string",
+-              "null"
+-            ]
+-          },
 -          "sandbox_mode": {
 -            "anyOf": [
 -              {
@@ -7333,33 +6999,14 @@ index 7c974ae4ae..130f7bbb02 100644
 -            ]
 -          },
 -          "service_tier": {
--            "type": [
++          "offset": {
++            "format": "uint32",
++            "minimum": 0.0,
+             "type": [
 -              "string",
--              "null"
--            ]
-+          "valid": {
-+            "type": "boolean"
-+          }
-+        },
-+        "required": [
-+          "diagnostics",
-+          "valid"
-+        ],
-+        "title": "AutomationValidateResponse",
-+        "type": "object"
-+      },
-+      "AutomationValidationSeverity": {
-+        "enum": [
-+          "error",
-+          "warning"
-+        ],
-+        "type": "string"
-+      },
-+      "AutomationWorkflowInput": {
-+        "properties": {
-+          "default": true,
-+          "kind": {
-+            "$ref": "#/definitions/v2/AutomationWorkflowInputKind"
++              "integer",
+               "null"
+             ]
            },
 -          "tools": {
 -            "anyOf": [
@@ -7370,7 +7017,7 @@ index 7c974ae4ae..130f7bbb02 100644
 -                "type": "null"
 -              }
 -            ]
-+          "name": {
++          "runId": {
 +            "type": "string"
            },
 -          "web_search": {
@@ -7382,10 +7029,767 @@ index 7c974ae4ae..130f7bbb02 100644
 -                "type": "null"
 -              }
 -            ]
++          "threadId": {
++            "type": "string"
+           }
+         },
++        "required": [
++          "category",
++          "runId",
++          "threadId"
++        ],
++        "title": "AutomationQueueReadParams",
+         "type": "object"
+       },
+-      "ConfigBatchWriteParams": {
++      "AutomationQueueReadResponse": {
+         "$schema": "http://json-schema.org/draft-07/schema#",
+         "properties": {
+-          "edits": {
++          "category": {
++            "$ref": "#/definitions/v2/AutomationQueueCategory"
++          },
++          "items": {
+             "items": {
+-              "$ref": "#/definitions/v2/ConfigEdit"
++              "$ref": "#/definitions/v2/AutomationQueueItemProjection"
+             },
+             "type": "array"
+           },
+-          "expectedVersion": {
+-            "type": [
+-              "string",
+-              "null"
+-            ]
+-          },
+-          "filePath": {
+-            "description": "Path to the config file to write; defaults to the user's `config.toml` when omitted.",
++          "nextOffset": {
++            "format": "uint32",
++            "minimum": 0.0,
+             "type": [
+-              "string",
++              "integer",
+               "null"
+             ]
+           },
+-          "reloadUserConfig": {
+-            "description": "When true, hot-reload the updated user config into all loaded threads after writing.",
+-            "type": "boolean"
++          "total": {
++            "format": "uint32",
++            "minimum": 0.0,
++            "type": "integer"
+           }
+         },
+         "required": [
+-          "edits"
++          "category",
++          "items",
++          "total"
+         ],
+-        "title": "ConfigBatchWriteParams",
++        "title": "AutomationQueueReadResponse",
+         "type": "object"
+       },
+-      "ConfigEdit": {
++      "AutomationReconcileParams": {
++        "$schema": "http://json-schema.org/draft-07/schema#",
++        "additionalProperties": false,
+         "properties": {
+-          "keyPath": {
++          "profilePath": {
+             "type": "string"
+           },
+-          "mergeStrategy": {
+-            "$ref": "#/definitions/v2/MergeStrategy"
++          "runId": {
++            "type": "string"
+           },
+-          "value": true
++          "threadId": {
++            "type": "string"
++          }
+         },
+         "required": [
+-          "keyPath",
+-          "mergeStrategy",
+-          "value"
++          "profilePath",
++          "runId",
++          "threadId"
+         ],
++        "title": "AutomationReconcileParams",
+         "type": "object"
+       },
+-      "ConfigLayer": {
++      "AutomationReconciliationStatus": {
++        "enum": [
++          "complete",
++          "required",
++          "in_progress",
++          "blocked"
++        ],
++        "type": "string"
++      },
++      "AutomationRootStatus": {
++        "enum": [
++          "running",
++          "suspended",
++          "cancelled",
++          "failed"
++        ],
++        "type": "string"
++      },
++      "AutomationRunFixtureParams": {
++        "$schema": "http://json-schema.org/draft-07/schema#",
+         "properties": {
+-          "config": true,
+-          "disabledReason": {
++          "attempt": {
++            "format": "uint32",
++            "minimum": 0.0,
+             "type": [
+-              "string",
++              "integer",
+               "null"
+             ]
+           },
+-          "name": {
+-            "$ref": "#/definitions/v2/ConfigLayerSource"
++          "fixtureIssue": {
++            "$ref": "#/definitions/v2/AutomationIssue"
+           },
+-          "version": {
++          "profilePath": {
++            "type": "string"
++          },
++          "threadId": {
+             "type": "string"
+           }
+         },
+         "required": [
+-          "config",
+-          "name",
+-          "version"
++          "fixtureIssue",
++          "profilePath",
++          "threadId"
+         ],
++        "title": "AutomationRunFixtureParams",
+         "type": "object"
+       },
+-      "ConfigLayerMetadata": {
++      "AutomationRunParams": {
++        "$schema": "http://json-schema.org/draft-07/schema#",
++        "additionalProperties": false,
+         "properties": {
+-          "name": {
+-            "$ref": "#/definitions/v2/ConfigLayerSource"
++          "runId": {
++            "type": "string"
+           },
+-          "version": {
++          "threadId": {
+             "type": "string"
+           }
+         },
+         "required": [
+-          "name",
+-          "version"
++          "runId",
++          "threadId"
+         ],
++        "title": "AutomationRunParams",
+         "type": "object"
+       },
+-      "ConfigLayerSource": {
+-        "oneOf": [
+-          {
+-            "description": "Managed preferences layer delivered by MDM (macOS only).",
+-            "properties": {
+-              "domain": {
+-                "type": "string"
+-              },
+-              "key": {
+-                "type": "string"
+-              },
+-              "type": {
+-                "enum": [
+-                  "mdm"
+-                ],
+-                "title": "MdmConfigLayerSourceType",
+-                "type": "string"
+-              }
+-            },
+-            "required": [
+-              "domain",
+-              "key",
+-              "type"
+-            ],
+-            "title": "MdmConfigLayerSource",
+-            "type": "object"
+-          },
+-          {
+-            "description": "Managed config layer from a file (usually `managed_config.toml`).",
+-            "properties": {
+-              "file": {
+-                "allOf": [
+-                  {
+-                    "$ref": "#/definitions/v2/AbsolutePathBuf"
+-                  }
+-                ],
+-                "description": "This is the path to the system config.toml file, though it is not guaranteed to exist."
+-              },
+-              "type": {
+-                "enum": [
+-                  "system"
+-                ],
+-                "title": "SystemConfigLayerSourceType",
+-                "type": "string"
+-              }
+-            },
+-            "required": [
+-              "file",
+-              "type"
+-            ],
+-            "title": "SystemConfigLayerSource",
+-            "type": "object"
+-          },
+-          {
+-            "description": "Enterprise-managed config layer delivered by the cloud config bundle.",
+-            "properties": {
+-              "id": {
+-                "description": "Stable identifier for the delivered layer.",
+-                "type": "string"
+-              },
+-              "name": {
+-                "description": "Admin-facing name for the delivered layer. This is surfaced in diagnostics so users know which cloud layer needs administrator attention.",
+-                "type": "string"
+-              },
+-              "type": {
+-                "enum": [
+-                  "enterpriseManaged"
+-                ],
+-                "title": "EnterpriseManagedConfigLayerSourceType",
+-                "type": "string"
+-              }
++      "AutomationRunProjection": {
++        "properties": {
++          "claims": {
++            "items": {
++              "$ref": "#/definitions/v2/AutomationIssueClaimProjection"
+             },
+-            "required": [
+-              "id",
+-              "name",
+-              "type"
+-            ],
+-            "title": "EnterpriseManagedConfigLayerSource",
+-            "type": "object"
++            "type": "array"
+           },
+-          {
+-            "description": "User config layer from $CODEX_HOME/config.toml. This layer is special in that it is expected to be: - writable by the user - generally outside the workspace directory",
+-            "properties": {
+-              "file": {
+-                "allOf": [
+-                  {
+-                    "$ref": "#/definitions/v2/AbsolutePathBuf"
+-                  }
+-                ],
+-                "description": "This is the path to the user's config.toml file, though it is not guaranteed to exist."
+-              },
+-              "profile": {
+-                "description": "Name of the selected profile-v2 config layered on top of the base user config, when this layer represents one.",
+-                "type": [
+-                  "string",
+-                  "null"
+-                ]
+-              },
+-              "type": {
+-                "enum": [
+-                  "user"
+-                ],
+-                "title": "UserConfigLayerSourceType",
+-                "type": "string"
+-              }
+-            },
+-            "required": [
+-              "file",
+-              "type"
+-            ],
+-            "title": "UserConfigLayerSource",
+-            "type": "object"
++          "claimsTotal": {
++            "format": "uint32",
++            "minimum": 0.0,
++            "type": "integer"
+           },
+-          {
+-            "description": "Path to a .codex/ folder within a project. There could be multiple of these between `cwd` and the project/repo root.",
+-            "properties": {
+-              "dotCodexFolder": {
+-                "$ref": "#/definitions/v2/AbsolutePathBuf"
+-              },
+-              "type": {
+-                "enum": [
+-                  "project"
+-                ],
+-                "title": "ProjectConfigLayerSourceType",
+-                "type": "string"
+-              }
+-            },
+-            "required": [
+-              "dotCodexFolder",
+-              "type"
+-            ],
+-            "title": "ProjectConfigLayerSource",
+-            "type": "object"
++          "leaseEpoch": {
++            "format": "uint64",
++            "minimum": 0.0,
++            "type": "integer"
+           },
+-          {
+-            "description": "Session-layer overrides supplied via `-c`/`--config`.",
+-            "properties": {
+-              "type": {
+-                "enum": [
+-                  "sessionFlags"
+-                ],
+-                "title": "SessionFlagsConfigLayerSourceType",
+-                "type": "string"
+-              }
+-            },
+-            "required": [
+-              "type"
+-            ],
+-            "title": "SessionFlagsConfigLayerSource",
+-            "type": "object"
++          "nextAction": {
++            "$ref": "#/definitions/v2/OrchestraBoundedText"
+           },
+-          {
+-            "description": "`managed_config.toml` was designed to be a config that was loaded as the last layer on top of everything else. This scheme did not quite work out as intended, but we keep this variant as a \"best effort\" while we phase out `managed_config.toml` in favor of `requirements.toml`.",
+-            "properties": {
+-              "file": {
+-                "$ref": "#/definitions/v2/AbsolutePathBuf"
+-              },
+-              "type": {
+-                "enum": [
+-                  "legacyManagedConfigTomlFromFile"
+-                ],
+-                "title": "LegacyManagedConfigTomlFromFileConfigLayerSourceType",
+-                "type": "string"
+-              }
+-            },
+-            "required": [
+-              "file",
+-              "type"
+-            ],
+-            "title": "LegacyManagedConfigTomlFromFileConfigLayerSource",
+-            "type": "object"
++          "ownerThreadId": {
++            "type": "string"
+           },
+-          {
+-            "properties": {
+-              "type": {
+-                "enum": [
+-                  "legacyManagedConfigTomlFromMdm"
+-                ],
+-                "title": "LegacyManagedConfigTomlFromMdmConfigLayerSourceType",
+-                "type": "string"
+-              }
+-            },
+-            "required": [
+-              "type"
+-            ],
+-            "title": "LegacyManagedConfigTomlFromMdmConfigLayerSource",
+-            "type": "object"
+-          }
+-        ]
+-      },
+-      "ConfigReadParams": {
+-        "$schema": "http://json-schema.org/draft-07/schema#",
+-        "properties": {
+-          "cwd": {
+-            "description": "Optional working directory to resolve project config layers. If specified, return the effective config as seen from that directory (i.e., including any project layers between `cwd` and the project/repo root).",
++          "pendingProfileDigest": {
+             "type": [
+               "string",
+               "null"
+             ]
+           },
+-          "includeLayers": {
+-            "type": "boolean"
+-          }
+-        },
+-        "title": "ConfigReadParams",
+-        "type": "object"
+-      },
+-      "ConfigReadResponse": {
+-        "$schema": "http://json-schema.org/draft-07/schema#",
+-        "properties": {
+-          "config": {
+-            "$ref": "#/definitions/v2/Config"
++          "profileDiagnostics": {
++            "items": {
++              "$ref": "#/definitions/v2/OrchestraBoundedText"
++            },
++            "type": "array"
+           },
+-          "layers": {
++          "profileDigest": {
++            "type": "string"
++          },
++          "profileRevision": {
++            "format": "uint64",
++            "minimum": 0.0,
++            "type": "integer"
++          },
++          "profileRevisionStatus": {
++            "$ref": "#/definitions/v2/AutomationProfileRevisionStatus"
++          },
++          "queueCounts": {
++            "$ref": "#/definitions/v2/AutomationQueueCounts"
++          },
++          "queuePreview": {
+             "items": {
+-              "$ref": "#/definitions/v2/ConfigLayer"
++              "$ref": "#/definitions/v2/AutomationQueueItemProjection"
+             },
++            "type": "array"
++          },
++          "queuePreviewTruncated": {
++            "type": "boolean"
++          },
++          "reconciliation": {
++            "$ref": "#/definitions/v2/AutomationReconciliationStatus"
++          },
++          "rejectedProfileDigest": {
+             "type": [
+-              "array",
++              "string",
+               "null"
+             ]
+           },
+-          "origins": {
+-            "additionalProperties": {
+-              "$ref": "#/definitions/v2/ConfigLayerMetadata"
+-            },
+-            "type": "object"
++          "revision": {
++            "format": "uint64",
++            "minimum": 0.0,
++            "type": "integer"
++          },
++          "runId": {
++            "type": "string"
++          },
++          "schemaVersion": {
++            "format": "uint32",
++            "minimum": 0.0,
++            "type": "integer"
++          },
++          "sourceRevision": {
++            "type": "string"
++          },
++          "status": {
++            "$ref": "#/definitions/v2/AutomationRootStatus"
++          },
++          "trackerProjectSlug": {
++            "type": "string"
++          }
++        },
++        "required": [
++          "claims",
++          "claimsTotal",
++          "leaseEpoch",
++          "nextAction",
++          "ownerThreadId",
++          "profileDiagnostics",
++          "profileDigest",
++          "profileRevision",
++          "profileRevisionStatus",
++          "queueCounts",
++          "queuePreview",
++          "queuePreviewTruncated",
++          "reconciliation",
++          "revision",
++          "runId",
++          "schemaVersion",
++          "sourceRevision",
++          "status",
++          "trackerProjectSlug"
++        ],
++        "type": "object"
++      },
++      "AutomationRunResponse": {
++        "$schema": "http://json-schema.org/draft-07/schema#",
++        "properties": {
++          "run": {
++            "$ref": "#/definitions/v2/AutomationRunProjection"
+           }
+         },
+         "required": [
+-          "config",
+-          "origins"
++          "run"
+         ],
+-        "title": "ConfigReadResponse",
++        "title": "AutomationRunResponse",
+         "type": "object"
+       },
+-      "ConfigRequirements": {
++      "AutomationSecretKind": {
++        "enum": [
++          "environment",
++          "inline_digest"
++        ],
++        "type": "string"
++      },
++      "AutomationSecretReference": {
+         "properties": {
+-          "allowAppshots": {
+-            "type": [
+-              "boolean",
+-              "null"
+-            ]
+-          },
+-          "allowManagedHooksOnly": {
+-            "type": [
+-              "boolean",
+-              "null"
+-            ]
++          "digest": {
++            "type": "string"
+           },
+-          "allowRemoteControl": {
+-            "type": [
+-              "boolean",
+-              "null"
+-            ]
++          "kind": {
++            "$ref": "#/definitions/v2/AutomationSecretKind"
+           },
+-          "allowedApprovalPolicies": {
++          "reference": {
++            "type": "string"
++          }
++        },
++        "required": [
++          "digest",
++          "kind",
++          "reference"
++        ],
++        "type": "object"
++      },
++      "AutomationTrackerProfile": {
++        "properties": {
++          "activeStates": {
+             "items": {
+-              "$ref": "#/definitions/v2/AskForApproval"
++              "type": "string"
+             },
+-            "type": [
+-              "array",
+-              "null"
+-            ]
++            "type": "array"
+           },
+-          "allowedPermissionProfiles": {
+-            "additionalProperties": {
+-              "type": "boolean"
+-            },
+-            "type": [
+-              "object",
+-              "null"
+-            ]
++          "credential": {
++            "$ref": "#/definitions/v2/AutomationSecretReference"
+           },
+-          "allowedSandboxModes": {
++          "endpoint": {
++            "type": "string"
++          },
++          "kind": {
++            "type": "string"
++          },
++          "projectSlug": {
++            "type": "string"
++          },
++          "requiredLabels": {
+             "items": {
+-              "$ref": "#/definitions/v2/SandboxMode"
++              "type": "string"
+             },
+-            "type": [
+-              "array",
+-              "null"
+-            ]
++            "type": "array"
+           },
+-          "allowedWebSearchModes": {
++          "terminalStates": {
+             "items": {
+-              "$ref": "#/definitions/v2/WebSearchMode"
++              "type": "string"
+             },
++            "type": "array"
++          }
++        },
++        "required": [
++          "activeStates",
++          "credential",
++          "endpoint",
++          "kind",
++          "projectSlug",
++          "requiredLabels",
++          "terminalStates"
++        ],
++        "type": "object"
++      },
++      "AutomationValidateParams": {
++        "$schema": "http://json-schema.org/draft-07/schema#",
++        "properties": {
++          "attempt": {
++            "format": "uint32",
++            "minimum": 0.0,
+             "type": [
+-              "array",
++              "integer",
+               "null"
+             ]
+           },
+-          "allowedWindowsSandboxImplementations": {
++          "fixtureIssue": {
++            "$ref": "#/definitions/v2/AutomationIssue"
++          },
++          "profilePath": {
++            "type": "string"
++          },
++          "threadId": {
++            "type": "string"
++          }
++        },
++        "required": [
++          "fixtureIssue",
++          "profilePath",
++          "threadId"
++        ],
++        "title": "AutomationValidateParams",
++        "type": "object"
++      },
++      "AutomationValidateResponse": {
++        "$schema": "http://json-schema.org/draft-07/schema#",
++        "properties": {
++          "diagnostics": {
+             "items": {
+-              "$ref": "#/definitions/v2/WindowsSandboxSetupMode"
++              "$ref": "#/definitions/v2/AutomationDiagnostic"
+             },
+-            "type": [
+-              "array",
+-              "null"
+-            ]
++            "type": "array"
+           },
+-          "computerUse": {
++          "preview": {
+             "anyOf": [
+               {
+-                "$ref": "#/definitions/v2/ComputerUseRequirements"
++                "$ref": "#/definitions/v2/AutomationWorkflowPreview"
+               },
+               {
+                 "type": "null"
+               }
+             ]
+           },
+-          "defaultPermissions": {
+-            "type": [
+-              "string",
+-              "null"
+-            ]
+-          },
+-          "enforceResidency": {
++          "profile": {
+             "anyOf": [
+               {
+-                "$ref": "#/definitions/v2/ResidencyRequirement"
++                "$ref": "#/definitions/v2/AutomationProfile"
+               },
+               {
+                 "type": "null"
+               }
+             ]
+           },
+-          "featureRequirements": {
+-            "additionalProperties": {
+-              "type": "boolean"
+-            },
++          "profileDigest": {
+             "type": [
+-              "object",
++              "string",
+               "null"
+             ]
+           },
+-          "models": {
+-            "anyOf": [
+-              {
+-                "$ref": "#/definitions/v2/ModelsRequirements"
+-              },
+-              {
+-                "type": "null"
+-              }
+-            ]
++          "valid": {
++            "type": "boolean"
+           }
+         },
++        "required": [
++          "diagnostics",
++          "valid"
++        ],
++        "title": "AutomationValidateResponse",
+         "type": "object"
+       },
+-      "ConfigRequirementsReadResponse": {
+-        "$schema": "http://json-schema.org/draft-07/schema#",
++      "AutomationValidationSeverity": {
++        "enum": [
++          "error",
++          "warning"
++        ],
++        "type": "string"
++      },
++      "AutomationWorkflowInput": {
+         "properties": {
+-          "requirements": {
+-            "anyOf": [
+-              {
+-                "$ref": "#/definitions/v2/ConfigRequirements"
+-              },
+-              {
+-                "type": "null"
+-              }
+-            ],
+-            "description": "Null if no requirements are configured (e.g. no requirements.toml/MDM entries)."
++          "default": true,
++          "kind": {
++            "$ref": "#/definitions/v2/AutomationWorkflowInputKind"
++          },
++          "name": {
++            "type": "string"
++          },
 +          "required": {
 +            "type": "boolean"
            }
          },
+-        "title": "ConfigRequirementsReadResponse",
 +        "required": [
 +          "kind",
 +          "name",
@@ -7393,7 +7797,7 @@ index 7c974ae4ae..130f7bbb02 100644
 +        ],
          "type": "object"
        },
--      "ConfigBatchWriteParams": {
+-      "ConfigValueWriteParams": {
 -        "$schema": "http://json-schema.org/draft-07/schema#",
 +      "AutomationWorkflowInputKind": {
 +        "enum": [
@@ -7408,15 +7812,13 @@ index 7c974ae4ae..130f7bbb02 100644
 +      },
 +      "AutomationWorkflowPreview": {
          "properties": {
--          "edits": {
-+          "effects": {
-             "items": {
--              "$ref": "#/definitions/v2/ConfigEdit"
-+              "$ref": "#/definitions/v2/AutomationEffect"
-             },
-             "type": "array"
-           },
 -          "expectedVersion": {
++          "effects": {
++            "items": {
++              "$ref": "#/definitions/v2/AutomationEffect"
++            },
++            "type": "array"
++          },
 +          "inputs": {
 +            "items": {
 +              "$ref": "#/definitions/v2/AutomationWorkflowInput"
@@ -7443,24 +7845,18 @@ index 7c974ae4ae..130f7bbb02 100644
                "null"
              ]
 -          },
--          "reloadUserConfig": {
--            "description": "When true, hot-reload the updated user config into all loaded threads after writing.",
--            "type": "boolean"
-           }
-         },
-         "required": [
--          "edits"
+-          "keyPath": {
++          }
++        },
++        "required": [
 +          "effects",
 +          "inputs",
 +          "secretReferences"
-         ],
--        "title": "ConfigBatchWriteParams",
-         "type": "object"
-       },
--      "ConfigEdit": {
++        ],
++        "type": "object"
++      },
 +      "AutomationWorkspaceProfile": {
-         "properties": {
--          "keyPath": {
++        "properties": {
 +          "root": {
              "type": "string"
 -          },
@@ -7476,76 +7872,112 @@ index 7c974ae4ae..130f7bbb02 100644
 -          "value"
 +          "root"
          ],
+-        "title": "ConfigValueWriteParams",
          "type": "object"
        },
--      "ConfigLayer": {
+-      "ConfigWarningNotification": {
+-        "$schema": "http://json-schema.org/draft-07/schema#",
 +      "ByteRange": {
          "properties": {
--          "config": true,
--          "disabledReason": {
+-          "details": {
+-            "description": "Optional extra guidance or error details.",
 -            "type": [
 -              "string",
 -              "null"
 -            ]
 -          },
--          "name": {
--            "$ref": "#/definitions/v2/ConfigLayerSource"
+-          "path": {
+-            "description": "Optional path to the config file that triggered the warning.",
+-            "type": [
+-              "string",
+-              "null"
+-            ]
+-          },
+-          "range": {
+-            "anyOf": [
+-              {
+-                "$ref": "#/definitions/v2/TextRange"
+-              },
+-              {
+-                "type": "null"
+-              }
+-            ],
+-            "description": "Optional range for the error location inside the config file."
 +          "end": {
 +            "format": "uint",
 +            "minimum": 0.0,
 +            "type": "integer"
            },
--          "version": {
--            "type": "string"
+-          "summary": {
+-            "description": "Concise summary of the warning.",
 +          "start": {
 +            "format": "uint",
 +            "minimum": 0.0,
 +            "type": "integer"
-           }
-         },
-         "required": [
--          "config",
--          "name",
--          "version"
++          }
++        },
++        "required": [
 +          "end",
 +          "start"
-         ],
-         "type": "object"
-       },
--      "ConfigLayerMetadata": {
++        ],
++        "type": "object"
++      },
 +      "CancelLoginAccountParams": {
 +        "$schema": "http://json-schema.org/draft-07/schema#",
-         "properties": {
--          "name": {
--            "$ref": "#/definitions/v2/ConfigLayerSource"
--          },
--          "version": {
++        "properties": {
 +          "loginId": {
              "type": "string"
            }
          },
          "required": [
--          "name",
--          "version"
+-          "summary"
 +          "loginId"
          ],
+-        "title": "ConfigWarningNotification",
 +        "title": "CancelLoginAccountParams",
          "type": "object"
        },
--      "ConfigLayerSource": {
+-      "ConfigWriteResponse": {
 +      "CancelLoginAccountResponse": {
-+        "$schema": "http://json-schema.org/draft-07/schema#",
-+        "properties": {
-+          "status": {
+         "$schema": "http://json-schema.org/draft-07/schema#",
+         "properties": {
+-          "filePath": {
+-            "allOf": [
+-              {
+-                "$ref": "#/definitions/v2/AbsolutePathBuf"
+-              }
+-            ],
+-            "description": "Canonical path to the config file that was written."
+-          },
+-          "overriddenMetadata": {
+-            "anyOf": [
+-              {
+-                "$ref": "#/definitions/v2/OverriddenMetadata"
+-              },
+-              {
+-                "type": "null"
+-              }
+-            ]
+-          },
+           "status": {
+-            "$ref": "#/definitions/v2/WriteStatus"
+-          },
+-          "version": {
+-            "type": "string"
 +            "$ref": "#/definitions/v2/CancelLoginAccountStatus"
-+          }
-+        },
-+        "required": [
+           }
+         },
+         "required": [
+-          "filePath",
+-          "status",
+-          "version"
 +          "status"
-+        ],
+         ],
+-        "title": "ConfigWriteResponse",
 +        "title": "CancelLoginAccountResponse",
-+        "type": "object"
-+      },
+         "type": "object"
+       },
+-      "ConfiguredHookHandler": {
 +      "CancelLoginAccountStatus": {
 +        "enum": [
 +          "canceled",
@@ -7557,94 +7989,65 @@ index 7c974ae4ae..130f7bbb02 100644
 +        "description": "Location used to resolve a selected capability root.",
          "oneOf": [
            {
--            "description": "Managed preferences layer delivered by MDM (macOS only).",
 +            "description": "A path owned by an execution environment.",
              "properties": {
--              "domain": {
--                "type": "string"
+-              "async": {
+-                "type": "boolean"
 -              },
--              "key": {
+-              "command": {
 +              "environmentId": {
                  "type": "string"
                },
--              "type": {
--                "enum": [
--                  "mdm"
--                ],
--                "title": "MdmConfigLayerSourceType",
+-              "commandWindows": {
+-                "type": [
+-                  "string",
+-                  "null"
+-                ]
+-              },
+-              "statusMessage": {
+-                "type": [
+-                  "string",
+-                  "null"
+-                ]
+-              },
+-              "timeoutSec": {
+-                "format": "uint64",
+-                "minimum": 0.0,
+-                "type": [
+-                  "integer",
+-                  "null"
+-                ]
 +              "path": {
 +                "description": "Absolute path for the root in the selected environment.",
-                 "type": "string"
--              }
--            },
--            "required": [
--              "domain",
--              "key",
--              "type"
--            ],
--            "title": "MdmConfigLayerSource",
--            "type": "object"
--          },
--          {
--            "description": "Managed config layer from a file (usually `managed_config.toml`).",
--            "properties": {
--              "file": {
--                "allOf": [
--                  {
--                    "$ref": "#/definitions/v2/AbsolutePathBuf"
--                  }
--                ],
--                "description": "This is the path to the system config.toml file, though it is not guaranteed to exist."
++                "type": "string"
                },
                "type": {
                  "enum": [
--                  "system"
+-                  "command"
 +                  "environment"
                  ],
--                "title": "SystemConfigLayerSourceType",
+-                "title": "CommandConfiguredHookHandlerType",
 +                "title": "EnvironmentCapabilityRootLocationType",
                  "type": "string"
                }
              },
              "required": [
--              "file",
+-              "async",
+-              "command",
 +              "environmentId",
 +              "path",
                "type"
              ],
--            "title": "SystemConfigLayerSource",
+-            "title": "CommandConfiguredHookHandler",
 +            "title": "EnvironmentCapabilityRootLocation",
              "type": "object"
--          },
 +          }
 +        ]
 +      },
 +      "CodexErrorInfo": {
 +        "description": "This translation layer make sure that we expose codex error code in camel case.\n\nWhen an upstream HTTP status is available (for example, from the Responses API or a provider), it is forwarded in `httpStatusCode` on the relevant `codexErrorInfo` variant.",
 +        "oneOf": [
-           {
--            "description": "Enterprise-managed config layer delivered by the cloud config bundle.",
--            "properties": {
--              "id": {
--                "description": "Stable identifier for the delivered layer.",
--                "type": "string"
--              },
--              "name": {
--                "description": "Admin-facing name for the delivered layer. This is surfaced in diagnostics so users know which cloud layer needs administrator attention.",
--                "type": "string"
--              },
--              "type": {
--                "enum": [
--                  "enterpriseManaged"
--                ],
--                "title": "EnterpriseManagedConfigLayerSourceType",
--                "type": "string"
--              }
--            },
--            "required": [
--              "id",
--              "name",
--              "type"
++          {
 +            "enum": [
 +              "contextWindowExceeded",
 +              "sessionBudgetExceeded",
@@ -7657,19 +8060,18 @@ index 7c974ae4ae..130f7bbb02 100644
 +              "threadRollbackFailed",
 +              "sandboxError",
 +              "other"
-             ],
--            "title": "EnterpriseManagedConfigLayerSource",
--            "type": "object"
++            ],
 +            "type": "string"
            },
            {
--            "description": "User config layer from $CODEX_HOME/config.toml. This layer is special in that it is expected to be: - writable by the user - generally outside the workspace directory",
 +            "additionalProperties": false,
              "properties": {
--              "file": {
--                "allOf": [
--                  {
--                    "$ref": "#/definitions/v2/AbsolutePathBuf"
+-              "type": {
+-                "enum": [
+-                  "prompt"
+-                ],
+-                "title": "PromptConfiguredHookHandlerType",
+-                "type": "string"
 +              "httpConnectionFailed": {
 +                "properties": {
 +                  "httpStatusCode": {
@@ -7679,49 +8081,28 @@ index 7c974ae4ae..130f7bbb02 100644
 +                      "integer",
 +                      "null"
 +                    ]
-                   }
--                ],
--                "description": "This is the path to the user's config.toml file, though it is not guaranteed to exist."
--              },
--              "profile": {
--                "description": "Name of the selected profile-v2 config layered on top of the base user config, when this layer represents one.",
--                "type": [
--                  "string",
--                  "null"
--                ]
--              },
--              "type": {
--                "enum": [
--                  "user"
--                ],
--                "title": "UserConfigLayerSourceType",
--                "type": "string"
++                  }
 +                },
 +                "type": "object"
                }
              },
              "required": [
--              "file",
 -              "type"
 +              "httpConnectionFailed"
              ],
--            "title": "UserConfigLayerSource",
+-            "title": "PromptConfiguredHookHandler",
 +            "title": "HttpConnectionFailedCodexErrorInfo",
              "type": "object"
            },
            {
--            "description": "Path to a .codex/ folder within a project. There could be multiple of these between `cwd` and the project/repo root.",
 +            "additionalProperties": false,
 +            "description": "Failed to connect to the response SSE stream.",
              "properties": {
--              "dotCodexFolder": {
--                "$ref": "#/definitions/v2/AbsolutePathBuf"
--              },
 -              "type": {
 -                "enum": [
--                  "project"
+-                  "agent"
 -                ],
--                "title": "ProjectConfigLayerSourceType",
+-                "title": "AgentConfiguredHookHandlerType",
 -                "type": "string"
 +              "responseStreamConnectionFailed": {
 +                "properties": {
@@ -7738,25 +8119,58 @@ index 7c974ae4ae..130f7bbb02 100644
                }
              },
              "required": [
--              "dotCodexFolder",
 -              "type"
 +              "responseStreamConnectionFailed"
              ],
--            "title": "ProjectConfigLayerSource",
+-            "title": "AgentConfiguredHookHandler",
 +            "title": "ResponseStreamConnectionFailedCodexErrorInfo",
              "type": "object"
+-          }
+-        ]
+-      },
+-      "ConfiguredHookMatcherGroup": {
+-        "properties": {
+-          "hooks": {
+-            "items": {
+-              "$ref": "#/definitions/v2/ConfiguredHookHandler"
+-            },
+-            "type": "array"
+-          },
+-          "matcher": {
+-            "type": [
+-              "string",
+-              "null"
+-            ]
+-          }
+-        },
+-        "required": [
+-          "hooks"
+-        ],
+-        "type": "object"
+-      },
+-      "ConsumeAccountRateLimitResetCreditOutcome": {
+-        "oneOf": [
+-          {
+-            "description": "A reset credit was consumed and the eligible rate-limit windows were reset.",
+-            "enum": [
+-              "reset"
+-            ],
+-            "type": "string"
            },
            {
--            "description": "Session-layer overrides supplied via `-c`/`--config`.",
+-            "description": "No current rate-limit window is eligible for a reset.",
+-            "enum": [
+-              "nothingToReset"
+-            ],
+-            "type": "string"
+-          },
+-          {
+-            "description": "The account has no earned reset credits available.",
+-            "enum": [
+-              "noCredit"
 +            "additionalProperties": false,
 +            "description": "The response SSE stream disconnected in the middle of a turn before completion.",
-             "properties": {
--              "type": {
--                "enum": [
--                  "sessionFlags"
--                ],
--                "title": "SessionFlagsConfigLayerSourceType",
--                "type": "string"
++            "properties": {
 +              "responseStreamDisconnected": {
 +                "properties": {
 +                  "httpStatusCode": {
@@ -7769,30 +8183,22 @@ index 7c974ae4ae..130f7bbb02 100644
 +                  }
 +                },
 +                "type": "object"
-               }
-             },
-             "required": [
--              "type"
++              }
++            },
++            "required": [
 +              "responseStreamDisconnected"
              ],
--            "title": "SessionFlagsConfigLayerSource",
+-            "type": "string"
 +            "title": "ResponseStreamDisconnectedCodexErrorInfo",
-             "type": "object"
++            "type": "object"
            },
            {
--            "description": "`managed_config.toml` was designed to be a config that was loaded as the last layer on top of everything else. This scheme did not quite work out as intended, but we keep this variant as a \"best effort\" while we phase out `managed_config.toml` in favor of `requirements.toml`.",
+-            "description": "The same idempotency key already completed a reset successfully.",
+-            "enum": [
+-              "alreadyRedeemed"
 +            "additionalProperties": false,
 +            "description": "Reached the retry limit for responses.",
-             "properties": {
--              "file": {
--                "$ref": "#/definitions/v2/AbsolutePathBuf"
--              },
--              "type": {
--                "enum": [
--                  "legacyManagedConfigTomlFromFile"
--                ],
--                "title": "LegacyManagedConfigTomlFromFileConfigLayerSourceType",
--                "type": "string"
++            "properties": {
 +              "responseTooManyFailedAttempts": {
 +                "properties": {
 +                  "httpStatusCode": {
@@ -7805,24 +8211,19 @@ index 7c974ae4ae..130f7bbb02 100644
 +                  }
 +                },
 +                "type": "object"
-               }
-             },
-             "required": [
--              "file",
--              "type"
++              }
++            },
++            "required": [
 +              "responseTooManyFailedAttempts"
              ],
--            "title": "LegacyManagedConfigTomlFromFileConfigLayerSource",
+-            "type": "string"
 +            "title": "ResponseTooManyFailedAttemptsCodexErrorInfo",
-             "type": "object"
-           },
-           {
++            "type": "object"
++          },
++          {
 +            "additionalProperties": false,
 +            "description": "Returned when `turn/start` or `turn/steer` is submitted while the current active turn cannot accept same-turn steering, for example `/review` or manual `/compact`.",
-             "properties": {
--              "type": {
--                "enum": [
--                  "legacyManagedConfigTomlFromMdm"
++            "properties": {
 +              "activeTurnNotSteerable": {
 +                "properties": {
 +                  "turnKind": {
@@ -7831,47 +8232,45 @@ index 7c974ae4ae..130f7bbb02 100644
 +                },
 +                "required": [
 +                  "turnKind"
-                 ],
--                "title": "LegacyManagedConfigTomlFromMdmConfigLayerSourceType",
--                "type": "string"
++                ],
 +                "type": "object"
-               }
-             },
-             "required": [
--              "type"
++              }
++            },
++            "required": [
 +              "activeTurnNotSteerable"
-             ],
--            "title": "LegacyManagedConfigTomlFromMdmConfigLayerSource",
++            ],
 +            "title": "ActiveTurnNotSteerableCodexErrorInfo",
-             "type": "object"
++            "type": "object"
            }
          ]
        },
--      "ConfigReadParams": {
+-      "ConsumeAccountRateLimitResetCreditParams": {
 -        "$schema": "http://json-schema.org/draft-07/schema#",
 +      "CollabAgentState": {
          "properties": {
--          "cwd": {
--            "description": "Optional working directory to resolve project config layers. If specified, return the effective config as seen from that directory (i.e., including any project layers between `cwd` and the project/repo root).",
+-          "creditId": {
+-            "description": "Opaque reset-credit identifier to redeem. When omitted, the backend selects the next available credit.",
 +          "message": {
              "type": [
                "string",
                "null"
              ]
            },
--          "includeLayers": {
--            "type": "boolean"
+-          "idempotencyKey": {
+-            "description": "Identifies one logical reset attempt. A UUID is recommended; reuse the same value when retrying that attempt.",
+-            "type": "string"
 +          "status": {
 +            "$ref": "#/definitions/v2/CollabAgentStatus"
            }
          },
--        "title": "ConfigReadParams",
-+        "required": [
+         "required": [
+-          "idempotencyKey"
 +          "status"
-+        ],
+         ],
+-        "title": "ConsumeAccountRateLimitResetCreditParams",
          "type": "object"
        },
--      "ConfigReadResponse": {
+-      "ConsumeAccountRateLimitResetCreditResponse": {
 -        "$schema": "http://json-schema.org/draft-07/schema#",
 +      "CollabAgentStatus": {
 +        "enum": [
@@ -7906,150 +8305,49 @@ index 7c974ae4ae..130f7bbb02 100644
 +      "CollaborationMode": {
 +        "description": "Collaboration mode for a Codex session.",
          "properties": {
--          "config": {
--            "$ref": "#/definitions/v2/Config"
--          },
--          "layers": {
--            "items": {
--              "$ref": "#/definitions/v2/ConfigLayer"
--            },
--            "type": [
--              "array",
--              "null"
--            ]
+-          "outcome": {
+-            "$ref": "#/definitions/v2/ConsumeAccountRateLimitResetCreditOutcome"
 +          "mode": {
 +            "$ref": "#/definitions/v2/ModeKind"
-           },
--          "origins": {
--            "additionalProperties": {
--              "$ref": "#/definitions/v2/ConfigLayerMetadata"
--            },
--            "type": "object"
++          },
 +          "settings": {
 +            "$ref": "#/definitions/v2/Settings"
            }
          },
          "required": [
--          "config",
--          "origins"
+-          "outcome"
 +          "mode",
 +          "settings"
          ],
--        "title": "ConfigReadResponse",
+-        "title": "ConsumeAccountRateLimitResetCreditResponse",
          "type": "object"
        },
--      "ConfigRequirements": {
+-      "ContentItem": {
 +      "CollaborationModeMask": {
 +        "description": "EXPERIMENTAL - collaboration mode preset metadata for clients.",
-         "properties": {
--          "allowAppshots": {
--            "type": [
--              "boolean",
--              "null"
--            ]
--          },
--          "allowManagedHooksOnly": {
--            "type": [
--              "boolean",
--              "null"
--            ]
--          },
--          "allowRemoteControl": {
--            "type": [
--              "boolean",
--              "null"
--            ]
--          },
--          "allowedApprovalPolicies": {
--            "items": {
--              "$ref": "#/definitions/v2/AskForApproval"
--            },
--            "type": [
--              "array",
--              "null"
--            ]
--          },
--          "allowedPermissionProfiles": {
--            "additionalProperties": {
--              "type": "boolean"
--            },
--            "type": [
--              "object",
--              "null"
--            ]
--          },
--          "allowedSandboxModes": {
--            "items": {
--              "$ref": "#/definitions/v2/SandboxMode"
--            },
--            "type": [
--              "array",
--              "null"
--            ]
--          },
--          "allowedWebSearchModes": {
--            "items": {
--              "$ref": "#/definitions/v2/WebSearchMode"
--            },
--            "type": [
--              "array",
--              "null"
--            ]
--          },
--          "allowedWindowsSandboxImplementations": {
--            "items": {
--              "$ref": "#/definitions/v2/WindowsSandboxSetupMode"
--            },
--            "type": [
--              "array",
--              "null"
--            ]
--          },
--          "computerUse": {
++        "properties": {
 +          "mode": {
-             "anyOf": [
-               {
--                "$ref": "#/definitions/v2/ComputerUseRequirements"
++            "anyOf": [
++              {
 +                "$ref": "#/definitions/v2/ModeKind"
-               },
-               {
-                 "type": "null"
-               }
-             ]
-           },
--          "defaultPermissions": {
++              },
++              {
++                "type": "null"
++              }
++            ]
++          },
 +          "model": {
-             "type": [
-               "string",
-               "null"
-             ]
-           },
--          "enforceResidency": {
--            "anyOf": [
--              {
--                "$ref": "#/definitions/v2/ResidencyRequirement"
--              },
--              {
--                "type": "null"
--              }
--            ]
--          },
--          "featureRequirements": {
--            "additionalProperties": {
--              "type": "boolean"
--            },
--            "type": [
--              "object",
--              "null"
--            ]
++            "type": [
++              "string",
++              "null"
++            ]
++          },
 +          "name": {
 +            "type": "string"
-           },
--          "models": {
++          },
 +          "reasoning_effort": {
-             "anyOf": [
-               {
--                "$ref": "#/definitions/v2/ModelsRequirements"
++            "anyOf": [
++              {
 +                "anyOf": [
 +                  {
 +                    "$ref": "#/definitions/v2/ReasoningEffort"
@@ -8058,80 +8356,88 @@ index 7c974ae4ae..130f7bbb02 100644
 +                    "type": "null"
 +                  }
 +                ]
-               },
-               {
-                 "type": "null"
-@@ -8441,1844 +9019,1403 @@
-             ]
-           }
-         },
++              },
++              {
++                "type": "null"
++              }
++            ]
++          }
++        },
 +        "required": [
 +          "name"
 +        ],
-         "type": "object"
-       },
--      "ConfigRequirementsReadResponse": {
--        "$schema": "http://json-schema.org/draft-07/schema#",
--        "properties": {
--          "requirements": {
--            "anyOf": [
--              {
--                "$ref": "#/definitions/v2/ConfigRequirements"
++        "type": "object"
++      },
 +      "CommandAction": {
-+        "oneOf": [
-+          {
-+            "properties": {
+         "oneOf": [
+           {
+             "properties": {
+-              "text": {
 +              "command": {
 +                "type": "string"
-               },
--              {
--                "type": "null"
-+              "name": {
-+                "type": "string"
 +              },
++              "name": {
+                 "type": "string"
+               },
 +              "path": {
 +                "$ref": "#/definitions/v2/AbsolutePathBuf"
 +              },
-+              "type": {
-+                "enum": [
+               "type": {
+                 "enum": [
+-                  "input_text"
 +                  "read"
-+                ],
+                 ],
+-                "title": "InputTextContentItemType",
 +                "title": "ReadCommandActionType",
-+                "type": "string"
+                 "type": "string"
                }
-+            },
-+            "required": [
+             },
+             "required": [
+-              "text",
 +              "command",
 +              "name",
 +              "path",
-+              "type"
+               "type"
              ],
--            "description": "Null if no requirements are configured (e.g. no requirements.toml/MDM entries)."
--          }
--        },
--        "title": "ConfigRequirementsReadResponse",
--        "type": "object"
--      },
--      "ConfigValueWriteParams": {
--        "$schema": "http://json-schema.org/draft-07/schema#",
--        "properties": {
--          "expectedVersion": {
--            "type": [
--              "string",
--              "null"
--            ]
--          },
--          "filePath": {
--            "description": "Path to the config file to write; defaults to the user's `config.toml` when omitted.",
--            "type": [
--              "string",
--              "null"
--            ]
+-            "title": "InputTextContentItem",
 +            "title": "ReadCommandAction",
-+            "type": "object"
+             "type": "object"
            },
--          "keyPath": {
--            "type": "string"
+           {
+             "properties": {
+-              "detail": {
+-                "anyOf": [
+-                  {
+-                    "$ref": "#/definitions/v2/ImageDetail"
+-                  },
+-                  {
+-                    "type": "null"
+-                  }
++              "command": {
++                "type": "string"
++              },
++              "path": {
++                "type": [
++                  "string",
++                  "null"
+                 ]
+               },
+-              "image_url": {
++              "type": {
++                "enum": [
++                  "listFiles"
++                ],
++                "title": "ListFilesCommandActionType",
+                 "type": "string"
++              }
++            },
++            "required": [
++              "command",
++              "type"
++            ],
++            "title": "ListFilesCommandAction",
++            "type": "object"
++          },
 +          {
 +            "properties": {
 +              "command": {
@@ -8143,226 +8449,84 @@ index 7c974ae4ae..130f7bbb02 100644
 +                  "null"
 +                ]
 +              },
-+              "type": {
-+                "enum": [
-+                  "listFiles"
-+                ],
-+                "title": "ListFilesCommandActionType",
-+                "type": "string"
-+              }
-+            },
-+            "required": [
-+              "command",
-+              "type"
-+            ],
-+            "title": "ListFilesCommandAction",
-+            "type": "object"
-           },
--          "mergeStrategy": {
--            "$ref": "#/definitions/v2/MergeStrategy"
--          },
--          "value": true
--        },
--        "required": [
--          "keyPath",
--          "mergeStrategy",
--          "value"
--        ],
--        "title": "ConfigValueWriteParams",
--        "type": "object"
--      },
--      "ConfigWarningNotification": {
--        "$schema": "http://json-schema.org/draft-07/schema#",
--        "properties": {
--          "details": {
--            "description": "Optional extra guidance or error details.",
--            "type": [
--              "string",
--              "null"
--            ]
--          },
--          "path": {
--            "description": "Optional path to the config file that triggered the warning.",
--            "type": [
--              "string",
--              "null"
--            ]
--          },
--          "range": {
--            "anyOf": [
--              {
--                "$ref": "#/definitions/v2/TextRange"
--              },
--              {
--                "type": "null"
--              }
--            ],
--            "description": "Optional range for the error location inside the config file."
--          },
--          "summary": {
--            "description": "Concise summary of the warning.",
--            "type": "string"
--          }
--        },
--        "required": [
--          "summary"
--        ],
--        "title": "ConfigWarningNotification",
--        "type": "object"
--      },
--      "ConfigWriteResponse": {
--        "$schema": "http://json-schema.org/draft-07/schema#",
--        "properties": {
--          "filePath": {
--            "allOf": [
--              {
--                "$ref": "#/definitions/v2/AbsolutePathBuf"
--              }
--            ],
--            "description": "Canonical path to the config file that was written."
--          },
--          "overriddenMetadata": {
--            "anyOf": [
--              {
--                "$ref": "#/definitions/v2/OverriddenMetadata"
--              },
--              {
--                "type": "null"
--              }
--            ]
--          },
--          "status": {
--            "$ref": "#/definitions/v2/WriteStatus"
--          },
--          "version": {
--            "type": "string"
--          }
--        },
--        "required": [
--          "filePath",
--          "status",
--          "version"
--        ],
--        "title": "ConfigWriteResponse",
--        "type": "object"
--      },
--      "ConfiguredHookHandler": {
--        "oneOf": [
-           {
-             "properties": {
--              "async": {
--                "type": "boolean"
--              },
-               "command": {
-                 "type": "string"
-               },
--              "commandWindows": {
-+              "path": {
-                 "type": [
-                   "string",
-                   "null"
-                 ]
-               },
--              "statusMessage": {
 +              "query": {
-                 "type": [
-                   "string",
-                   "null"
-                 ]
++                "type": [
++                  "string",
++                  "null"
++                ]
                },
--              "timeoutSec": {
--                "format": "uint64",
--                "minimum": 0.0,
--                "type": [
--                  "integer",
--                  "null"
--                ]
--              },
                "type": {
                  "enum": [
--                  "command"
+-                  "input_image"
 +                  "search"
                  ],
--                "title": "CommandConfiguredHookHandlerType",
+-                "title": "InputImageContentItemType",
 +                "title": "SearchCommandActionType",
                  "type": "string"
                }
              },
              "required": [
--              "async",
-               "command",
+-              "image_url",
++              "command",
                "type"
              ],
--            "title": "CommandConfiguredHookHandler",
+-            "title": "InputImageContentItem",
 +            "title": "SearchCommandAction",
              "type": "object"
            },
            {
              "properties": {
--              "type": {
--                "enum": [
--                  "prompt"
--                ],
--                "title": "PromptConfiguredHookHandlerType",
+-              "text": {
 +              "command": {
                  "type": "string"
--              }
--            },
--            "required": [
--              "type"
--            ],
--            "title": "PromptConfiguredHookHandler",
--            "type": "object"
--          },
--          {
--            "properties": {
-+              },
+               },
                "type": {
                  "enum": [
--                  "agent"
+-                  "output_text"
 +                  "unknown"
                  ],
--                "title": "AgentConfiguredHookHandlerType",
+-                "title": "OutputTextContentItemType",
 +                "title": "UnknownCommandActionType",
                  "type": "string"
                }
              },
              "required": [
+-              "text",
 +              "command",
                "type"
              ],
--            "title": "AgentConfiguredHookHandler",
+-            "title": "OutputTextContentItem",
 +            "title": "UnknownCommandAction",
              "type": "object"
            }
          ]
        },
--      "ConfiguredHookMatcherGroup": {
+-      "ContextCompactedNotification": {
 +      "CommandExecOutputDeltaNotification": {
-+        "$schema": "http://json-schema.org/draft-07/schema#",
+         "$schema": "http://json-schema.org/draft-07/schema#",
+-        "description": "Deprecated: Use `ContextCompaction` item type instead.",
 +        "description": "Base64-encoded output chunk emitted for a streaming `command/exec` request.\n\nThese notifications are connection-scoped. If the originating connection closes, the server terminates the process.",
          "properties": {
--          "hooks": {
--            "items": {
--              "$ref": "#/definitions/v2/ConfiguredHookHandler"
--            },
--            "type": "array"
+-          "threadId": {
 +          "capReached": {
 +            "description": "`true` on the final streamed chunk for a stream when `outputBytesCap` truncated later output on that stream.",
 +            "type": "boolean"
-           },
--          "matcher": {
--            "type": [
--              "string",
--              "null"
--            ]
++          },
 +          "deltaBase64": {
 +            "description": "Base64-encoded output bytes.",
-+            "type": "string"
-+          },
+             "type": "string"
+           },
+-          "turnId": {
 +          "processId": {
 +            "description": "Client-supplied, connection-scoped `processId` from the original `command/exec` request.",
-+            "type": "string"
+             "type": "string"
+-          }
+-        },
+-        "required": [
+-          "threadId",
+-          "turnId"
+-        ],
+-        "title": "ContextCompactedNotification",
 +          },
 +          "stream": {
 +            "allOf": [
@@ -8371,63 +8535,49 @@ index 7c974ae4ae..130f7bbb02 100644
 +              }
 +            ],
 +            "description": "Output stream for this chunk."
-           }
-         },
-         "required": [
--          "hooks"
++          }
++        },
++        "required": [
 +          "capReached",
 +          "deltaBase64",
 +          "processId",
 +          "stream"
-         ],
++        ],
 +        "title": "CommandExecOutputDeltaNotification",
          "type": "object"
        },
--      "ConsumeAccountRateLimitResetCreditOutcome": {
+-      "ConversationTextRole": {
+-        "enum": [
+-          "user",
+-          "developer",
+-          "assistant"
+-        ],
+-        "type": "string"
 +      "CommandExecOutputStream": {
 +        "description": "Stream label for `command/exec/outputDelta` notifications.",
-         "oneOf": [
-           {
--            "description": "A reset credit was consumed and the eligible rate-limit windows were reset.",
--            "enum": [
--              "reset"
--            ],
--            "type": "string"
--          },
--          {
--            "description": "No current rate-limit window is eligible for a reset.",
--            "enum": [
--              "nothingToReset"
--            ],
--            "type": "string"
--          },
--          {
--            "description": "The account has no earned reset credits available.",
++        "oneOf": [
++          {
 +            "description": "stdout stream. PTY mode multiplexes terminal output here.",
-             "enum": [
--              "noCredit"
++            "enum": [
 +              "stdout"
-             ],
-             "type": "string"
-           },
-           {
--            "description": "The same idempotency key already completed a reset successfully.",
++            ],
++            "type": "string"
++          },
++          {
 +            "description": "stderr stream.",
-             "enum": [
--              "alreadyRedeemed"
++            "enum": [
 +              "stderr"
-             ],
-             "type": "string"
-           }
-         ]
++            ],
++            "type": "string"
++          }
++        ]
        },
--      "ConsumeAccountRateLimitResetCreditParams": {
+-      "CreditsSnapshot": {
 +      "CommandExecParams": {
-         "$schema": "http://json-schema.org/draft-07/schema#",
++        "$schema": "http://json-schema.org/draft-07/schema#",
 +        "description": "Run a standalone command (argv vector) in the server sandbox without creating a thread or turn.\n\nThe final `command/exec` response is deferred until the process exits and is sent only after all `command/exec/outputDelta` notifications for that connection have been emitted.",
          "properties": {
--          "creditId": {
--            "description": "Opaque reset-credit identifier to redeem. When omitted, the backend selects the next available credit.",
+-          "balance": {
 +          "command": {
 +            "description": "Command argv vector. Empty arrays are rejected.",
 +            "items": {
@@ -8442,69 +8592,12 @@ index 7c974ae4ae..130f7bbb02 100644
                "null"
              ]
            },
--          "idempotencyKey": {
--            "description": "Identifies one logical reset attempt. A UUID is recommended; reuse the same value when retrying that attempt.",
--            "type": "string"
--          }
--        },
--        "required": [
--          "idempotencyKey"
--        ],
--        "title": "ConsumeAccountRateLimitResetCreditParams",
--        "type": "object"
--      },
--      "ConsumeAccountRateLimitResetCreditResponse": {
--        "$schema": "http://json-schema.org/draft-07/schema#",
--        "properties": {
--          "outcome": {
--            "$ref": "#/definitions/v2/ConsumeAccountRateLimitResetCreditOutcome"
--          }
--        },
--        "required": [
--          "outcome"
--        ],
--        "title": "ConsumeAccountRateLimitResetCreditResponse",
--        "type": "object"
--      },
--      "ContentItem": {
--        "oneOf": [
--          {
--            "properties": {
--              "text": {
--                "type": "string"
--              },
--              "type": {
--                "enum": [
--                  "input_text"
--                ],
--                "title": "InputTextContentItemType",
--                "type": "string"
--              }
--            },
--            "required": [
--              "text",
--              "type"
--            ],
--            "title": "InputTextContentItem",
--            "type": "object"
+-          "hasCredits": {
 +          "disableOutputCap": {
 +            "description": "Disable stdout/stderr capture truncation for this request.\n\nCannot be combined with `outputBytesCap`.",
-+            "type": "boolean"
+             "type": "boolean"
            },
--          {
--            "properties": {
--              "detail": {
--                "anyOf": [
--                  {
--                    "$ref": "#/definitions/v2/ImageDetail"
--                  },
--                  {
--                    "type": "null"
--                  }
--                ]
--              },
--              "image_url": {
--                "type": "string"
+-          "unlimited": {
 +          "disableTimeout": {
 +            "description": "Disable the timeout entirely for this request.\n\nCannot be combined with `timeoutMs`.",
 +            "type": "boolean"
@@ -8542,50 +8635,22 @@ index 7c974ae4ae..130f7bbb02 100644
 +            "anyOf": [
 +              {
 +                "$ref": "#/definitions/v2/SandboxPolicy"
-               },
--              "type": {
--                "enum": [
--                  "input_image"
--                ],
--                "title": "InputImageContentItemType",
--                "type": "string"
++              },
 +              {
 +                "type": "null"
-               }
--            },
--            "required": [
--              "image_url",
--              "type"
-             ],
--            "title": "InputImageContentItem",
--            "type": "object"
++              }
++            ],
 +            "description": "Optional sandbox policy for this command.\n\nUses the same shape as thread/turn execution sandbox configuration and defaults to the user's configured policy when omitted. Cannot be combined with `permissionProfile`."
-           },
--          {
--            "properties": {
--              "text": {
--                "type": "string"
++          },
 +          "size": {
 +            "anyOf": [
 +              {
 +                "$ref": "#/definitions/v2/CommandExecTerminalSize"
-               },
--              "type": {
--                "enum": [
--                  "output_text"
--                ],
--                "title": "OutputTextContentItemType",
--                "type": "string"
++              },
 +              {
 +                "type": "null"
-               }
--            },
--            "required": [
--              "text",
--              "type"
-             ],
--            "title": "OutputTextContentItem",
--            "type": "object"
++              }
++            ],
 +            "description": "Optional initial PTY size in character cells. Only valid when `tty` is true."
 +          },
 +          "streamStdin": {
@@ -8606,29 +8671,28 @@ index 7c974ae4ae..130f7bbb02 100644
 +          },
 +          "tty": {
 +            "description": "Enable PTY mode.\n\nThis implies `streamStdin` and `streamStdoutStderr`.",
-+            "type": "boolean"
+             "type": "boolean"
            }
--        ]
-+        },
-+        "required": [
+         },
+         "required": [
+-          "hasCredits",
+-          "unlimited"
 +          "command"
-+        ],
+         ],
 +        "title": "CommandExecParams",
-+        "type": "object"
+         "type": "object"
        },
--      "ContextCompactedNotification": {
+-      "DeprecationNoticeNotification": {
 +      "CommandExecResizeParams": {
          "$schema": "http://json-schema.org/draft-07/schema#",
--        "description": "Deprecated: Use `ContextCompaction` item type instead.",
 +        "description": "Resize a running PTY-backed `command/exec` session.",
          "properties": {
--          "threadId": {
+-          "details": {
+-            "description": "Optional extra guidance, such as migration steps or rationale.",
 +          "processId": {
 +            "description": "Client-supplied, connection-scoped `processId` from the original `command/exec` request.",
-             "type": "string"
-           },
--          "turnId": {
--            "type": "string"
++            "type": "string"
++          },
 +          "size": {
 +            "allOf": [
 +              {
@@ -8636,70 +8700,47 @@ index 7c974ae4ae..130f7bbb02 100644
 +              }
 +            ],
 +            "description": "New PTY size in character cells."
-           }
-         },
-         "required": [
--          "threadId",
--          "turnId"
++          }
++        },
++        "required": [
 +          "processId",
 +          "size"
-         ],
--        "title": "ContextCompactedNotification",
++        ],
 +        "title": "CommandExecResizeParams",
-         "type": "object"
-       },
--      "ConversationTextRole": {
--        "enum": [
--          "user",
--          "developer",
--          "assistant"
--        ],
--        "type": "string"
++        "type": "object"
++      },
 +      "CommandExecResizeResponse": {
 +        "$schema": "http://json-schema.org/draft-07/schema#",
 +        "description": "Empty success response for `command/exec/resize`.",
 +        "title": "CommandExecResizeResponse",
 +        "type": "object"
-       },
--      "CreditsSnapshot": {
++      },
 +      "CommandExecResponse": {
 +        "$schema": "http://json-schema.org/draft-07/schema#",
 +        "description": "Final buffered result for `command/exec`.",
-         "properties": {
--          "balance": {
--            "type": [
--              "string",
--              "null"
--            ]
++        "properties": {
 +          "exitCode": {
 +            "description": "Process exit code.",
 +            "format": "int32",
 +            "type": "integer"
-           },
--          "hasCredits": {
--            "type": "boolean"
++          },
 +          "stderr": {
 +            "description": "Buffered stderr capture.\n\nEmpty when stderr was streamed via `command/exec/outputDelta`.",
 +            "type": "string"
-           },
--          "unlimited": {
--            "type": "boolean"
++          },
 +          "stdout": {
 +            "description": "Buffered stdout capture.\n\nEmpty when stdout was streamed via `command/exec/outputDelta`.",
 +            "type": "string"
-           }
-         },
-         "required": [
--          "hasCredits",
--          "unlimited"
++          }
++        },
++        "required": [
 +          "exitCode",
 +          "stderr",
 +          "stdout"
-         ],
++        ],
 +        "title": "CommandExecResponse",
-         "type": "object"
-       },
--      "DeprecationNoticeNotification": {
++        "type": "object"
++      },
 +      "CommandExecTerminalSize": {
 +        "description": "PTY size in character cells for `command/exec` PTY sessions.",
 +        "properties": {
@@ -8723,11 +8764,9 @@ index 7c974ae4ae..130f7bbb02 100644
 +        "type": "object"
 +      },
 +      "CommandExecTerminateParams": {
-         "$schema": "http://json-schema.org/draft-07/schema#",
++        "$schema": "http://json-schema.org/draft-07/schema#",
 +        "description": "Terminate a running `command/exec` session.",
-         "properties": {
--          "details": {
--            "description": "Optional extra guidance, such as migration steps or rationale.",
++        "properties": {
 +          "processId": {
 +            "description": "Client-supplied, connection-scoped `processId` from the original `command/exec` request.",
 +            "type": "string"
@@ -9988,15 +10027,13 @@ index 7c974ae4ae..130f7bbb02 100644
 +            "description": "`managed_config.toml` was designed to be a config that was loaded as the last layer on top of everything else. This scheme did not quite work out as intended, but we keep this variant as a \"best effort\" while we phase out `managed_config.toml` in favor of `requirements.toml`.",
              "properties": {
 -              "kind": {
-+              "file": {
-+                "$ref": "#/definitions/v2/AbsolutePathBuf"
-+              },
-+              "type": {
-                 "enum": [
+-                "enum": [
 -                  "project_roots"
 -                ],
 -                "type": "string"
--              },
++              "file": {
++                "$ref": "#/definitions/v2/AbsolutePathBuf"
+               },
 -              "subpath": {
 -                "anyOf": [
 -                  {
@@ -10032,7 +10069,8 @@ index 7c974ae4ae..130f7bbb02 100644
 -          {
 -            "properties": {
 -              "kind": {
--                "enum": [
++              "type": {
+                 "enum": [
 -                  "slash_tmp"
 +                  "legacyManagedConfigTomlFromFile"
                  ],
@@ -10085,35 +10123,24 @@ index 7c974ae4ae..130f7bbb02 100644
          ]
        },
 -      "FileUpdateChange": {
-+      "ConfigReadParams": {
-+        "$schema": "http://json-schema.org/draft-07/schema#",
-         "properties": {
+-        "properties": {
 -          "diff": {
 -            "type": "string"
 -          },
 -          "kind": {
 -            "$ref": "#/definitions/v2/PatchChangeKind"
-+          "cwd": {
-+            "description": "Optional working directory to resolve project config layers. If specified, return the effective config as seen from that directory (i.e., including any project layers between `cwd` and the project/repo root).",
-+            "type": [
-+              "string",
-+              "null"
-+            ]
-           },
+-          },
 -          "path": {
 -            "type": "string"
-+          "includeLayers": {
-+            "type": "boolean"
-           }
-         },
+-          }
+-        },
 -        "required": [
 -          "diff",
 -          "kind",
 -          "path"
 -        ],
-+        "title": "ConfigReadParams",
-         "type": "object"
-       },
+-        "type": "object"
+-      },
 -      "ForcedChatgptWorkspaceIds": {
 -        "anyOf": [
 -          {
@@ -10136,50 +10163,42 @@ index 7c974ae4ae..130f7bbb02 100644
 -        "type": "string"
 -      },
 -      "FsChangedNotification": {
-+      "ConfigReadResponse": {
++      "ConfigReadParams": {
          "$schema": "http://json-schema.org/draft-07/schema#",
 -        "description": "Filesystem watch notification emitted for `fs/watch` subscribers.",
          "properties": {
 -          "changedPaths": {
 -            "description": "File or directory paths associated with this event.",
-+          "config": {
-+            "$ref": "#/definitions/v2/Config"
-+          },
-+          "layers": {
-             "items": {
+-            "items": {
 -              "$ref": "#/definitions/v2/AbsolutePathBuf"
-+              "$ref": "#/definitions/v2/ConfigLayer"
-             },
+-            },
 -            "type": "array"
++          "cwd": {
++            "description": "Optional working directory to resolve project config layers. If specified, return the effective config as seen from that directory (i.e., including any project layers between `cwd` and the project/repo root).",
 +            "type": [
-+              "array",
++              "string",
 +              "null"
 +            ]
            },
 -          "watchId": {
 -            "description": "Watch identifier previously provided to `fs/watch`.",
 -            "type": "string"
-+          "origins": {
-+            "additionalProperties": {
-+              "$ref": "#/definitions/v2/ConfigLayerMetadata"
-+            },
-+            "type": "object"
++          "includeLayers": {
++            "type": "boolean"
            }
          },
-         "required": [
+-        "required": [
 -          "changedPaths",
 -          "watchId"
-+          "config",
-+          "origins"
-         ],
+-        ],
 -        "title": "FsChangedNotification",
-+        "title": "ConfigReadResponse",
++        "title": "ConfigReadParams",
          "type": "object"
        },
 -      "FsCopyParams": {
--        "$schema": "http://json-schema.org/draft-07/schema#",
++      "ConfigReadResponse": {
+         "$schema": "http://json-schema.org/draft-07/schema#",
 -        "description": "Copy a file or directory tree on the host filesystem.",
-+      "ConfigRequirements": {
          "properties": {
 -          "destinationPath": {
 -            "allOf": [
@@ -10188,87 +10207,41 @@ index 7c974ae4ae..130f7bbb02 100644
 -              }
 -            ],
 -            "description": "Absolute destination path."
-+          "allowAppshots": {
-+            "type": [
-+              "boolean",
-+              "null"
-+            ]
++          "config": {
++            "$ref": "#/definitions/v2/Config"
            },
 -          "recursive": {
 -            "description": "Required for directory copies; ignored for file copies.",
 -            "type": "boolean"
-+          "allowManagedHooksOnly": {
++          "layers": {
++            "items": {
++              "$ref": "#/definitions/v2/ConfigLayer"
++            },
 +            "type": [
-+              "boolean",
++              "array",
 +              "null"
 +            ]
            },
 -          "sourcePath": {
 -            "allOf": [
-+          "allowRemoteControl": {
-+            "type": [
-+              "boolean",
-+              "null"
-+            ]
-+          },
-+          "allowedApprovalPolicies": {
-+            "items": {
-+              "$ref": "#/definitions/v2/AskForApproval"
-+            },
-+            "type": [
-+              "array",
-+              "null"
-+            ]
-+          },
-+          "allowedPermissionProfiles": {
-+            "additionalProperties": {
-+              "type": "boolean"
-+            },
-+            "type": [
-+              "object",
-+              "null"
-+            ]
-+          },
-+          "allowedSandboxModes": {
-+            "items": {
-+              "$ref": "#/definitions/v2/SandboxMode"
-+            },
-+            "type": [
-+              "array",
-+              "null"
-+            ]
-+          },
-+          "allowedWebSearchModes": {
-+            "items": {
-+              "$ref": "#/definitions/v2/WebSearchMode"
-+            },
-+            "type": [
-+              "array",
-+              "null"
-+            ]
-+          },
-+          "allowedWindowsSandboxImplementations": {
-+            "items": {
-+              "$ref": "#/definitions/v2/WindowsSandboxSetupMode"
-+            },
-+            "type": [
-+              "array",
-+              "null"
-+            ]
-+          },
-+          "computerUse": {
-+            "anyOf": [
-               {
+-              {
 -                "$ref": "#/definitions/v2/AbsolutePathBuf"
 -              }
 -            ],
 -            "description": "Absolute source path."
--          }
--        },
--        "required": [
++          "origins": {
++            "additionalProperties": {
++              "$ref": "#/definitions/v2/ConfigLayerMetadata"
++            },
++            "type": "object"
+           }
+         },
+         "required": [
 -          "destinationPath",
 -          "sourcePath"
--        ],
++          "config",
++          "origins"
+         ],
 -        "title": "FsCopyParams",
 -        "type": "object"
 -      },
@@ -10276,30 +10249,27 @@ index 7c974ae4ae..130f7bbb02 100644
 -        "$schema": "http://json-schema.org/draft-07/schema#",
 -        "description": "Successful response for `fs/copy`.",
 -        "title": "FsCopyResponse",
--        "type": "object"
--      },
++        "title": "ConfigReadResponse",
+         "type": "object"
+       },
 -      "FsCreateDirectoryParams": {
 -        "$schema": "http://json-schema.org/draft-07/schema#",
 -        "description": "Create a directory on the host filesystem.",
--        "properties": {
++      "ConfigRequirements": {
+         "properties": {
 -          "path": {
 -            "allOf": [
-+                "$ref": "#/definitions/v2/ComputerUseRequirements"
-+              },
-               {
+-              {
 -                "$ref": "#/definitions/v2/AbsolutePathBuf"
-+                "type": "null"
-               }
+-              }
 -            ],
 -            "description": "Absolute directory path to create."
-+            ]
-           },
+-          },
 -          "recursive": {
 -            "description": "Whether parent directories should also be created. Defaults to `true`.",
-+          "defaultPermissions": {
++          "allowAppshots": {
              "type": [
--              "boolean",
-+              "string",
+               "boolean",
                "null"
              ]
 -          }
@@ -10322,16 +10292,9 @@ index 7c974ae4ae..130f7bbb02 100644
 -        "properties": {
 -          "path": {
 -            "allOf": [
-+          },
-+          "enforceResidency": {
-+            "anyOf": [
-               {
+-              {
 -                "$ref": "#/definitions/v2/AbsolutePathBuf"
-+                "$ref": "#/definitions/v2/ResidencyRequirement"
-+              },
-+              {
-+                "type": "null"
-               }
+-              }
 -            ],
 -            "description": "Absolute path to inspect."
 -          }
@@ -10350,19 +10313,37 @@ index 7c974ae4ae..130f7bbb02 100644
 -            "description": "File creation time in Unix milliseconds when available, otherwise `0`.",
 -            "format": "int64",
 -            "type": "integer"
--          },
+           },
 -          "isDirectory": {
 -            "description": "Whether the path resolves to a directory.",
 -            "type": "boolean"
--          },
++          "allowManagedHooksOnly": {
++            "type": [
++              "boolean",
++              "null"
++            ]
+           },
 -          "isFile": {
 -            "description": "Whether the path resolves to a regular file.",
 -            "type": "boolean"
--          },
++          "allowRemoteControl": {
++            "type": [
++              "boolean",
++              "null"
++            ]
+           },
 -          "isSymlink": {
 -            "description": "Whether the path itself is a symbolic link.",
 -            "type": "boolean"
--          },
++          "allowedApprovalPolicies": {
++            "items": {
++              "$ref": "#/definitions/v2/AskForApproval"
++            },
++            "type": [
++              "array",
++              "null"
++            ]
+           },
 -          "modifiedAtMs": {
 -            "description": "File modification time in Unix milliseconds when available, otherwise `0`.",
 -            "format": "int64",
@@ -10385,12 +10366,7 @@ index 7c974ae4ae..130f7bbb02 100644
 -          "fileName": {
 -            "description": "Direct child entry name only, not an absolute or relative path.",
 -            "type": "string"
-+            ]
-           },
--          "isDirectory": {
--            "description": "Whether this entry resolves to a directory.",
--            "type": "boolean"
-+          "featureRequirements": {
++          "allowedPermissionProfiles": {
 +            "additionalProperties": {
 +              "type": "boolean"
 +            },
@@ -10399,9 +10375,74 @@ index 7c974ae4ae..130f7bbb02 100644
 +              "null"
 +            ]
            },
+-          "isDirectory": {
+-            "description": "Whether this entry resolves to a directory.",
+-            "type": "boolean"
++          "allowedSandboxModes": {
++            "items": {
++              "$ref": "#/definitions/v2/SandboxMode"
++            },
++            "type": [
++              "array",
++              "null"
++            ]
+           },
 -          "isFile": {
 -            "description": "Whether this entry resolves to a regular file.",
 -            "type": "boolean"
++          "allowedWebSearchModes": {
++            "items": {
++              "$ref": "#/definitions/v2/WebSearchMode"
++            },
++            "type": [
++              "array",
++              "null"
++            ]
++          },
++          "allowedWindowsSandboxImplementations": {
++            "items": {
++              "$ref": "#/definitions/v2/WindowsSandboxSetupMode"
++            },
++            "type": [
++              "array",
++              "null"
++            ]
++          },
++          "computerUse": {
++            "anyOf": [
++              {
++                "$ref": "#/definitions/v2/ComputerUseRequirements"
++              },
++              {
++                "type": "null"
++              }
++            ]
++          },
++          "defaultPermissions": {
++            "type": [
++              "string",
++              "null"
++            ]
++          },
++          "enforceResidency": {
++            "anyOf": [
++              {
++                "$ref": "#/definitions/v2/ResidencyRequirement"
++              },
++              {
++                "type": "null"
++              }
++            ]
++          },
++          "featureRequirements": {
++            "additionalProperties": {
++              "type": "boolean"
++            },
++            "type": [
++              "object",
++              "null"
++            ]
++          },
 +          "models": {
 +            "anyOf": [
 +              {
@@ -10602,18 +10643,14 @@ index 7c974ae4ae..130f7bbb02 100644
 +          "version"
          ],
 -        "title": "FsRemoveParams",
--        "type": "object"
--      },
++        "title": "ConfigWriteResponse",
+         "type": "object"
+       },
 -      "FsRemoveResponse": {
 -        "$schema": "http://json-schema.org/draft-07/schema#",
 -        "description": "Successful response for `fs/remove`.",
 -        "title": "FsRemoveResponse",
-+        "title": "ConfigWriteResponse",
-         "type": "object"
-       },
--      "FsUnwatchParams": {
--        "$schema": "http://json-schema.org/draft-07/schema#",
--        "description": "Stop filesystem watch notifications for a prior `fs/watch`.",
+-        "type": "object"
 +      "ConfiguredHookHandler": {
 +        "oneOf": [
 +          {
@@ -10693,7 +10730,10 @@ index 7c974ae4ae..130f7bbb02 100644
 +            "type": "object"
 +          }
 +        ]
-+      },
+       },
+-      "FsUnwatchParams": {
+-        "$schema": "http://json-schema.org/draft-07/schema#",
+-        "description": "Stop filesystem watch notifications for a prior `fs/watch`.",
 +      "ConfiguredHookMatcherGroup": {
          "properties": {
 -          "watchId": {
@@ -10862,7 +10902,7 @@ index 7c974ae4ae..130f7bbb02 100644
          "oneOf": [
            {
              "properties": {
-@@ -10289,7 +10426,7 @@
+@@ -10289,7 +10473,7 @@
                  "enum": [
                    "input_text"
                  ],
@@ -10871,7 +10911,7 @@ index 7c974ae4ae..130f7bbb02 100644
                  "type": "string"
                }
              },
-@@ -10297,7 +10434,7 @@
+@@ -10297,7 +10481,7 @@
                "text",
                "type"
              ],
@@ -10880,7 +10920,7 @@ index 7c974ae4ae..130f7bbb02 100644
              "type": "object"
            },
            {
-@@ -10319,7 +10456,7 @@
+@@ -10319,7 +10503,7 @@
                  "enum": [
                    "input_image"
                  ],
@@ -10889,7 +10929,7 @@ index 7c974ae4ae..130f7bbb02 100644
                  "type": "string"
                }
              },
-@@ -10327,781 +10464,400 @@
+@@ -10327,781 +10511,400 @@
                "image_url",
                "type"
              ],
@@ -10932,21 +10972,11 @@ index 7c974ae4ae..130f7bbb02 100644
 -          "refreshToken": {
 -            "description": "When `true`, requests a proactive token refresh before returning.\n\nIn managed auth mode this triggers the normal refresh-token flow. In external auth mode this flag is ignored. Clients should refresh tokens themselves and call `account/login/start` with `chatgptAuthTokens`.",
 -            "type": "boolean"
-+          "threadId": {
-+            "type": "string"
-+          },
-+          "turnId": {
-+            "type": "string"
-           }
-         },
+-          }
+-        },
 -        "title": "GetAccountParams",
-+        "required": [
-+          "threadId",
-+          "turnId"
-+        ],
-+        "title": "ContextCompactedNotification",
-         "type": "object"
-       },
+-        "type": "object"
+-      },
 -      "GetAccountRateLimitsResponse": {
 -        "$schema": "http://json-schema.org/draft-07/schema#",
 -        "properties": {
@@ -10967,7 +10997,9 @@ index 7c974ae4ae..130f7bbb02 100644
 -              }
 -            ],
 -            "description": "Backward-compatible single-bucket view; mirrors the historical payload."
--          },
++          "threadId": {
++            "type": "string"
+           },
 -          "rateLimitsByLimitId": {
 -            "additionalProperties": {
 -              "$ref": "#/definitions/v2/RateLimitSnapshot"
@@ -10977,14 +11009,19 @@ index 7c974ae4ae..130f7bbb02 100644
 -              "object",
 -              "null"
 -            ]
--          }
--        },
--        "required": [
++          "turnId": {
++            "type": "string"
+           }
+         },
+         "required": [
 -          "rateLimits"
--        ],
++          "threadId",
++          "turnId"
+         ],
 -        "title": "GetAccountRateLimitsResponse",
--        "type": "object"
--      },
++        "title": "ContextCompactedNotification",
+         "type": "object"
+       },
 -      "GetAccountResponse": {
 -        "$schema": "http://json-schema.org/draft-07/schema#",
 -        "properties": {
@@ -11274,20 +11311,20 @@ index 7c974ae4ae..130f7bbb02 100644
            {
              "properties": {
 -              "host": {
-+              "deferLoading": {
-+                "type": "boolean"
-+              },
-+              "description": {
-                 "type": "string"
-               },
+-                "type": "string"
+-              },
 -              "port": {
 -                "format": "uint16",
 -                "minimum": 0.0,
 -                "type": "integer"
--              },
++              "deferLoading": {
++                "type": "boolean"
+               },
 -              "protocol": {
 -                "$ref": "#/definitions/v2/NetworkApprovalProtocol"
--              },
++              "description": {
++                "type": "string"
+               },
 -              "target": {
 +              "inputSchema": true,
 +              "name": {
@@ -11588,22 +11625,22 @@ index 7c974ae4ae..130f7bbb02 100644
            },
 -          "source": {
 -            "$ref": "#/definitions/v2/HookSource"
--          },
--          "sourcePath": {
--            "$ref": "#/definitions/v2/AbsolutePathBuf"
 +          "enabled": {
 +            "description": "Whether this feature is currently enabled in the loaded config.",
 +            "type": "boolean"
+           },
+-          "sourcePath": {
+-            "$ref": "#/definitions/v2/AbsolutePathBuf"
++          "name": {
++            "description": "Stable key used in config.toml and CLI flag toggles.",
++            "type": "string"
            },
 -          "statusMessage": {
 -            "type": [
 -              "string",
 -              "null"
 -            ]
-+          "name": {
-+            "description": "Stable key used in config.toml and CLI flag toggles.",
-+            "type": "string"
-           },
+-          },
 -          "timeoutSec": {
 -            "format": "uint64",
 -            "minimum": 0.0,
@@ -11855,7 +11892,7 @@ index 7c974ae4ae..130f7bbb02 100644
              "type": [
                "string",
                "null"
-@@ -11109,305 +10865,383 @@
+@@ -11109,305 +10912,383 @@
            }
          },
          "required": [
@@ -11893,22 +11930,16 @@ index 7c974ae4ae..130f7bbb02 100644
 -              "$ref": "#/definitions/v2/HookErrorInfo"
 -            },
 -            "type": "array"
-+          {
-+            "description": "Feature is still being built and not ready for broad use.",
-+            "enum": [
-+              "underDevelopment"
-+            ],
-+            "type": "string"
-           },
+-          },
 -          "hooks": {
 -            "items": {
 -              "$ref": "#/definitions/v2/HookMetadata"
 -            },
 -            "type": "array"
 +          {
-+            "description": "Feature is production-ready.",
++            "description": "Feature is still being built and not ready for broad use.",
 +            "enum": [
-+              "stable"
++              "underDevelopment"
 +            ],
 +            "type": "string"
            },
@@ -11917,6 +11948,13 @@ index 7c974ae4ae..130f7bbb02 100644
 -              "type": "string"
 -            },
 -            "type": "array"
++          {
++            "description": "Feature is production-ready.",
++            "enum": [
++              "stable"
++            ],
++            "type": "string"
++          },
 +          {
 +            "description": "Feature is deprecated and should be avoided.",
 +            "enum": [
@@ -12426,7 +12464,7 @@ index 7c974ae4ae..130f7bbb02 100644
                "null"
              ]
            },
-@@ -11418,686 +11252,3182 @@
+@@ -11418,686 +11299,3182 @@
              ]
            }
          },
@@ -12885,24 +12923,8 @@ index 7c974ae4ae..130f7bbb02 100644
 +        "properties": {
 +          "diff": {
 +            "type": "string"
-+          },
-+          "kind": {
-+            "$ref": "#/definitions/v2/PatchChangeKind"
            },
-+          "path": {
-+            "type": "string"
-+          }
-+        },
-+        "required": [
-+          "diff",
-+          "kind",
-+          "path"
-+        ],
-+        "type": "object"
-+      },
-+      "ForcedChatgptWorkspaceIds": {
-+        "anyOf": [
-           {
+-          {
 -            "properties": {
 -              "type": {
 -                "enum": [
@@ -12917,9 +12939,10 @@ index 7c974ae4ae..130f7bbb02 100644
 -            ],
 -            "title": "ChatgptAuthTokensv2::LoginAccountResponse",
 -            "type": "object"
-+            "type": "string"
++          "kind": {
++            "$ref": "#/definitions/v2/PatchChangeKind"
            },
-           {
+-          {
 -            "properties": {
 -              "type": {
 -                "enum": [
@@ -12927,6 +12950,27 @@ index 7c974ae4ae..130f7bbb02 100644
 -                ],
 -                "title": "AmazonBedrockv2::LoginAccountResponseType",
 -                "type": "string"
+-              }
+-            },
+-            "required": [
+-              "type"
++          "path": {
++            "type": "string"
++          }
++        },
++        "required": [
++          "diff",
++          "kind",
++          "path"
++        ],
++        "type": "object"
++      },
++      "ForcedChatgptWorkspaceIds": {
++        "anyOf": [
++          {
++            "type": "string"
++          },
++          {
 +            "items": {
 +              "type": "string"
 +            },
@@ -12974,7 +13018,9 @@ index 7c974ae4ae..130f7bbb02 100644
 +              {
 +                "$ref": "#/definitions/v2/AbsolutePathBuf"
 +              }
-+            ],
+             ],
+-            "title": "AmazonBedrockv2::LoginAccountResponse",
+-            "type": "object"
 +            "description": "Absolute destination path."
 +          },
 +          "recursive": {
@@ -13122,7 +13168,7 @@ index 7c974ae4ae..130f7bbb02 100644
 +            "allOf": [
 +              {
 +                "$ref": "#/definitions/v2/AbsolutePathBuf"
-               }
++              }
 +            ],
 +            "description": "Absolute directory path to read."
 +          }
@@ -13141,9 +13187,7 @@ index 7c974ae4ae..130f7bbb02 100644
 +            "description": "Direct child entries in the requested directory.",
 +            "items": {
 +              "$ref": "#/definitions/v2/FsReadDirectoryEntry"
-             },
--            "required": [
--              "type"
++            },
 +            "type": "array"
 +          }
 +        },
@@ -13162,9 +13206,7 @@ index 7c974ae4ae..130f7bbb02 100644
 +              {
 +                "$ref": "#/definitions/v2/AbsolutePathBuf"
 +              }
-             ],
--            "title": "AmazonBedrockv2::LoginAccountResponse",
--            "type": "object"
++            ],
 +            "description": "Absolute path to read."
 +          }
 +        },
@@ -16000,7 +16042,7 @@ index 7c974ae4ae..130f7bbb02 100644
              "type": [
                "string",
                "null"
-@@ -12105,1055 +14435,1395 @@
+@@ -12105,1055 +14482,1395 @@
            }
          },
          "required": [
@@ -18070,7 +18112,7 @@ index 7c974ae4ae..130f7bbb02 100644
        },
        "OverriddenMetadata": {
          "properties": {
-@@ -19080,6 +21750,17 @@
+@@ -19080,6 +21797,17 @@
        "ThreadReadResponse": {
          "$schema": "http://json-schema.org/draft-07/schema#",
          "properties": {
@@ -18089,10 +18131,10 @@ index 7c974ae4ae..130f7bbb02 100644
              "$ref": "#/definitions/v2/Thread"
            }
 diff --git a/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json b/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json
-index 7c5d0060ae..f56b924029 100644
+index 7c5d0060ae..ea6ad1e954 100644
 --- a/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json
 +++ b/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json
-@@ -1133,369 +1133,1842 @@
+@@ -1133,369 +1133,1889 @@
        ],
        "type": "string"
      },
@@ -18752,6 +18794,14 @@ index 7c5d0060ae..f56b924029 100644
 +            "null"
 +          ]
 +        },
++        "profileDigest": {
++          "type": "string"
++        },
++        "profileRevision": {
++          "format": "uint64",
++          "minimum": 0.0,
++          "type": "integer"
++        },
 +        "sourceRevision": {
 +          "type": "string"
 +        },
@@ -18791,12 +18841,6 @@ index 7c5d0060ae..f56b924029 100644
 -          "properties": {
 -            "id": {
 -              "$ref": "#/definitions/RequestId"
--            },
--            "method": {
--              "enum": [
--                "thread/goal/clear"
--              ],
--              "title": "Thread/goal/clearRequestMethod",
 +        "worktree": {
 +          "type": "string"
 +        }
@@ -18809,6 +18853,8 @@ index 7c5d0060ae..f56b924029 100644
 +        "issueIdentifier",
 +        "issueTitle",
 +        "nextAction",
++        "profileDigest",
++        "profileRevision",
 +        "sourceRevision",
 +        "status",
 +        "trackerState",
@@ -18984,6 +19030,14 @@ index 7c5d0060ae..f56b924029 100644
 +        "workspace"
 +      ],
 +      "type": "object"
++    },
++    "AutomationProfileRevisionStatus": {
++      "enum": [
++        "active",
++        "pending_valid",
++        "rejected"
++      ],
++      "type": "string"
 +    },
 +    "AutomationQueueCategory": {
 +      "enum": [
@@ -19266,8 +19320,28 @@ index 7c5d0060ae..f56b924029 100644
 +        "ownerThreadId": {
 +          "type": "string"
 +        },
++        "pendingProfileDigest": {
++          "type": [
++            "string",
++            "null"
++          ]
++        },
++        "profileDiagnostics": {
++          "items": {
++            "$ref": "#/definitions/OrchestraBoundedText"
++          },
++          "type": "array"
++        },
 +        "profileDigest": {
 +          "type": "string"
++        },
++        "profileRevision": {
++          "format": "uint64",
++          "minimum": 0.0,
++          "type": "integer"
++        },
++        "profileRevisionStatus": {
++          "$ref": "#/definitions/AutomationProfileRevisionStatus"
 +        },
 +        "queueCounts": {
 +          "$ref": "#/definitions/AutomationQueueCounts"
@@ -19283,6 +19357,12 @@ index 7c5d0060ae..f56b924029 100644
 +        },
 +        "reconciliation": {
 +          "$ref": "#/definitions/AutomationReconciliationStatus"
++        },
++        "rejectedProfileDigest": {
++          "type": [
++            "string",
++            "null"
++          ]
 +        },
 +        "revision": {
 +          "format": "uint64",
@@ -19313,7 +19393,10 @@ index 7c5d0060ae..f56b924029 100644
 +        "leaseEpoch",
 +        "nextAction",
 +        "ownerThreadId",
++        "profileDiagnostics",
 +        "profileDigest",
++        "profileRevision",
++        "profileRevisionStatus",
 +        "queueCounts",
 +        "queuePreview",
 +        "queuePreviewTruncated",
@@ -20216,11 +20299,13 @@ index 7c5d0060ae..f56b924029 100644
 +          "properties": {
 +            "id": {
 +              "$ref": "#/definitions/RequestId"
-+            },
-+            "method": {
-+              "enum": [
+             },
+             "method": {
+               "enum": [
+-                "thread/goal/clear"
 +                "automation/validate"
-+              ],
+               ],
+-              "title": "Thread/goal/clearRequestMethod",
 +              "title": "Automation/validateRequestMethod",
                "type": "string"
              },
@@ -20230,7 +20315,7 @@ index 7c5d0060ae..f56b924029 100644
              }
            },
            "required": [
-@@ -1503,7 +2976,7 @@
+@@ -1503,7 +3023,7 @@
              "method",
              "params"
            ],
@@ -20239,7 +20324,7 @@ index 7c5d0060ae..f56b924029 100644
            "type": "object"
          },
          {
-@@ -1513,13 +2986,13 @@
+@@ -1513,13 +3033,13 @@
              },
              "method": {
                "enum": [
@@ -20256,7 +20341,7 @@ index 7c5d0060ae..f56b924029 100644
              }
            },
            "required": [
-@@ -1527,7 +3000,7 @@
+@@ -1527,7 +3047,7 @@
              "method",
              "params"
            ],
@@ -20265,7 +20350,7 @@ index 7c5d0060ae..f56b924029 100644
            "type": "object"
          },
          {
-@@ -1537,13 +3010,13 @@
+@@ -1537,13 +3057,13 @@
              },
              "method": {
                "enum": [
@@ -20282,7 +20367,7 @@ index 7c5d0060ae..f56b924029 100644
              }
            },
            "required": [
-@@ -1551,7 +3024,7 @@
+@@ -1551,7 +3071,7 @@
              "method",
              "params"
            ],
@@ -20291,7 +20376,7 @@ index 7c5d0060ae..f56b924029 100644
            "type": "object"
          },
          {
-@@ -1561,13 +3034,13 @@
+@@ -1561,13 +3081,13 @@
              },
              "method": {
                "enum": [
@@ -20308,7 +20393,7 @@ index 7c5d0060ae..f56b924029 100644
              }
            },
            "required": [
-@@ -1575,7 +3048,7 @@
+@@ -1575,7 +3095,7 @@
              "method",
              "params"
            ],
@@ -20317,7 +20402,7 @@ index 7c5d0060ae..f56b924029 100644
            "type": "object"
          },
          {
-@@ -1585,13 +3058,13 @@
+@@ -1585,13 +3105,13 @@
              },
              "method": {
                "enum": [
@@ -20334,7 +20419,7 @@ index 7c5d0060ae..f56b924029 100644
              }
            },
            "required": [
-@@ -1599,7 +3072,7 @@
+@@ -1599,7 +3119,7 @@
              "method",
              "params"
            ],
@@ -20343,7 +20428,7 @@ index 7c5d0060ae..f56b924029 100644
            "type": "object"
          },
          {
-@@ -1609,13 +3082,13 @@
+@@ -1609,13 +3129,13 @@
              },
              "method": {
                "enum": [
@@ -20360,7 +20445,7 @@ index 7c5d0060ae..f56b924029 100644
              }
            },
            "required": [
-@@ -1623,7 +3096,7 @@
+@@ -1623,7 +3143,7 @@
              "method",
              "params"
            ],
@@ -20369,7 +20454,7 @@ index 7c5d0060ae..f56b924029 100644
            "type": "object"
          },
          {
-@@ -1633,13 +3106,13 @@
+@@ -1633,13 +3153,13 @@
              },
              "method": {
                "enum": [
@@ -20386,7 +20471,7 @@ index 7c5d0060ae..f56b924029 100644
              }
            },
            "required": [
-@@ -1647,7 +3120,7 @@
+@@ -1647,7 +3167,7 @@
              "method",
              "params"
            ],
@@ -20395,7 +20480,7 @@ index 7c5d0060ae..f56b924029 100644
            "type": "object"
          },
          {
-@@ -1657,13 +3130,13 @@
+@@ -1657,13 +3177,13 @@
              },
              "method": {
                "enum": [
@@ -20412,7 +20497,7 @@ index 7c5d0060ae..f56b924029 100644
              }
            },
            "required": [
-@@ -1671,7 +3144,7 @@
+@@ -1671,7 +3191,7 @@
              "method",
              "params"
            ],
@@ -20421,7 +20506,7 @@ index 7c5d0060ae..f56b924029 100644
            "type": "object"
          },
          {
-@@ -1681,13 +3154,13 @@
+@@ -1681,13 +3201,13 @@
              },
              "method": {
                "enum": [
@@ -20438,7 +20523,7 @@ index 7c5d0060ae..f56b924029 100644
              }
            },
            "required": [
-@@ -1695,7 +3168,7 @@
+@@ -1695,7 +3215,7 @@
              "method",
              "params"
            ],
@@ -20447,7 +20532,7 @@ index 7c5d0060ae..f56b924029 100644
            "type": "object"
          },
          {
-@@ -1705,13 +3178,13 @@
+@@ -1705,13 +3225,13 @@
              },
              "method": {
                "enum": [
@@ -20464,7 +20549,7 @@ index 7c5d0060ae..f56b924029 100644
              }
            },
            "required": [
-@@ -1719,24 +3192,23 @@
+@@ -1719,24 +3239,23 @@
              "method",
              "params"
            ],
@@ -20493,7 +20578,7 @@ index 7c5d0060ae..f56b924029 100644
              }
            },
            "required": [
-@@ -1744,7 +3216,79 @@
+@@ -1744,7 +3263,79 @@
              "method",
              "params"
            ],
@@ -20574,7 +20659,7 @@ index 7c5d0060ae..f56b924029 100644
            "type": "object"
          },
          {
-@@ -6044,147 +7588,413 @@
+@@ -6044,147 +7635,413 @@
                ],
                "type": "string"
              }
@@ -21075,7 +21160,7 @@ index 7c5d0060ae..f56b924029 100644
        "properties": {
          "path": {
            "allOf": [
-@@ -6192,1367 +8002,1810 @@
+@@ -6192,1367 +8049,1810 @@
                "$ref": "#/definitions/AbsolutePathBuf"
              }
            ],
@@ -23837,7 +23922,7 @@ index 7c5d0060ae..f56b924029 100644
            "items": {
              "type": "string"
            },
-@@ -7560,61 +9813,38 @@
+@@ -7560,61 +9860,38 @@
              "array",
              "null"
            ]
@@ -23917,7 +24002,7 @@ index 7c5d0060ae..f56b924029 100644
            "type": [
              "string",
              "null"
-@@ -7623,878 +9853,841 @@
+@@ -7623,878 +9900,841 @@
        },
        "type": "object"
      },
@@ -25392,7 +25477,7 @@ index 7c5d0060ae..f56b924029 100644
            "type": [
              "string",
              "null"
-@@ -8502,1055 +10695,1395 @@
+@@ -8502,1055 +10742,1395 @@
          }
        },
        "required": [
@@ -27462,7 +27547,7 @@ index 7c5d0060ae..f56b924029 100644
      },
      "OverriddenMetadata": {
        "properties": {
-@@ -16859,6 +19392,17 @@
+@@ -16859,6 +19439,17 @@
      "ThreadReadResponse": {
        "$schema": "http://json-schema.org/draft-07/schema#",
        "properties": {
@@ -28218,10 +28303,10 @@ index 0000000000..19104a4a18
 \ No newline at end of file
 diff --git a/codex-rs/app-server-protocol/schema/json/v2/AutomationRunResponse.json b/codex-rs/app-server-protocol/schema/json/v2/AutomationRunResponse.json
 new file mode 100644
-index 0000000000..5f956d74df
+index 0000000000..a63e4e8c58
 --- /dev/null
 +++ b/codex-rs/app-server-protocol/schema/json/v2/AutomationRunResponse.json
-@@ -0,0 +1,435 @@
+@@ -0,0 +1,482 @@
 +{
 +  "$schema": "http://json-schema.org/draft-07/schema#",
 +  "definitions": {
@@ -28359,6 +28444,14 @@ index 0000000000..5f956d74df
 +            "null"
 +          ]
 +        },
++        "profileDigest": {
++          "type": "string"
++        },
++        "profileRevision": {
++          "format": "uint64",
++          "minimum": 0.0,
++          "type": "integer"
++        },
 +        "sourceRevision": {
 +          "type": "string"
 +        },
@@ -28396,12 +28489,22 @@ index 0000000000..5f956d74df
 +        "issueIdentifier",
 +        "issueTitle",
 +        "nextAction",
++        "profileDigest",
++        "profileRevision",
 +        "sourceRevision",
 +        "status",
 +        "trackerState",
 +        "worktree"
 +      ],
 +      "type": "object"
++    },
++    "AutomationProfileRevisionStatus": {
++      "enum": [
++        "active",
++        "pending_valid",
++        "rejected"
++      ],
++      "type": "string"
 +    },
 +    "AutomationQueueCategory": {
 +      "enum": [
@@ -28543,8 +28646,28 @@ index 0000000000..5f956d74df
 +        "ownerThreadId": {
 +          "type": "string"
 +        },
++        "pendingProfileDigest": {
++          "type": [
++            "string",
++            "null"
++          ]
++        },
++        "profileDiagnostics": {
++          "items": {
++            "$ref": "#/definitions/OrchestraBoundedText"
++          },
++          "type": "array"
++        },
 +        "profileDigest": {
 +          "type": "string"
++        },
++        "profileRevision": {
++          "format": "uint64",
++          "minimum": 0.0,
++          "type": "integer"
++        },
++        "profileRevisionStatus": {
++          "$ref": "#/definitions/AutomationProfileRevisionStatus"
 +        },
 +        "queueCounts": {
 +          "$ref": "#/definitions/AutomationQueueCounts"
@@ -28560,6 +28683,12 @@ index 0000000000..5f956d74df
 +        },
 +        "reconciliation": {
 +          "$ref": "#/definitions/AutomationReconciliationStatus"
++        },
++        "rejectedProfileDigest": {
++          "type": [
++            "string",
++            "null"
++          ]
 +        },
 +        "revision": {
 +          "format": "uint64",
@@ -28590,7 +28719,10 @@ index 0000000000..5f956d74df
 +        "leaseEpoch",
 +        "nextAction",
 +        "ownerThreadId",
++        "profileDiagnostics",
 +        "profileDigest",
++        "profileRevision",
++        "profileRevisionStatus",
 +        "queueCounts",
 +        "queuePreview",
 +        "queuePreviewTruncated",
@@ -30767,7 +30899,7 @@ index 0000000000..c3b65a9ef0
 +export type AutomationIssueBlocker = { id?: string, identifier?: string, state?: string, };
 diff --git a/codex-rs/app-server-protocol/schema/typescript/v2/AutomationIssueClaimProjection.ts b/codex-rs/app-server-protocol/schema/typescript/v2/AutomationIssueClaimProjection.ts
 new file mode 100644
-index 0000000000..19d38dbcd1
+index 0000000000..ace1bef2b7
 --- /dev/null
 +++ b/codex-rs/app-server-protocol/schema/typescript/v2/AutomationIssueClaimProjection.ts
 @@ -0,0 +1,10 @@
@@ -30780,7 +30912,7 @@ index 0000000000..19d38dbcd1
 +import type { OrchestraBoundedText } from "./OrchestraBoundedText";
 +import type { OrchestraRunStatus } from "./OrchestraRunStatus";
 +
-+export type AutomationIssueClaimProjection = { claimId: string, issueId: string, issueIdentifier: string, issueTitle: OrchestraBoundedText, trackerState: string, priority?: bigint, attempt: number, status: AutomationClaimStatus, worktree: string, sourceRevision: string, issueTask?: OrchestraAgentReference, workflowRunId?: string, workflowStatus?: OrchestraRunStatus, effects: Array<AutomationEffectReceiptProjection>, nextAction: OrchestraBoundedText, };
++export type AutomationIssueClaimProjection = { claimId: string, issueId: string, issueIdentifier: string, issueTitle: OrchestraBoundedText, trackerState: string, priority?: bigint, attempt: number, profileDigest: string, profileRevision: bigint, status: AutomationClaimStatus, worktree: string, sourceRevision: string, issueTask?: OrchestraAgentReference, workflowRunId?: string, workflowStatus?: OrchestraRunStatus, effects: Array<AutomationEffectReceiptProjection>, nextAction: OrchestraBoundedText, };
 diff --git a/codex-rs/app-server-protocol/schema/typescript/v2/AutomationLinearReadKind.ts b/codex-rs/app-server-protocol/schema/typescript/v2/AutomationLinearReadKind.ts
 new file mode 100644
 index 0000000000..d644940df2
@@ -30870,6 +31002,17 @@ index 0000000000..712ecd2329
 +import type { AutomationWorkspaceProfile } from "./AutomationWorkspaceProfile";
 +
 +export type AutomationProfile = { tracker: AutomationTrackerProfile, polling: AutomationPollingProfile, workspace: AutomationWorkspaceProfile, hooks: AutomationHooksProfile, agent: AutomationAgentProfile, codex: AutomationCodexPolicy, orchestra: AutomationOrchestraProfile, promptTemplate: string, };
+diff --git a/codex-rs/app-server-protocol/schema/typescript/v2/AutomationProfileRevisionStatus.ts b/codex-rs/app-server-protocol/schema/typescript/v2/AutomationProfileRevisionStatus.ts
+new file mode 100644
+index 0000000000..869735ac5c
+--- /dev/null
++++ b/codex-rs/app-server-protocol/schema/typescript/v2/AutomationProfileRevisionStatus.ts
+@@ -0,0 +1,5 @@
++// GENERATED CODE! DO NOT MODIFY BY HAND!
++
++// This file was generated by [ts-rs](https://github.com/Aleph-Alpha/ts-rs). Do not edit this file manually.
++
++export type AutomationProfileRevisionStatus = "active" | "pending_valid" | "rejected";
 diff --git a/codex-rs/app-server-protocol/schema/typescript/v2/AutomationQueueCategory.ts b/codex-rs/app-server-protocol/schema/typescript/v2/AutomationQueueCategory.ts
 new file mode 100644
 index 0000000000..1c47f1f2d6
@@ -30988,21 +31131,22 @@ index 0000000000..4bd6463cac
 +export type AutomationRunParams = { threadId: string, runId: string, };
 diff --git a/codex-rs/app-server-protocol/schema/typescript/v2/AutomationRunProjection.ts b/codex-rs/app-server-protocol/schema/typescript/v2/AutomationRunProjection.ts
 new file mode 100644
-index 0000000000..b7836cd03e
+index 0000000000..a1b135abca
 --- /dev/null
 +++ b/codex-rs/app-server-protocol/schema/typescript/v2/AutomationRunProjection.ts
-@@ -0,0 +1,11 @@
+@@ -0,0 +1,12 @@
 +// GENERATED CODE! DO NOT MODIFY BY HAND!
 +
 +// This file was generated by [ts-rs](https://github.com/Aleph-Alpha/ts-rs). Do not edit this file manually.
 +import type { AutomationIssueClaimProjection } from "./AutomationIssueClaimProjection";
++import type { AutomationProfileRevisionStatus } from "./AutomationProfileRevisionStatus";
 +import type { AutomationQueueCounts } from "./AutomationQueueCounts";
 +import type { AutomationQueueItemProjection } from "./AutomationQueueItemProjection";
 +import type { AutomationReconciliationStatus } from "./AutomationReconciliationStatus";
 +import type { AutomationRootStatus } from "./AutomationRootStatus";
 +import type { OrchestraBoundedText } from "./OrchestraBoundedText";
 +
-+export type AutomationRunProjection = { schemaVersion: number, runId: string, ownerThreadId: string, sourceRevision: string, profileDigest: string, trackerProjectSlug: string, leaseEpoch: bigint, revision: bigint, status: AutomationRootStatus, reconciliation: AutomationReconciliationStatus, queueCounts: AutomationQueueCounts, claimsTotal: number, claims: Array<AutomationIssueClaimProjection>, queuePreview: Array<AutomationQueueItemProjection>, queuePreviewTruncated: boolean, nextAction: OrchestraBoundedText, };
++export type AutomationRunProjection = { schemaVersion: number, runId: string, ownerThreadId: string, sourceRevision: string, profileDigest: string, profileRevision: bigint, profileRevisionStatus: AutomationProfileRevisionStatus, pendingProfileDigest?: string, rejectedProfileDigest?: string, profileDiagnostics: Array<OrchestraBoundedText>, trackerProjectSlug: string, leaseEpoch: bigint, revision: bigint, status: AutomationRootStatus, reconciliation: AutomationReconciliationStatus, queueCounts: AutomationQueueCounts, claimsTotal: number, claims: Array<AutomationIssueClaimProjection>, queuePreview: Array<AutomationQueueItemProjection>, queuePreviewTruncated: boolean, nextAction: OrchestraBoundedText, };
 diff --git a/codex-rs/app-server-protocol/schema/typescript/v2/AutomationRunResponse.ts b/codex-rs/app-server-protocol/schema/typescript/v2/AutomationRunResponse.ts
 new file mode 100644
 index 0000000000..076a762346
@@ -31589,10 +31733,10 @@ index a6da50649c..c984df011c 100644
 + */
 +orchestra?: OrchestraTaskReplay, };
 diff --git a/codex-rs/app-server-protocol/schema/typescript/v2/index.ts b/codex-rs/app-server-protocol/schema/typescript/v2/index.ts
-index 2cfb40140c..216d73c216 100644
+index 2cfb40140c..7da555dbb1 100644
 --- a/codex-rs/app-server-protocol/schema/typescript/v2/index.ts
 +++ b/codex-rs/app-server-protocol/schema/typescript/v2/index.ts
-@@ -36,6 +36,48 @@ export type { AskForApproval } from "./AskForApproval";
+@@ -36,6 +36,49 @@ export type { AskForApproval } from "./AskForApproval";
  export type { AttestationGenerateParams } from "./AttestationGenerateParams";
  export type { AttestationGenerateResponse } from "./AttestationGenerateResponse";
  export type { AutoReviewDecisionSource } from "./AutoReviewDecisionSource";
@@ -31616,6 +31760,7 @@ index 2cfb40140c..216d73c216 100644
 +export type { AutomationOrchestraProfile } from "./AutomationOrchestraProfile";
 +export type { AutomationPollingProfile } from "./AutomationPollingProfile";
 +export type { AutomationProfile } from "./AutomationProfile";
++export type { AutomationProfileRevisionStatus } from "./AutomationProfileRevisionStatus";
 +export type { AutomationQueueCategory } from "./AutomationQueueCategory";
 +export type { AutomationQueueCounts } from "./AutomationQueueCounts";
 +export type { AutomationQueueItemProjection } from "./AutomationQueueItemProjection";
@@ -31641,7 +31786,7 @@ index 2cfb40140c..216d73c216 100644
  export type { ByteRange } from "./ByteRange";
  export type { CancelLoginAccountParams } from "./CancelLoginAccountParams";
  export type { CancelLoginAccountResponse } from "./CancelLoginAccountResponse";
-@@ -279,6 +321,42 @@ export type { NetworkRequirements } from "./NetworkRequirements";
+@@ -279,6 +322,42 @@ export type { NetworkRequirements } from "./NetworkRequirements";
  export type { NetworkUnixSocketPermission } from "./NetworkUnixSocketPermission";
  export type { NewThreadModelDefaults } from "./NewThreadModelDefaults";
  export type { NonSteerableTurnKind } from "./NonSteerableTurnKind";

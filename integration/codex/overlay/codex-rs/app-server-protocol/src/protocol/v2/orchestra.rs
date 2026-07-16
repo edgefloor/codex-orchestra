@@ -217,6 +217,13 @@ pub struct AutomationRunProjection {
     pub owner_thread_id: String,
     pub source_revision: String,
     pub profile_digest: String,
+    pub profile_revision: u64,
+    pub profile_revision_status: AutomationProfileRevisionStatus,
+    #[ts(optional)]
+    pub pending_profile_digest: Option<String>,
+    #[ts(optional)]
+    pub rejected_profile_digest: Option<String>,
+    pub profile_diagnostics: Vec<OrchestraBoundedText>,
     pub tracker_project_slug: String,
     pub lease_epoch: u64,
     pub revision: u64,
@@ -242,6 +249,8 @@ pub struct AutomationIssueClaimProjection {
     #[ts(optional)]
     pub priority: Option<i64>,
     pub attempt: u32,
+    pub profile_digest: String,
+    pub profile_revision: u64,
     pub status: AutomationClaimStatus,
     pub worktree: String,
     pub source_revision: String,
@@ -301,6 +310,15 @@ pub enum AutomationRootStatus {
     Suspended,
     Cancelled,
     Failed,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "v2/")]
+pub enum AutomationProfileRevisionStatus {
+    Active,
+    PendingValid,
+    Rejected,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]

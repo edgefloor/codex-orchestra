@@ -52,6 +52,7 @@ verify_overlay() {
   test -f "$generated/v2/AutomationValidateResponse.ts"
   test -f "$generated/v2/AutomationRunFixtureParams.ts"
   test -f "$generated/v2/AutomationRunResponse.ts"
+  test -f "$generated/v2/AutomationProfileRevisionStatus.ts"
   test -f "$generated/v2/AutomationEffectReceiptProjection.ts"
   test -f "$generated/v2/AutomationEffectStatus.ts"
   test -f "$generated/v2/AutomationGatePolicy.ts"

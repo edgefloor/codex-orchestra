@@ -69,6 +69,37 @@ pub enum AutomationClaimLiveness {
     Terminal,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationProfileRevisionStatus {
+    #[default]
+    Active,
+    PendingValid,
+    Rejected,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationProfileRevision {
+    pub revision: u64,
+    pub status: AutomationProfileRevisionStatus,
+    pub pending_digest: Option<String>,
+    pub rejected_digest: Option<String>,
+    pub diagnostics: Vec<String>,
+}
+
+impl Default for AutomationProfileRevision {
+    fn default() -> Self {
+        Self {
+            revision: 1,
+            status: AutomationProfileRevisionStatus::Active,
+            pending_digest: None,
+            rejected_digest: None,
+            diagnostics: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AutomationQueueStatus {
@@ -152,6 +183,12 @@ pub struct AutomationIssueClaim {
     #[serde(default)]
     pub priority: Option<i64>,
     pub attempt: u32,
+    #[serde(default)]
+    pub profile_digest: String,
+    #[serde(default)]
+    pub profile_revision: u64,
+    #[serde(default)]
+    pub task_prompt: String,
     #[serde(default)]
     pub workflow_invocations: u32,
     #[serde(default)]
@@ -237,6 +274,8 @@ pub struct AutomationRootCheckpoint {
     pub repository: PathBuf,
     pub source_revision: String,
     pub profile_digest: String,
+    #[serde(default)]
+    pub profile_revision: AutomationProfileRevision,
     pub tracker_project_slug: String,
     pub workspace_root: PathBuf,
     pub lease_key: String,
@@ -267,6 +306,8 @@ pub enum AutomationRunError {
     Storage(#[from] std::io::Error),
     #[error("Automation profile digest does not match its canonical snapshot")]
     ProfileDigestMismatch,
+    #[error("Automation profile reload cannot change the tracker project")]
+    ProfileProjectMismatch,
     #[error("Automation lease `{lease_key}` is already owned by task `{owner_thread_id}`")]
     LeaseConflict {
         lease_key: String,
@@ -320,6 +361,7 @@ pub struct AutomationClaimReconciliation {
     pub claim_id: String,
     pub issue_task_active: bool,
     pub descendants_cancelled: bool,
+    pub tracker_terminal: bool,
     pub workflow_status: Option<RunStatus>,
 }
 
@@ -331,7 +373,8 @@ pub struct AutomationRunStore {
 
 impl AutomationRunStore {
     /// Start a resident Automation Root Run, or reopen the one already owned by
-    /// the same task and exact profile. The lease is repository/project scoped.
+    /// the same task. The lease is repository/project scoped; a changed profile
+    /// is staged explicitly after the resident Run has been reopened.
     pub fn start(
         request: AutomationRunStart<'_>,
     ) -> Result<(Self, AutomationRootCheckpoint), AutomationRunError> {
@@ -359,7 +402,6 @@ impl AutomationRunStore {
             let store = Self::open(&repository, &lease.run_id)?;
             let checkpoint = store.load()?;
             if lease.owner_thread_id == request.owner_thread_id
-                && checkpoint.profile_digest == request.profile_digest
                 && checkpoint.status == AutomationRootStatus::Running
             {
                 return Ok((store, checkpoint));
@@ -388,7 +430,7 @@ impl AutomationRunStore {
             lease_path,
         };
         if let Err(error) =
-            atomic_json(&store.root.join("automation-profile.json"), request.profile)
+            store.write_active_profile_snapshot(request.profile_digest, request.profile)
         {
             let _ = fs::remove_file(&store.lease_path);
             return Err(error.into());
@@ -400,6 +442,7 @@ impl AutomationRunStore {
             repository,
             source_revision: request.source_revision.into(),
             profile_digest: request.profile_digest.into(),
+            profile_revision: AutomationProfileRevision::default(),
             tracker_project_slug: request.profile.tracker.project_slug.clone(),
             workspace_root: PathBuf::from(&request.profile.workspace.root),
             lease_key,
@@ -433,11 +476,115 @@ impl AutomationRunStore {
     }
 
     pub fn load(&self) -> Result<AutomationRootCheckpoint, AutomationRunError> {
-        Ok(read_json(&self.root.join("automation-state.json"))?)
+        let mut checkpoint: AutomationRootCheckpoint =
+            read_json(&self.root.join("automation-state.json"))?;
+        if checkpoint.profile_revision.revision == 0 {
+            checkpoint.profile_revision.revision = 1;
+        }
+        for claim in checkpoint.claims.values_mut() {
+            if claim.profile_digest.is_empty() {
+                claim.profile_digest.clone_from(&checkpoint.profile_digest);
+            }
+            if claim.profile_revision == 0 {
+                claim.profile_revision = checkpoint.profile_revision.revision;
+            }
+        }
+        Ok(checkpoint)
     }
 
     pub fn load_profile(&self) -> Result<AutomationProfile, AutomationRunError> {
-        Ok(read_json(&self.root.join("automation-profile.json"))?)
+        let checkpoint = self.load()?;
+        self.load_profile_revision(&checkpoint.profile_digest)
+    }
+
+    pub fn load_profile_revision(
+        &self,
+        digest: &str,
+    ) -> Result<AutomationProfile, AutomationRunError> {
+        if !is_sha256(digest) {
+            return Err(AutomationRunError::ProfileDigestMismatch);
+        }
+        let versioned = self
+            .root
+            .join("automation-profiles")
+            .join(format!("{digest}.json"));
+        let path = if versioned.exists() {
+            versioned
+        } else {
+            let checkpoint = self.load()?;
+            if checkpoint.profile_digest != digest {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Automation profile revision `{digest}` is unavailable"),
+                )
+                .into());
+            }
+            self.root.join("automation-profile.json")
+        };
+        let profile: AutomationProfile = read_json(&path)?;
+        let canonical_profile = serde_json::to_value(&profile)
+            .map_err(std::io::Error::other)
+            .and_then(|value| crate::canonical_sha256(&value).map_err(std::io::Error::other))?;
+        if canonical_profile != digest {
+            return Err(AutomationRunError::ProfileDigestMismatch);
+        }
+        Ok(profile)
+    }
+
+    pub fn stage_profile_revision(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        profile: &AutomationProfile,
+        profile_digest: &str,
+    ) -> Result<(), AutomationRunError> {
+        let canonical_profile = serde_json::to_value(profile)
+            .map_err(std::io::Error::other)
+            .and_then(|value| crate::canonical_sha256(&value).map_err(std::io::Error::other))?;
+        if canonical_profile != profile_digest {
+            return Err(AutomationRunError::ProfileDigestMismatch);
+        }
+        if profile.tracker.project_slug != checkpoint.tracker_project_slug {
+            return Err(AutomationRunError::ProfileProjectMismatch);
+        }
+        self.ensure_active_profile_snapshot(checkpoint)?;
+        self.write_versioned_profile_snapshot(profile_digest, profile)?;
+        checkpoint.profile_revision.status = AutomationProfileRevisionStatus::PendingValid;
+        checkpoint.profile_revision.pending_digest = Some(profile_digest.into());
+        checkpoint.profile_revision.rejected_digest = None;
+        checkpoint.profile_revision.diagnostics.clear();
+        checkpoint.next_action = "valid profile revision pending future dispatch".into();
+        self.save(checkpoint)
+    }
+
+    pub fn confirm_active_profile(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+    ) -> Result<(), AutomationRunError> {
+        checkpoint.profile_revision.status = AutomationProfileRevisionStatus::Active;
+        checkpoint.profile_revision.pending_digest = None;
+        checkpoint.profile_revision.rejected_digest = None;
+        checkpoint.profile_revision.diagnostics.clear();
+        checkpoint.next_action = "active profile revision confirmed".into();
+        self.save(checkpoint)
+    }
+
+    pub fn reject_profile_revision(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        rejected_digest: Option<&str>,
+        diagnostics: &[String],
+    ) -> Result<(), AutomationRunError> {
+        checkpoint.profile_revision.status = AutomationProfileRevisionStatus::Rejected;
+        checkpoint.profile_revision.pending_digest = None;
+        checkpoint.profile_revision.rejected_digest = rejected_digest.map(str::to_owned);
+        checkpoint.profile_revision.diagnostics = diagnostics
+            .iter()
+            .take(16)
+            .map(|diagnostic| bounded_preview(diagnostic, 512))
+            .collect();
+        checkpoint.next_action =
+            "profile reload rejected; last-known-good revision remains active".into();
+        self.save(checkpoint)
     }
 
     pub fn claim_fixture(
@@ -445,6 +592,25 @@ impl AutomationRunStore {
         checkpoint: &mut AutomationRootCheckpoint,
         issue: &AutomationIssue,
         attempt: u32,
+    ) -> Result<String, AutomationRunError> {
+        let profile_digest = checkpoint.profile_digest.clone();
+        let profile_revision = checkpoint.profile_revision.revision;
+        self.claim_fixture_with_profile(
+            checkpoint,
+            issue,
+            attempt,
+            &profile_digest,
+            profile_revision,
+        )
+    }
+
+    fn claim_fixture_with_profile(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        issue: &AutomationIssue,
+        attempt: u32,
+        profile_digest: &str,
+        profile_revision: u64,
     ) -> Result<String, AutomationRunError> {
         if checkpoint
             .claims
@@ -473,6 +639,9 @@ impl AutomationRunStore {
                 tracker_state: issue.state.clone(),
                 priority: issue.priority,
                 attempt,
+                profile_digest: profile_digest.into(),
+                profile_revision,
+                task_prompt: String::new(),
                 workflow_invocations: 0,
                 turns_in_window: 0,
                 continuation_count: 0,
@@ -505,6 +674,22 @@ impl AutomationRunStore {
         issues: &[AutomationIssue],
         attempt: u32,
     ) -> Result<AutomationCoordinationResult, AutomationRunError> {
+        let canonical_profile = serde_json::to_value(profile)
+            .map_err(std::io::Error::other)
+            .and_then(|value| crate::canonical_sha256(&value).map_err(std::io::Error::other))?;
+        let dispatch_profile_digest = checkpoint
+            .profile_revision
+            .pending_digest
+            .clone()
+            .unwrap_or_else(|| checkpoint.profile_digest.clone());
+        if canonical_profile != dispatch_profile_digest {
+            return Err(AutomationRunError::ProfileDigestMismatch);
+        }
+        let dispatch_profile_revision = if checkpoint.profile_revision.pending_digest.is_some() {
+            checkpoint.profile_revision.revision.saturating_add(1)
+        } else {
+            checkpoint.profile_revision.revision
+        };
         let mut observations = BTreeMap::<String, AutomationIssue>::new();
         for issue in issues {
             observations
@@ -625,10 +810,28 @@ impl AutomationRunStore {
                 );
                 continue;
             }
-            let claim_id = self.claim_fixture(checkpoint, &issue, attempt)?;
+            let claim_id = self.claim_fixture_with_profile(
+                checkpoint,
+                &issue,
+                attempt,
+                &dispatch_profile_digest,
+                dispatch_profile_revision,
+            )?;
             dispatched_claim_ids.push(claim_id);
             active_total += 1;
             *active_by_state.entry(state_key).or_default() += 1;
+        }
+        if !dispatched_claim_ids.is_empty()
+            && checkpoint.profile_revision.pending_digest.as_deref()
+                == Some(dispatch_profile_digest.as_str())
+        {
+            self.write_active_profile_snapshot(&dispatch_profile_digest, profile)?;
+            checkpoint.profile_digest = dispatch_profile_digest;
+            checkpoint.profile_revision.revision = dispatch_profile_revision;
+            checkpoint.profile_revision.status = AutomationProfileRevisionStatus::Active;
+            checkpoint.profile_revision.pending_digest = None;
+            checkpoint.profile_revision.rejected_digest = None;
+            checkpoint.profile_revision.diagnostics.clear();
         }
         checkpoint.next_action = if dispatched_claim_ids.is_empty() {
             "queue reconciled; wait for eligible capacity or tracker changes".into()
@@ -903,7 +1106,7 @@ impl AutomationRunStore {
                 claim.next_action = "inspect retained Issue task and Child Run".into();
                 continue;
             };
-            if is_terminal_state(profile, &issue.state) {
+            if observation.tracker_terminal {
                 if !observation.descendants_cancelled {
                     blockers.push(format!(
                         "{} descendants still active",
@@ -1163,6 +1366,62 @@ impl AutomationRunStore {
             },
         )?;
         Ok(())
+    }
+
+    fn write_versioned_profile_snapshot(
+        &self,
+        digest: &str,
+        profile: &AutomationProfile,
+    ) -> Result<(), AutomationRunError> {
+        if !is_sha256(digest) {
+            return Err(AutomationRunError::ProfileDigestMismatch);
+        }
+        let profiles = self.root.join("automation-profiles");
+        fs::create_dir_all(&profiles)?;
+        let versioned = profiles.join(format!("{digest}.json"));
+        if versioned.exists() {
+            let existing: AutomationProfile = read_json(&versioned)?;
+            let existing_digest = serde_json::to_value(&existing)
+                .map_err(std::io::Error::other)
+                .and_then(|value| crate::canonical_sha256(&value).map_err(std::io::Error::other))?;
+            if existing_digest != digest {
+                return Err(AutomationRunError::ProfileDigestMismatch);
+            }
+        } else {
+            create_json(&versioned, profile)?;
+        }
+        Ok(())
+    }
+
+    fn write_active_profile_snapshot(
+        &self,
+        digest: &str,
+        profile: &AutomationProfile,
+    ) -> Result<(), AutomationRunError> {
+        self.write_versioned_profile_snapshot(digest, profile)?;
+        atomic_json(&self.root.join("automation-profile.json"), profile)?;
+        Ok(())
+    }
+
+    fn ensure_active_profile_snapshot(
+        &self,
+        checkpoint: &AutomationRootCheckpoint,
+    ) -> Result<(), AutomationRunError> {
+        let path = self
+            .root
+            .join("automation-profiles")
+            .join(format!("{}.json", checkpoint.profile_digest));
+        if path.exists() {
+            return Ok(());
+        }
+        let profile: AutomationProfile = read_json(&self.root.join("automation-profile.json"))?;
+        let digest = serde_json::to_value(&profile)
+            .map_err(std::io::Error::other)
+            .and_then(|value| crate::canonical_sha256(&value).map_err(std::io::Error::other))?;
+        if digest != checkpoint.profile_digest {
+            return Err(AutomationRunError::ProfileDigestMismatch);
+        }
+        self.write_versioned_profile_snapshot(&checkpoint.profile_digest, &profile)
     }
 
     fn verify_lease(
@@ -1513,6 +1772,10 @@ fn atomic_json<T: Serialize>(path: &Path, value: &T) -> Result<(), std::io::Erro
 
 fn sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 #[cfg(test)]
@@ -2149,6 +2412,7 @@ mod tests {
                     claim_id: claim_id.clone(),
                     issue_task_active: false,
                     descendants_cancelled: false,
+                    tracker_terminal: false,
                     workflow_status: None,
                 }],
             )
@@ -2222,6 +2486,7 @@ mod tests {
                     claim_id: claim_id.clone(),
                     issue_task_active: true,
                     descendants_cancelled: false,
+                    tracker_terminal: false,
                     workflow_status: Some(RunStatus::Running),
                 }],
             )
@@ -2250,6 +2515,7 @@ mod tests {
                 claim_id: claim_id.clone(),
                 issue_task_active: false,
                 descendants_cancelled: false,
+                tracker_terminal: true,
                 workflow_status: Some(RunStatus::Cancelled),
             }],
         );
@@ -2270,6 +2536,7 @@ mod tests {
                     claim_id: claim_id.clone(),
                     issue_task_active: false,
                     descendants_cancelled: true,
+                    tracker_terminal: true,
                     workflow_status: Some(RunStatus::Cancelled),
                 }],
             )
@@ -2345,6 +2612,107 @@ mod tests {
         assert_eq!(claim.claim_id, identity.claim_id);
         assert_eq!(claim.issue_task, identity.issue_task);
         assert_eq!(claim.worktree, identity.worktree);
+    }
+
+    #[test]
+    fn profile_reload_pins_active_claims_and_activates_only_on_future_dispatch() {
+        let repository = tempdir().unwrap();
+        let workspace = tempdir().unwrap();
+        let profile = profile(workspace.path());
+        let digest = crate::canonical_sha256(&serde_json::to_value(&profile).unwrap()).unwrap();
+        let (store, mut root) = AutomationRunStore::start(AutomationRunStart {
+            repository: repository.path(),
+            owner_thread_id: "task-profile-reload",
+            source_revision: "abc123",
+            profile: &profile,
+            profile_digest: &digest,
+        })
+        .unwrap();
+        let first_issue = issue();
+        let first_claim = store
+            .coordinate_fixture(&mut root, &profile, std::slice::from_ref(&first_issue), 1)
+            .unwrap()
+            .dispatched_claim_ids[0]
+            .clone();
+
+        let mut candidate = profile.clone();
+        candidate.agent.max_turns = 7;
+        let candidate_digest =
+            crate::canonical_sha256(&serde_json::to_value(&candidate).unwrap()).unwrap();
+        store
+            .stage_profile_revision(&mut root, &candidate, &candidate_digest)
+            .unwrap();
+        assert_eq!(
+            root.profile_revision.status,
+            AutomationProfileRevisionStatus::PendingValid
+        );
+        assert_eq!(root.profile_digest, digest);
+        assert_eq!(root.claims[&first_claim].profile_digest, digest);
+        assert_eq!(root.claims[&first_claim].profile_revision, 1);
+
+        let second_issue = queued_issue("issue-39", "ORC-39", "Todo", Some(1));
+        let saturated = store
+            .coordinate_fixture(
+                &mut root,
+                &candidate,
+                std::slice::from_ref(&second_issue),
+                1,
+            )
+            .unwrap();
+        assert!(saturated.dispatched_claim_ids.is_empty());
+        assert_eq!(
+            root.profile_revision.status,
+            AutomationProfileRevisionStatus::PendingValid
+        );
+
+        store
+            .update_claim(&mut root, &first_claim, |claim| {
+                claim.status = AutomationClaimStatus::Completed;
+            })
+            .unwrap();
+        let second_claim = store
+            .coordinate_fixture(
+                &mut root,
+                &candidate,
+                std::slice::from_ref(&second_issue),
+                1,
+            )
+            .unwrap()
+            .dispatched_claim_ids[0]
+            .clone();
+        assert_eq!(root.profile_digest, candidate_digest);
+        assert_eq!(root.profile_revision.revision, 2);
+        assert_eq!(
+            root.profile_revision.status,
+            AutomationProfileRevisionStatus::Active
+        );
+        assert_eq!(root.claims[&first_claim].profile_digest, digest);
+        assert_eq!(root.claims[&second_claim].profile_digest, candidate_digest);
+        assert_eq!(root.claims[&second_claim].profile_revision, 2);
+        assert_eq!(
+            store
+                .load_profile_revision(&digest)
+                .unwrap()
+                .agent
+                .max_turns,
+            20
+        );
+        assert_eq!(store.load_profile().unwrap().agent.max_turns, 7);
+
+        store
+            .reject_profile_revision(
+                &mut root,
+                Some("rejected-digest"),
+                &["agent.max_turns: must be positive".into()],
+            )
+            .unwrap();
+        assert_eq!(root.profile_digest, candidate_digest);
+        assert_eq!(
+            root.profile_revision.status,
+            AutomationProfileRevisionStatus::Rejected
+        );
+        assert_eq!(root.profile_revision.diagnostics.len(), 1);
+        assert_eq!(store.load_profile().unwrap().agent.max_turns, 7);
     }
 
     #[test]

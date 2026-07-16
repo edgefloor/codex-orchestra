@@ -2091,10 +2091,10 @@ index fafdbfa6..a0bf1fee 100644
              WS_METHODS.serverRefreshProviders,
 diff --git a/apps/web/src/components/chat/AutomationProfileDialog.logic.test.ts b/apps/web/src/components/chat/AutomationProfileDialog.logic.test.ts
 new file mode 100644
-index 00000000..d7515de7
+index 00000000..03edd2b3
 --- /dev/null
 +++ b/apps/web/src/components/chat/AutomationProfileDialog.logic.test.ts
-@@ -0,0 +1,178 @@
+@@ -0,0 +1,185 @@
 +import { ThreadId } from "@t3tools/contracts";
 +import { describe, expect, it } from "vite-plus/test";
 +
@@ -2158,6 +2158,9 @@ index 00000000..d7515de7
 +        ownerThreadId: "task-33",
 +        sourceRevision: "abc123",
 +        profileDigest: "profile-digest",
++        profileRevision: 2,
++        profileRevisionStatus: "active",
++        profileDiagnostics: [],
 +        trackerProjectSlug: "orchestra",
 +        leaseEpoch: 1,
 +        revision: 4,
@@ -2184,6 +2187,8 @@ index 00000000..d7515de7
 +            trackerState: "Todo",
 +            priority: 2,
 +            attempt: 1,
++            profileDigest: "claim-profile-digest",
++            profileRevision: 1,
 +            status: "completed",
 +            worktree: "/repo/.worktrees/orc-33-a1",
 +            sourceRevision: "abc123",
@@ -2216,6 +2221,8 @@ index 00000000..d7515de7
 +        trackerState: "Todo",
 +        priority: 2,
 +        status: "completed",
++        profileDigest: "claim-profile-digest",
++        profileRevision: 1,
 +        issueTaskThreadId: "issue-task-33",
 +        workflowRunId: "workflow-run-33",
 +        effects: [
@@ -2275,10 +2282,10 @@ index 00000000..d7515de7
 +});
 diff --git a/apps/web/src/components/chat/AutomationProfileDialog.logic.ts b/apps/web/src/components/chat/AutomationProfileDialog.logic.ts
 new file mode 100644
-index 00000000..039d841a
+index 00000000..67060ea8
 --- /dev/null
 +++ b/apps/web/src/components/chat/AutomationProfileDialog.logic.ts
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,71 @@
 +import type {
 +  AutomationLinearReadResult,
 +  AutomationRunResult,
@@ -2322,6 +2329,8 @@ index 00000000..039d841a
 +    trackerState: claim.trackerState,
 +    priority: claim.priority,
 +    status: claim.status,
++    profileDigest: claim.profileDigest,
++    profileRevision: claim.profileRevision,
 +    issueTaskThreadId: claim.issueTask?.threadId,
 +    workflowRunId: claim.workflowRunId,
 +    effects: claim.effects.slice(0, 4).map((effect) => ({
@@ -2350,10 +2359,10 @@ index 00000000..039d841a
 +}
 diff --git a/apps/web/src/components/chat/AutomationProfileDialog.tsx b/apps/web/src/components/chat/AutomationProfileDialog.tsx
 new file mode 100644
-index 00000000..0438b14a
+index 00000000..a8d42de4
 --- /dev/null
 +++ b/apps/web/src/components/chat/AutomationProfileDialog.tsx
-@@ -0,0 +1,687 @@
+@@ -0,0 +1,714 @@
 +import type {
 +  AutomationLinearReadResult,
 +  AutomationQueueReadInput,
@@ -2789,9 +2798,35 @@ index 00000000..0438b14a
 +              </div>
 +              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
 +                <Badge variant="outline">reconciliation {runResult.run.reconciliation}</Badge>
++                <Badge
++                  variant={
++                    runResult.run.profileRevisionStatus === "rejected" ? "destructive" : "outline"
++                  }
++                >
++                  profile r{runResult.run.profileRevision}{" "}
++                  {runResult.run.profileRevisionStatus.replace("_", " ")}
++                </Badge>
 +                <span>lease epoch {runResult.run.leaseEpoch}</span>
 +                <span>revision {runResult.run.revision}</span>
 +              </div>
++              {runResult.run.pendingProfileDigest ? (
++                <div className="text-xs text-muted-foreground">
++                  Pending valid profile{" "}
++                  <code className="select-all">{runResult.run.pendingProfileDigest}</code>
++                </div>
++              ) : null}
++              {runResult.run.rejectedProfileDigest ? (
++                <div className="text-xs text-destructive">
++                  Rejected profile{" "}
++                  <code className="select-all">{runResult.run.rejectedProfileDigest}</code>
++                </div>
++              ) : null}
++              {runResult.run.profileDiagnostics.map((diagnostic, index) => (
++                <div className="text-xs text-destructive" key={`${index}-${diagnostic.text}`}>
++                  {diagnostic.text}
++                  {diagnostic.truncated ? "…" : ""}
++                </div>
++              ))}
 +              <div className="flex flex-wrap gap-1.5">
 +                {(
 +                  [
@@ -2819,6 +2854,7 @@ index 00000000..0438b14a
 +                  <div className="flex flex-wrap items-center gap-2 text-sm">
 +                    <span className="font-medium">{claim.issueIdentifier}</span>
 +                    <Badge variant="secondary">{claim.status}</Badge>
++                    <Badge variant="outline">profile r{claim.profileRevision}</Badge>
 +                  </div>
 +                  <div className="text-xs text-muted-foreground">
 +                    {claim.issueTitle.text}
@@ -3410,10 +3446,10 @@ index 00000000..4557414a
 +});
 diff --git a/packages/contracts/src/automation.ts b/packages/contracts/src/automation.ts
 new file mode 100644
-index 00000000..0d25e2cd
+index 00000000..a52e71e7
 --- /dev/null
 +++ b/packages/contracts/src/automation.ts
-@@ -0,0 +1,334 @@
+@@ -0,0 +1,341 @@
 +import * as Schema from "effect/Schema";
 +
 +import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -3606,6 +3642,8 @@ index 00000000..0d25e2cd
 +  trackerState: Schema.String,
 +  priority: Schema.optional(Schema.Number),
 +  attempt: NonNegativeInt,
++  profileDigest: Schema.String,
++  profileRevision: NonNegativeInt,
 +  status: AutomationClaimStatus,
 +  worktree: Schema.String,
 +  sourceRevision: Schema.String,
@@ -3658,6 +3696,11 @@ index 00000000..0d25e2cd
 +  ownerThreadId: Schema.String,
 +  sourceRevision: Schema.String,
 +  profileDigest: Schema.String,
++  profileRevision: NonNegativeInt,
++  profileRevisionStatus: Schema.Literals(["active", "pending_valid", "rejected"]),
++  pendingProfileDigest: Schema.optional(Schema.String),
++  rejectedProfileDigest: Schema.optional(Schema.String),
++  profileDiagnostics: Schema.Array(AutomationBoundedText),
 +  trackerProjectSlug: Schema.String,
 +  leaseEpoch: NonNegativeInt,
 +  revision: NonNegativeInt,

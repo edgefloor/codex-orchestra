@@ -536,7 +536,7 @@ pub fn validate_automation_profile(
     if let Some(path) = &workflow_path {
         match fs::read_to_string(path) {
             Ok(source) => {
-                workflow_sha256 = sha256(source.as_bytes());
+                workflow_sha256 = automation_source_sha256(&source);
                 match compile_workflow(&source) {
                     Ok(plan) => {
                         workflow_name = plan.name.clone();
@@ -1140,6 +1140,10 @@ fn invalid_result(diagnostics: Vec<AutomationDiagnostic>) -> AutomationValidatio
         preview: None,
         diagnostics,
     }
+}
+
+pub fn automation_source_sha256(source: &str) -> String {
+    sha256(source.as_bytes())
 }
 
 fn sha256(bytes: &[u8]) -> String {

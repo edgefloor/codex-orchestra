@@ -464,6 +464,26 @@ fn project_automation_run(
         owner_thread_id: checkpoint.owner_thread_id,
         source_revision: checkpoint.source_revision,
         profile_digest: checkpoint.profile_digest,
+        profile_revision: checkpoint.profile_revision.revision,
+        profile_revision_status: match checkpoint.profile_revision.status {
+            core::AutomationProfileRevisionStatus::Active => {
+                protocol::AutomationProfileRevisionStatus::Active
+            }
+            core::AutomationProfileRevisionStatus::PendingValid => {
+                protocol::AutomationProfileRevisionStatus::PendingValid
+            }
+            core::AutomationProfileRevisionStatus::Rejected => {
+                protocol::AutomationProfileRevisionStatus::Rejected
+            }
+        },
+        pending_profile_digest: checkpoint.profile_revision.pending_digest,
+        rejected_profile_digest: checkpoint.profile_revision.rejected_digest,
+        profile_diagnostics: checkpoint
+            .profile_revision
+            .diagnostics
+            .into_iter()
+            .map(automation_bounded_text)
+            .collect(),
         tracker_project_slug: checkpoint.tracker_project_slug,
         lease_epoch: checkpoint.lease_epoch,
         revision: checkpoint.revision,
@@ -508,6 +528,8 @@ fn project_automation_run(
                 tracker_state: claim.tracker_state,
                 priority: claim.priority,
                 attempt: claim.attempt,
+                profile_digest: claim.profile_digest,
+                profile_revision: claim.profile_revision,
                 status: match claim.status {
                     core::AutomationClaimStatus::Claimed => {
                         protocol::AutomationClaimStatus::Claimed
