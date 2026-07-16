@@ -1,16 +1,66 @@
 diff --git a/apps/server/src/provider/Drivers/CodexDriver.ts b/apps/server/src/provider/Drivers/CodexDriver.ts
-index ffcc94ca..aaec0eb5 100644
+index ffcc94ca..d9b04369 100644
 --- a/apps/server/src/provider/Drivers/CodexDriver.ts
 +++ b/apps/server/src/provider/Drivers/CodexDriver.ts
-@@ -120,6 +120,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
+@@ -58,6 +58,10 @@ import {
+   resolveCodexHomeLayout,
+ } from "./CodexHomeLayout.ts";
+ const decodeCodexSettings = Schema.decodeSync(CodexSettings);
++const OrchestraReleaseIdentity = Schema.fromJsonString(
++  Schema.Struct({ manifestSha256: Schema.NonEmptyString }),
++);
++const decodeOrchestraReleaseIdentity = Schema.decodeEffect(OrchestraReleaseIdentity);
+
+ const DRIVER_KIND = ProviderDriverKind.make("codex");
+ const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
+@@ -119,7 +123,46 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
+       const httpClient = yield* HttpClient.HttpClient;
        const serverSettings = yield* ServerSettingsService;
        const eventLoggers = yield* ProviderEventLoggers;
++      const fileSystem = yield* FileSystem.FileSystem;
        const processEnv = mergeProviderInstanceEnvironment(environment);
 +      const productCodexPath = process.env.ORCHESTRA_CODEX_PATH?.trim();
++      const productManifestPath = process.env.ORCHESTRA_RELEASE_MANIFEST?.trim();
++      const expectedProductManifestSha256 = productCodexPath
++        ? yield* Effect.gen(function* () {
++            if (!productManifestPath) {
++              return yield* new ProviderDriverError({
++                driver: DRIVER_KIND,
++                instanceId,
++                detail:
++                  "ORCHESTRA_RELEASE_MANIFEST is required with the sealed Orchestra Codex binary.",
++              });
++            }
++            const raw = yield* fileSystem.readFileString(productManifestPath).pipe(
++              Effect.mapError(
++                (cause) =>
++                  new ProviderDriverError({
++                    driver: DRIVER_KIND,
++                    instanceId,
++                    detail: `Unable to read the Orchestra release manifest at ${productManifestPath}.`,
++                    cause,
++                  }),
++              ),
++            );
++            const manifest = yield* decodeOrchestraReleaseIdentity(raw).pipe(
++              Effect.mapError(
++                (cause) =>
++                  new ProviderDriverError({
++                    driver: DRIVER_KIND,
++                    instanceId,
++                    detail:
++                      "The Orchestra release manifest is invalid or has no manifestSha256 identity.",
++                    cause,
++                  }),
++              ),
++            );
++            return manifest.manifestSha256;
++          })
++        : undefined;
        const homeLayout = yield* resolveCodexHomeLayout(config);
        const continuationIdentity = codexContinuationIdentity(homeLayout);
        const stampIdentity = withInstanceIdentity({
-@@ -143,6 +144,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
+@@ -143,6 +186,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
          ...config,
          enabled,
          homePath: homeLayout.effectiveHomePath ?? "",
@@ -18,14 +68,235 @@ index ffcc94ca..aaec0eb5 100644
        } satisfies CodexSettings;
        const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
          binaryPath: effectiveConfig.binaryPath,
+@@ -159,6 +203,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
+         instanceId,
+         environment: processEnv,
+         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
++        ...(expectedProductManifestSha256 ? { expectedProductManifestSha256 } : {}),
+       });
+       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);
+
+diff --git a/apps/server/src/provider/Layers/CodexAdapter.test.ts b/apps/server/src/provider/Layers/CodexAdapter.test.ts
+index 515a7c6f..b60cc64f 100644
+--- a/apps/server/src/provider/Layers/CodexAdapter.test.ts
++++ b/apps/server/src/provider/Layers/CodexAdapter.test.ts
+@@ -10,6 +10,8 @@ import {
+   ProviderDriverKind,
+   ProviderInstanceId,
+   ProviderItemId,
++  type OrchestraQueryInput,
++  type OrchestraQueryResult,
+   type ProviderApprovalDecision,
+   type ProviderEvent,
+   type ProviderSession,
+@@ -103,6 +105,11 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
+       }),
+   );
+
++  public readonly queryOrchestraImpl = vi.fn(
++    (_input: Omit<OrchestraQueryInput, "threadId">): Promise<OrchestraQueryResult> =>
++      Promise.resolve({ selector: "steps", result: { items: [] } }),
++  );
++
+   public readonly respondToRequestImpl = vi.fn(
+     (_requestId: ApprovalRequestId, _decision: ProviderApprovalDecision): Promise<void> =>
+       Promise.resolve(undefined),
+@@ -141,6 +148,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
+     return Effect.promise(() => this.rollbackThreadImpl(numTurns));
+   }
+
++  queryOrchestra(input: Omit<OrchestraQueryInput, "threadId">) {
++    return Effect.promise(() => this.queryOrchestraImpl(input));
++  }
++
+   respondToRequest(requestId: ApprovalRequestId, decision: ProviderApprovalDecision) {
+     return Effect.promise(() => this.respondToRequestImpl(requestId, decision));
+   }
+@@ -448,6 +459,92 @@ function startLifecycleRuntime() {
+ }
+
+ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
++  it.effect("routes bounded Orchestra queries through the active Codex task", () =>
++    Effect.gen(function* () {
++      const { adapter, runtime } = yield* startLifecycleRuntime();
++      NodeAssert.ok(adapter.queryOrchestra);
++      const result = yield* adapter.queryOrchestra(asThreadId("thread-1"), {
++        runId: "run-1",
++        selector: "evidence",
++        maxItems: 10,
++        maxBytes: 4096,
++      });
++
++      NodeAssert.deepEqual(result, { selector: "steps", result: { items: [] } });
++      NodeAssert.deepEqual(runtime.queryOrchestraImpl.mock.calls[0]?.[0], {
++        runId: "run-1",
++        selector: "evidence",
++        maxItems: 10,
++        maxBytes: 4096,
++      });
++    }),
++  );
++
++  it.effect("projects persisted Orchestra lifecycle into the normal task event stream", () =>
++    Effect.gen(function* () {
++      const { adapter, runtime } = yield* startLifecycleRuntime();
++      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
++
++      yield* runtime.emit({
++        id: asEventId("orchestra:native-event-1"),
++        kind: "notification",
++        provider: ProviderDriverKind.make("codex"),
++        threadId: asThreadId("thread-1"),
++        createdAt: "2026-01-01T00:00:00.000Z",
++        method: "orchestra/lifecycle",
++        payload: {
++          schemaVersion: 1,
++          eventId: "native-event-1",
++          runId: "run-1",
++          sequence: 1,
++          revision: 2,
++          kind: "recovered",
++          projection: {
++            schemaVersion: 1,
++            runId: "run-1",
++            workflowSha256: "workflow-sha",
++            parentThreadId: "provider-thread-1",
++            sourceRevision: "source-revision",
++            status: "running",
++            promotion: "pending",
++            steps: [],
++            nextAction: "Continue step implementation",
++          },
++        },
++      } satisfies ProviderEvent);
++
++      const firstEvent = yield* Fiber.join(firstEventFiber);
++      NodeAssert.equal(firstEvent._tag, "Some");
++      if (firstEvent._tag !== "Some") return;
++      NodeAssert.equal(firstEvent.value.eventId, "orchestra:native-event-1");
++      NodeAssert.equal(firstEvent.value.type, "task.progress");
++      if (firstEvent.value.type !== "task.progress") return;
++      NodeAssert.equal(firstEvent.value.payload.taskId, "orchestra:run-1");
++      NodeAssert.equal(firstEvent.value.payload.summary, "Workflow running");
++      NodeAssert.deepEqual(firstEvent.value.payload.usage, {
++        orchestra: {
++          schemaVersion: 1,
++          eventId: "native-event-1",
++          runId: "run-1",
++          sequence: 1,
++          revision: 2,
++          kind: "recovered",
++          projection: {
++            schemaVersion: 1,
++            runId: "run-1",
++            workflowSha256: "workflow-sha",
++            parentThreadId: "provider-thread-1",
++            sourceRevision: "source-revision",
++            status: "running",
++            promotion: "pending",
++            steps: [],
++            nextAction: "Continue step implementation",
++          },
++        },
++      });
++    }),
++  );
++
+   it.effect("maps completed agent message items to canonical item.completed events", () =>
+     Effect.gen(function* () {
+       const { adapter, runtime } = yield* startLifecycleRuntime();
 diff --git a/apps/server/src/provider/Layers/CodexAdapter.ts b/apps/server/src/provider/Layers/CodexAdapter.ts
-index 270126e9..b62c5c82 100644
+index 270126e9..46d66f62 100644
 --- a/apps/server/src/provider/Layers/CodexAdapter.ts
 +++ b/apps/server/src/provider/Layers/CodexAdapter.ts
-@@ -1613,6 +1613,159 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+@@ -11,6 +11,7 @@ import {
+   type CanonicalItemType,
+   type CanonicalRequestType,
+   type CodexSettings,
++  OrchestraReplayEvent,
+   ProviderDriverKind,
+   type ProviderEvent,
+   ProviderInstanceId,
+@@ -20,6 +21,7 @@ import {
+   type ProviderUserInputAnswers,
+   RuntimeItemId,
+   RuntimeRequestId,
++  RuntimeTaskId,
+   ProviderApprovalDecision,
+   ThreadId,
+   ProviderSendTurnInput,
+@@ -67,6 +69,7 @@ const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
+   CodexSessionRuntimeThreadIdMissingError,
+ );
+ const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
++const isOrchestraReplayEvent = Schema.is(OrchestraReplayEvent);
+
+ const PROVIDER = ProviderDriverKind.make("codex");
+
+@@ -82,6 +85,7 @@ export interface CodexAdapterLiveOptions {
+   >;
+   readonly nativeEventLogPath?: string;
+   readonly nativeEventLogger?: EventNdjsonLogger;
++  readonly expectedProductManifestSha256?: string;
+ }
+
+ interface CodexAdapterSessionContext {
+@@ -490,6 +494,25 @@ function mapToRuntimeEvents(
+   event: ProviderEvent,
+   canonicalThreadId: ThreadId,
+ ): ReadonlyArray<ProviderRuntimeEvent> {
++  if (event.method === "orchestra/lifecycle") {
++    if (!isOrchestraReplayEvent(event.payload)) {
++      return [];
++    }
++    const lifecycle = event.payload;
++    return [
++      {
++        ...runtimeEventBase(event, canonicalThreadId),
++        type: "task.progress",
++        payload: {
++          taskId: RuntimeTaskId.make(`orchestra:${lifecycle.runId}`),
++          description: `Orchestra ${lifecycle.kind}`,
++          summary: `Workflow ${lifecycle.projection.status}`,
++          usage: { orchestra: lifecycle },
++        },
++      },
++    ];
++  }
++
+   if (event.kind === "error") {
+     if (!event.message) {
+       return [];
+@@ -1393,6 +1416,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+           cwd: input.cwd ?? process.cwd(),
+           binaryPath: codexConfig.binaryPath,
+           ...(options?.environment ? { environment: options.environment } : {}),
++          ...(options?.expectedProductManifestSha256
++            ? { expectedProductManifestSha256: options.expectedProductManifestSha256 }
++            : {}),
+           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
+           ...(isCodexResumeCursorSchema(input.resumeCursor)
+             ? { resumeCursor: input.resumeCursor }
+@@ -1613,6 +1639,175 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
      );
    };
 
++  const queryOrchestra: NonNullable<CodexAdapterShape["queryOrchestra"]> = Effect.fn(
++    "queryOrchestra",
++  )(function* (threadId, input) {
++    const session = yield* requireSession(threadId);
++    if (!session.runtime.queryOrchestra) {
++      return yield* new ProviderAdapterRequestError({
++        provider: PROVIDER,
++        method: "orchestra/query",
++        detail: "This Codex runtime does not expose bounded Orchestra detail queries.",
++      });
++    }
++    return yield* session.runtime
++      .queryOrchestra(input)
++      .pipe(Effect.mapError((cause) => mapCodexRuntimeError(threadId, "orchestra/query", cause)));
++  });
++
 +  const validateAutomationProfile: NonNullable<CodexAdapterShape["validateAutomationProfile"]> =
 +    Effect.fn("validateAutomationProfile")(function* (threadId, input) {
 +      const session = yield* requireSession(threadId);
@@ -182,10 +453,11 @@ index 270126e9..b62c5c82 100644
    const respondToRequest: CodexAdapterShape["respondToRequest"] = (threadId, requestId, decision) =>
      requireSession(threadId).pipe(
        Effect.flatMap((session) => session.runtime.respondToRequest(requestId, decision)),
-@@ -1700,6 +1853,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+@@ -1700,6 +1895,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
      interruptTurn,
      readThread,
      rollbackThread,
++    queryOrchestra,
 +    validateAutomationProfile,
 +    runAutomationFixture,
 +    readLinearAutomation,
@@ -198,11 +470,108 @@ index 270126e9..b62c5c82 100644
      respondToRequest,
      respondToUserInput,
      stopSession,
+diff --git a/apps/server/src/provider/Layers/CodexSessionRuntime.test.ts b/apps/server/src/provider/Layers/CodexSessionRuntime.test.ts
+index 8aeacd87..a1aa525e 100644
+--- a/apps/server/src/provider/Layers/CodexSessionRuntime.test.ts
++++ b/apps/server/src/provider/Layers/CodexSessionRuntime.test.ts
+@@ -14,9 +14,11 @@ import {
+ } from "../CodexDeveloperInstructions.ts";
+ import {
+   buildTurnStartParams,
++  decodeOrchestraThreadReadEnvelope,
+   hasConfiguredMcpServer,
+   isRecoverableThreadResumeError,
+   openCodexThread,
++  validateOrchestraProductCompatibility,
+ } from "./CodexSessionRuntime.ts";
+ const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
+@@ -37,6 +39,80 @@ describe("CodexSessionRuntimeIdentifierGenerationError", () => {
+   });
+ });
+
++describe("Orchestra Product compatibility", () => {
++  it("accepts only the exact manifest with the required native capabilities", () => {
++    NodeAssert.equal(
++      validateOrchestraProductCompatibility("manifest-a", {
++        manifestSha256: "manifest-a",
++        capabilities: ["orchestra/query", "orchestra/threadItem"],
++      }),
++      undefined,
++    );
++
++    const wrongManifest = validateOrchestraProductCompatibility("manifest-a", {
++      manifestSha256: "manifest-b",
++      capabilities: ["orchestra/query", "orchestra/threadItem"],
++    });
++    NodeAssert.equal(wrongManifest?._tag, "CodexSessionRuntimeProductMismatchError");
++    NodeAssert.equal(wrongManifest?.actualManifestSha256, "manifest-b");
++
++    const missingCapability = validateOrchestraProductCompatibility("manifest-a", {
++      manifestSha256: "manifest-a",
++      capabilities: ["orchestra/query"],
++    });
++    NodeAssert.match(missingCapability?.message ?? "", /orchestra\/threadItem/);
++
++    const stockCodex = validateOrchestraProductCompatibility("manifest-a", null);
++    NodeAssert.match(stockCodex?.message ?? "", /does not expose/);
++  });
++});
++
++describe("Orchestra task replay", () => {
++  it.effect("decodes Rust Option fields serialized as null", () =>
++    Effect.gen(function* () {
++      const decoded = yield* decodeOrchestraThreadReadEnvelope({
++        thread: { id: "provider-thread" },
++        orchestra: {
++          latest: {
++            schemaVersion: 1,
++            eventId: "run-1:1",
++            runId: "run-1",
++            sequence: 1,
++            revision: 1,
++            kind: "invoked",
++            projection: {
++              schemaVersion: 1,
++              runId: "run-1",
++              workflowSha256: "sha256",
++              parentThreadId: "provider-thread",
++              sourceRevision: "revision",
++              status: "completed",
++              promotion: "notRequired",
++              steps: [
++                {
++                  id: "check",
++                  status: "completed",
++                  attempts: 1,
++                  rounds: 1,
++                  outputKeys: ["passed"],
++                  finalResponse: null,
++                  error: null,
++                },
++              ],
++              nextAction: "run complete",
++            },
++          },
++          events: [],
++          replayTruncated: false,
++        },
++      });
++
++      NodeAssert.equal(decoded.orchestra?.latest.projection.status, "completed");
++      NodeAssert.equal(decoded.orchestra?.latest.projection.steps[0]?.error, null);
++    }),
++  );
++});
++
+ function makeThreadOpenResponse(
+   threadId: string,
+ ): CodexRpc.ClientRequestResponsesByMethod["thread/start"] {
 diff --git a/apps/server/src/provider/Layers/CodexSessionRuntime.ts b/apps/server/src/provider/Layers/CodexSessionRuntime.ts
-index 99ac498f..e86fb17f 100644
+index 99ac498f..739f5008 100644
 --- a/apps/server/src/provider/Layers/CodexSessionRuntime.ts
 +++ b/apps/server/src/provider/Layers/CodexSessionRuntime.ts
-@@ -1,4 +1,15 @@
+@@ -1,4 +1,20 @@
  import {
 +  AutomationLinearReadResult,
 +  type AutomationLinearReadInput,
@@ -215,10 +584,15 @@ index 99ac498f..e86fb17f 100644
 +  type AutomationCancelInput,
 +  AutomationValidateResult,
 +  type AutomationValidateInput,
++  OrchestraQueryInput,
++  OrchestraQueryResponse,
++  type OrchestraQueryResult,
++  OrchestraReplayEvent,
++  OrchestraTaskReplay,
    ApprovalRequestId,
    DEFAULT_MODEL,
    EventId,
-@@ -42,6 +53,10 @@ import {
+@@ -42,6 +58,25 @@ import {
    CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
  } from "../CodexDeveloperInstructions.ts";
  const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
@@ -226,10 +600,33 @@ index 99ac498f..e86fb17f 100644
 +const decodeAutomationRunResponse = Schema.decodeUnknownEffect(AutomationRunResult);
 +const decodeAutomationLinearReadResponse = Schema.decodeUnknownEffect(AutomationLinearReadResult);
 +const decodeAutomationQueueReadResponse = Schema.decodeUnknownEffect(AutomationQueueReadResult);
++const decodeOrchestraQueryResponse = Schema.decodeUnknownEffect(OrchestraQueryResponse);
++const OrchestraThreadReadEnvelope = Schema.Struct({
++  orchestra: Schema.optional(OrchestraTaskReplay),
++});
++export const decodeOrchestraThreadReadEnvelope =
++  Schema.decodeUnknownEffect(OrchestraThreadReadEnvelope);
++const OrchestraProductHandshake = Schema.Struct({
++  orchestraProduct: Schema.NullOr(
++    Schema.Struct({
++      manifestSha256: Schema.String,
++      capabilities: Schema.Array(Schema.String),
++    }),
++  ),
++});
++const decodeOrchestraProductHandshake = Schema.decodeUnknownEffect(OrchestraProductHandshake);
 
  const PROVIDER = ProviderDriverKind.make("codex");
 
-@@ -142,6 +157,33 @@ export interface CodexSessionRuntimeShape {
+@@ -107,6 +142,7 @@ export interface CodexSessionRuntimeOptions {
+   readonly serviceTier?: CodexServiceTier | undefined;
+   readonly resumeCursor?: CodexResumeCursor;
+   readonly appServerArgs?: ReadonlyArray<string>;
++  readonly expectedProductManifestSha256?: string;
+ }
+
+ export interface CodexSessionRuntimeSendTurnInput {
+@@ -142,6 +178,36 @@ export interface CodexSessionRuntimeShape {
    readonly rollbackThread: (
      numTurns: number,
    ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
@@ -260,10 +657,275 @@ index 99ac498f..e86fb17f 100644
 +  readonly cancelAutomation?: (
 +    input: Omit<AutomationCancelInput, "threadId">,
 +  ) => Effect.Effect<AutomationRunResult, CodexSessionRuntimeError>;
++  readonly queryOrchestra?: (
++    input: Omit<OrchestraQueryInput, "threadId">,
++  ) => Effect.Effect<OrchestraQueryResult, CodexSessionRuntimeError>;
    readonly respondToRequest: (
      requestId: ApprovalRequestId,
      decision: ProviderApprovalDecision,
-@@ -1346,6 +1388,159 @@ export const makeCodexSessionRuntime = (
+@@ -159,7 +225,48 @@ export type CodexSessionRuntimeError =
+   | CodexSessionRuntimePendingApprovalNotFoundError
+   | CodexSessionRuntimePendingUserInputNotFoundError
+   | CodexSessionRuntimeInvalidUserInputAnswersError
+-  | CodexSessionRuntimeThreadIdMissingError;
++  | CodexSessionRuntimeThreadIdMissingError
++  | CodexSessionRuntimeProductMismatchError;
++
++export class CodexSessionRuntimeProductMismatchError extends Schema.TaggedErrorClass<CodexSessionRuntimeProductMismatchError>()(
++  "CodexSessionRuntimeProductMismatchError",
++  {
++    expectedManifestSha256: Schema.String,
++    actualManifestSha256: Schema.optional(Schema.String),
++    detail: Schema.String,
++  },
++) {
++  override get message(): string {
++    return this.detail;
++  }
++}
++
++const REQUIRED_ORCHESTRA_PRODUCT_CAPABILITIES = [
++  "orchestra/query",
++  "orchestra/threadItem",
++] as const;
++
++export function validateOrchestraProductCompatibility(
++  expectedManifestSha256: string,
++  actual: {
++    readonly manifestSha256: string;
++    readonly capabilities: ReadonlyArray<string>;
++  } | null,
++): CodexSessionRuntimeProductMismatchError | undefined {
++  const missingCapabilities = REQUIRED_ORCHESTRA_PRODUCT_CAPABILITIES.filter(
++    (capability) => !actual?.capabilities.includes(capability),
++  );
++  if (actual?.manifestSha256 === expectedManifestSha256 && missingCapabilities.length === 0) {
++    return undefined;
++  }
++  return new CodexSessionRuntimeProductMismatchError({
++    expectedManifestSha256,
++    ...(actual?.manifestSha256 ? { actualManifestSha256: actual.manifestSha256 } : {}),
++    detail: actual
++      ? `Orchestra Product mismatch. Missing capabilities: ${missingCapabilities.join(", ") || "none"}.`
++      : "The selected Codex binary does not expose the Orchestra Product manifest.",
++  });
++}
+
+ export class CodexSessionRuntimePendingApprovalNotFoundError extends Schema.TaggedErrorClass<CodexSessionRuntimePendingApprovalNotFoundError>()(
+   "CodexSessionRuntimePendingApprovalNotFoundError",
+@@ -708,6 +815,8 @@ export const makeCodexSessionRuntime = (
+     const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
+     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
+     const collabReceiverTurnsRef = yield* Ref.make(new Map<string, TurnId>());
++    const seenOrchestraEventsRef = yield* Ref.make(new Set<string>());
++    const settledTurnIdsRef = yield* Ref.make(new Set<string>());
+     const closedRef = yield* Ref.make(false);
+
+     // `~` is not shell-expanded when env vars are set via
+@@ -800,6 +909,91 @@ export const makeCodexSessionRuntime = (
+         message,
+       });
+
++    const readOrchestraReplay = (providerThreadId: string) =>
++      Effect.gen(function* () {
++        const raw = yield* client.raw.request("thread/read", {
++          threadId: providerThreadId,
++          includeTurns: false,
++        });
++        const envelope = yield* decodeOrchestraThreadReadEnvelope(raw).pipe(
++          Effect.mapError((error) =>
++            CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
++              "decode-response-payload",
++              error,
++              { method: "thread/read" },
++            ),
++          ),
++        );
++        return envelope.orchestra;
++      });
++
++    const emitOrchestraLifecycle = (event: OrchestraReplayEvent) =>
++      Ref.modify(seenOrchestraEventsRef, (seen) => {
++        if (seen.has(event.eventId)) {
++          return [false, seen] as const;
++        }
++        const next = new Set(seen);
++        next.add(event.eventId);
++        return [true, next] as const;
++      }).pipe(
++        Effect.flatMap((isNew) =>
++          isNew
++            ? offerEvent({
++                id: EventId.make(`orchestra:${event.eventId}`),
++                provider: PROVIDER,
++                ...(options.providerInstanceId
++                  ? { providerInstanceId: options.providerInstanceId }
++                  : {}),
++                createdAt: DateTime.formatIso(DateTime.nowUnsafe()),
++                kind: "notification",
++                threadId: options.threadId,
++                method: "orchestra/lifecycle",
++                payload: event,
++              })
++            : Effect.void,
++        ),
++      );
++
++    const refreshOrchestraLifecycle = (providerThreadId: string) =>
++      readOrchestraReplay(providerThreadId).pipe(
++        Effect.flatMap((replay) =>
++          replay
++            ? Effect.forEach(
++                replay.events.length > 0 ? replay.events : [replay.latest],
++                emitOrchestraLifecycle,
++                { concurrency: 1, discard: true },
++              )
++            : Effect.void,
++        ),
++      );
++
++    const claimTurnSettlement = (turnId: TurnId) =>
++      Ref.modify(settledTurnIdsRef, (settled) => {
++        if (settled.has(turnId)) {
++          return [false, settled] as const;
++        }
++        const next = new Set(settled);
++        next.add(turnId);
++        return [true, next] as const;
++      });
++
++    const refreshOrchestraLifecycleAfterSettlement = (providerThreadId: string) =>
++      refreshOrchestraLifecycle(providerThreadId).pipe(
++        Effect.catch((cause) =>
++          emitEvent({
++            kind: "notification",
++            threadId: options.threadId,
++            method: "process/stderr",
++            message: `Failed to refresh Orchestra lifecycle: ${cause instanceof Error ? cause.message : String(cause)}`,
++          }),
++        ),
++        // Notification callbacks run on the protocol's serialized incoming
++        // dispatcher. Fork the follow-up request so its response can be routed
++        // after the current notification handler returns.
++        Effect.forkIn(runtimeScope),
++        Effect.asVoid,
++      );
++
+     const settlePendingApprovals = (decision: ProviderApprovalDecision) =>
+       Ref.get(pendingApprovalsRef).pipe(
+         Effect.flatMap((pendingApprovals) =>
+@@ -826,6 +1020,14 @@ export const makeCodexSessionRuntime = (
+
+     const handleRawNotification = (notification: CodexServerNotification) =>
+       Effect.gen(function* () {
++        if (notification.method === "turn/completed") {
++          const isFirstSettlement = yield* claimTurnSettlement(
++            TurnId.make(notification.params.turn.id),
++          );
++          if (!isFirstSettlement) {
++            return;
++          }
++        }
+         const payload = notification.params;
+         const route = readRouteFields(notification);
+         const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
+@@ -927,11 +1129,58 @@ export const makeCodexSessionRuntime = (
+             status: payload.turn.status === "failed" ? "error" : "ready",
+             activeTurnId: undefined,
+             ...(lastError ? { lastError } : {}),
+-          });
++          }).pipe(Effect.andThen(refreshOrchestraLifecycleAfterSettlement(payload.threadId)));
+         }),
+       ),
+     );
+
++    // The pinned Orchestra Product currently reports the native thread's
++    // authoritative idle transition without a separate turn/completed frame.
++    // Settle that Product turn at the existing Codex provider seam so T3Code's
++    // normal task timeline cannot remain stuck in "running". Stock Codex is
++    // unchanged, and an eventual native turn/completed frame is deduplicated.
++    if (options.expectedProductManifestSha256) {
++      yield* client.handleServerNotification("thread/status/changed", (payload) =>
++        Effect.gen(function* () {
++          if (payload.status.type !== "idle") {
++            return;
++          }
++          const session = yield* Ref.get(sessionRef);
++          const providerThreadId = currentProviderThreadId(session);
++          if (providerThreadId && payload.threadId !== providerThreadId) {
++            return;
++          }
++          const activeTurnId = session.activeTurnId;
++          if (!activeTurnId || !(yield* claimTurnSettlement(activeTurnId))) {
++            return;
++          }
++          const failed = session.status === "error";
++          yield* updateSession(sessionRef, {
++            status: failed ? "error" : "ready",
++            activeTurnId: undefined,
++          });
++          yield* emitEvent({
++            kind: "notification",
++            threadId: options.threadId,
++            method: "turn/completed",
++            turnId: activeTurnId,
++            payload: {
++              threadId: payload.threadId,
++              turn: {
++                id: activeTurnId,
++                items: [],
++                status: failed ? "failed" : "completed",
++                ...(failed
++                  ? { error: { message: session.lastError ?? "Codex turn failed" } }
++                  : {}),
++              },
++            } satisfies EffectCodexSchema.V2TurnCompletedNotification,
++          });
++          yield* refreshOrchestraLifecycleAfterSettlement(payload.threadId);
++        }),
++      );
++    }
++
+     yield* client.handleServerNotification("error", (payload) =>
+       currentSessionProviderThreadId.pipe(
+         Effect.flatMap((providerThreadId) => {
+@@ -1199,7 +1448,26 @@ export const makeCodexSessionRuntime = (
+
+     const start = Effect.fn("CodexSessionRuntime.start")(function* () {
+       yield* emitSessionEvent("session/connecting", "Starting Codex App Server session.");
+-      yield* client.request("initialize", buildCodexInitializeParams());
++      if (options.expectedProductManifestSha256) {
++        const raw = yield* client.raw.request("initialize", buildCodexInitializeParams());
++        const handshake = yield* decodeOrchestraProductHandshake(raw).pipe(
++          Effect.mapError((error) =>
++            CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
++              "decode-response-payload",
++              error,
++              { method: "initialize" },
++            ),
++          ),
++        );
++        const actual = handshake.orchestraProduct;
++        const mismatch = validateOrchestraProductCompatibility(
++          options.expectedProductManifestSha256,
++          actual,
++        );
++        if (mismatch) return yield* mismatch;
++      } else {
++        yield* client.request("initialize", buildCodexInitializeParams());
++      }
+       yield* client.notify("initialized", undefined);
+
+       const requestedModel = normalizeCodexModelSlug(options.model);
+@@ -1224,6 +1492,7 @@ export const makeCodexSessionRuntime = (
+         updatedAt: yield* nowIso,
+       } satisfies ProviderSession;
+       yield* Ref.set(sessionRef, session);
++      yield* refreshOrchestraLifecycle(providerThreadId);
+       yield* emitSessionEvent("session/ready", "Codex App Server session ready.");
+       return session;
+     });
+@@ -1346,6 +1615,177 @@ export const makeCodexSessionRuntime = (
            });
            return parseThreadSnapshot(response);
          }),
@@ -420,14 +1082,32 @@ index 99ac498f..e86fb17f 100644
 +            ),
 +          );
 +        }),
++      queryOrchestra: (input) =>
++        Effect.gen(function* () {
++          const providerThreadId = yield* readProviderThreadId;
++          const response = yield* client.raw.request("orchestra/query", {
++            ...input,
++            threadId: providerThreadId,
++          });
++          const decoded = yield* decodeOrchestraQueryResponse(response).pipe(
++            Effect.mapError((error) =>
++              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
++                "decode-response-payload",
++                error,
++                { method: "orchestra/query" },
++              ),
++            ),
++          );
++          return decoded.result;
++        }),
        respondToRequest: (requestId, decision) =>
          Effect.gen(function* () {
            const pending = (yield* Ref.get(pendingApprovalsRef)).get(requestId);
 diff --git a/apps/server/src/provider/Layers/ProviderService.ts b/apps/server/src/provider/Layers/ProviderService.ts
-index 2eaaeb8c..0cb04cab 100644
+index 2eaaeb8c..0b8465dd 100644
 --- a/apps/server/src/provider/Layers/ProviderService.ts
 +++ b/apps/server/src/provider/Layers/ProviderService.ts
-@@ -10,6 +10,13 @@
+@@ -10,6 +10,14 @@
   * @module ProviderServiceLive
   */
  import {
@@ -438,10 +1118,11 @@ index 2eaaeb8c..0cb04cab 100644
 +  AutomationReconcileInput,
 +  AutomationRunInput,
 +  AutomationValidateInput,
++  OrchestraQueryInput,
    ModelSelection,
    NonNegativeInt,
    ThreadId,
-@@ -1008,6 +1015,213 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+@@ -1008,6 +1016,234 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
      );
    });
 
@@ -652,13 +1333,35 @@ index 2eaaeb8c..0cb04cab 100644
 +    return yield* routed.adapter.resumeAutomation(routed.threadId, request);
 +  });
 +
++  const queryOrchestra = Effect.fn("queryOrchestra")(function* (rawInput: OrchestraQueryInput) {
++    const input = yield* decodeInputOrValidationError({
++      operation: "ProviderService.queryOrchestra",
++      schema: OrchestraQueryInput,
++      payload: rawInput,
++    });
++    const routed = yield* resolveRoutableSession({
++      threadId: input.threadId,
++      operation: "ProviderService.queryOrchestra",
++      allowRecovery: true,
++    });
++    if (routed.adapter.provider !== "codex" || !routed.adapter.queryOrchestra) {
++      return yield* toValidationError(
++        "ProviderService.queryOrchestra",
++        "Bounded Orchestra detail queries require an active Orchestra-enabled Codex task.",
++      );
++    }
++    const { threadId: _threadId, ...request } = input;
++    return yield* routed.adapter.queryOrchestra(routed.threadId, request);
++  });
++
    const runStopAll = Effect.fn("runStopAll")(function* () {
      const threadIds = yield* directory.listThreadIds();
      const currentAdapters = yield* getAdapterEntries;
-@@ -1079,6 +1293,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+@@ -1079,6 +1315,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
      getCapabilities,
      getInstanceInfo,
      rollbackConversation,
++    queryOrchestra,
 +    validateAutomationProfile,
 +    runAutomationFixture,
 +    readLinearAutomation,
@@ -672,10 +1375,10 @@ index 2eaaeb8c..0cb04cab 100644
      // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
      // independently receive all runtime events.
 diff --git a/apps/server/src/provider/Services/ProviderAdapter.ts b/apps/server/src/provider/Services/ProviderAdapter.ts
-index 01eeae7b..334b9615 100644
+index 01eeae7b..ca0d9719 100644
 --- a/apps/server/src/provider/Services/ProviderAdapter.ts
 +++ b/apps/server/src/provider/Services/ProviderAdapter.ts
-@@ -8,6 +8,17 @@
+@@ -8,6 +8,19 @@
   * @module ProviderAdapter
   */
  import type {
@@ -690,10 +1393,12 @@ index 01eeae7b..334b9615 100644
 +  AutomationCancelInput,
 +  AutomationValidateInput,
 +  AutomationValidateResult,
++  OrchestraQueryInput,
++  OrchestraQueryResult,
    ApprovalRequestId,
    ProviderApprovalDecision,
    ProviderDriverKind,
-@@ -114,6 +125,44 @@ export interface ProviderAdapterShape<TError> {
+@@ -114,6 +127,48 @@ export interface ProviderAdapterShape<TError> {
      numTurns: number,
    ) => Effect.Effect<ProviderThreadSnapshot, TError>;
 
@@ -734,15 +1439,19 @@ index 01eeae7b..334b9615 100644
 +    threadId: ThreadId,
 +    input: Omit<AutomationCancelInput, "threadId">,
 +  ) => Effect.Effect<AutomationRunResult, TError>;
++  readonly queryOrchestra?: (
++    threadId: ThreadId,
++    input: Omit<OrchestraQueryInput, "threadId">,
++  ) => Effect.Effect<OrchestraQueryResult, TError>;
 +
    /**
     * Stop all sessions owned by this adapter.
     */
 diff --git a/apps/server/src/provider/Services/ProviderService.ts b/apps/server/src/provider/Services/ProviderService.ts
-index 4d4cb4fa..e8728400 100644
+index 4d4cb4fa..5cc4aba7 100644
 --- a/apps/server/src/provider/Services/ProviderService.ts
 +++ b/apps/server/src/provider/Services/ProviderService.ts
-@@ -12,6 +12,17 @@
+@@ -12,6 +12,19 @@
   * @module ProviderService
   */
  import type {
@@ -757,10 +1466,12 @@ index 4d4cb4fa..e8728400 100644
 +  AutomationCancelInput,
 +  AutomationValidateInput,
 +  AutomationValidateResult,
++  OrchestraQueryInput,
++  OrchestraQueryResult,
    ProviderInterruptTurnInput,
    ProviderInstanceId,
    ProviderRespondToRequestInput,
-@@ -105,6 +116,34 @@ export interface ProviderServiceShape {
+@@ -105,6 +118,37 @@ export interface ProviderServiceShape {
      readonly numTurns: number;
    }) => Effect.Effect<void, ProviderServiceError>;
 
@@ -791,24 +1502,28 @@ index 4d4cb4fa..e8728400 100644
 +  readonly cancelAutomation?: (
 +    input: AutomationCancelInput,
 +  ) => Effect.Effect<AutomationRunResult, ProviderServiceError>;
++  readonly queryOrchestra?: (
++    input: OrchestraQueryInput,
++  ) => Effect.Effect<OrchestraQueryResult, ProviderServiceError>;
 +
    /**
     * Canonical provider runtime event stream.
     *
 diff --git a/apps/server/src/ws.ts b/apps/server/src/ws.ts
-index fafdbfa6..6bdbd5a1 100644
+index fafdbfa6..a0bf1fee 100644
 --- a/apps/server/src/ws.ts
 +++ b/apps/server/src/ws.ts
-@@ -11,6 +11,8 @@ import * as Schema from "effect/Schema";
+@@ -11,6 +11,9 @@ import * as Schema from "effect/Schema";
  import * as Stream from "effect/Stream";
  import {
    DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
 +  AutomationRunError,
 +  AutomationValidateError,
++  OrchestraQueryError,
    AuthOrchestrationOperateScope,
    AuthOrchestrationReadScope,
    AuthReviewWriteScope,
-@@ -76,6 +78,7 @@ import {
+@@ -76,6 +79,7 @@ import {
    observeRpcStreamEffect as instrumentRpcStreamEffect,
  } from "./observability/RpcInstrumentation.ts";
  import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
@@ -816,7 +1531,7 @@ index fafdbfa6..6bdbd5a1 100644
  import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
  import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
  import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
-@@ -321,6 +324,15 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
+@@ -321,6 +325,16 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
    [WS_METHODS.vcsSwitchRef, AuthOrchestrationOperateScope],
    [WS_METHODS.vcsInit, AuthOrchestrationOperateScope],
    [WS_METHODS.reviewGetDiffPreview, AuthReviewWriteScope],
@@ -829,10 +1544,11 @@ index fafdbfa6..6bdbd5a1 100644
 +  [WS_METHODS.automationRefresh, AuthOrchestrationOperateScope],
 +  [WS_METHODS.automationResume, AuthOrchestrationOperateScope],
 +  [WS_METHODS.automationCancel, AuthOrchestrationOperateScope],
++  [WS_METHODS.orchestraQuery, AuthOrchestrationReadScope],
    [WS_METHODS.terminalOpen, AuthTerminalOperateScope],
    [WS_METHODS.terminalAttach, AuthTerminalOperateScope],
    [WS_METHODS.terminalWrite, AuthTerminalOperateScope],
-@@ -1242,6 +1254,240 @@ const makeWsRpcLayer = (
+@@ -1242,6 +1256,266 @@ const makeWsRpcLayer = (
            observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {
              "rpc.aggregate": "server",
            }),
@@ -1069,6 +1785,32 @@ index fafdbfa6..6bdbd5a1 100644
 +              );
 +            }),
 +            { "rpc.aggregate": "automation", "thread.id": input.threadId },
++          ),
++        [WS_METHODS.orchestraQuery]: (input) =>
++          observeRpcEffect(
++            WS_METHODS.orchestraQuery,
++            Effect.gen(function* () {
++              const service = Option.getOrUndefined(
++                yield* Effect.serviceOption(ProviderService.ProviderService),
++              );
++              if (!service?.queryOrchestra) {
++                return yield* new OrchestraQueryError({
++                  threadId: input.threadId,
++                  message: "Bounded Orchestra detail queries are unavailable.",
++                });
++              }
++              return yield* service.queryOrchestra(input).pipe(
++                Effect.mapError(
++                  (cause) =>
++                    new OrchestraQueryError({
++                      threadId: input.threadId,
++                      message: cause.message,
++                      cause,
++                    }),
++                ),
++              );
++            }),
++            { "rpc.aggregate": "orchestra", "thread.id": input.threadId },
 +          ),
          [WS_METHODS.serverRefreshProviders]: (input) =>
            observeRpcEffect(
@@ -2051,6 +2793,277 @@ index ef3ec863..59e5900a 100644
          {activeProjectScripts && (
            <ProjectScriptsControl
              scripts={activeProjectScripts}
+diff --git a/apps/web/src/components/chat/MessagesTimeline.tsx b/apps/web/src/components/chat/MessagesTimeline.tsx
+index 61d78558..dc62cb01 100644
+--- a/apps/web/src/components/chat/MessagesTimeline.tsx
++++ b/apps/web/src/components/chat/MessagesTimeline.tsx
+@@ -106,6 +106,7 @@ import {
+ } from "./userMessageTerminalContexts";
+ import { SkillInlineText } from "./SkillInlineText";
+ import { formatWorkspaceRelativePath } from "../../filePathDisplay";
++import { OrchestraLifecycleEntry, readOrchestraReplayEvent } from "./OrchestraLifecycleEntry";
+ import {
+   buildReviewCommentRenderablePatch,
+   formatReviewCommentFence,
+@@ -1900,6 +1901,25 @@ const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation(
+ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
+   workEntry: TimelineWorkEntry;
+   workspaceRoot: string | undefined;
++}) {
++  const { workEntry, workspaceRoot } = props;
++  const ctx = use(TimelineRowCtx);
++  const orchestraEvent = readOrchestraReplayEvent(workEntry.toolData);
++  if (orchestraEvent && ctx.threadRef) {
++    return (
++      <OrchestraLifecycleEntry
++        environmentId={ctx.activeThreadEnvironmentId}
++        threadId={ctx.threadRef.threadId}
++        event={orchestraEvent}
++      />
++    );
++  }
++  return <DefaultWorkEntryRow workEntry={workEntry} workspaceRoot={workspaceRoot} />;
++});
++
++const DefaultWorkEntryRow = memo(function DefaultWorkEntryRow(props: {
++  workEntry: TimelineWorkEntry;
++  workspaceRoot: string | undefined;
+ }) {
+   const { workEntry, workspaceRoot } = props;
+   const activity = use(TimelineRowActivityCtx);
+diff --git a/apps/web/src/components/chat/OrchestraLifecycleEntry.tsx b/apps/web/src/components/chat/OrchestraLifecycleEntry.tsx
+new file mode 100644
+index 00000000..ae5ac26f
+--- /dev/null
++++ b/apps/web/src/components/chat/OrchestraLifecycleEntry.tsx
+@@ -0,0 +1,162 @@
++import {
++  OrchestraReplayEvent,
++  type EnvironmentId,
++  type OrchestraEvidenceReference,
++  type OrchestraExecutionStepProjection,
++  type ThreadId,
++} from "@t3tools/contracts";
++import {
++  isAtomCommandInterrupted,
++  squashAtomCommandFailure,
++} from "@t3tools/client-runtime/state/runtime";
++import * as Schema from "effect/Schema";
++import { ChevronDownIcon, CircleAlertIcon, GitBranchIcon } from "lucide-react";
++import { memo, useCallback, useState } from "react";
++
++import { queryOrchestra } from "~/state/orchestra";
++import { useAtomCommand } from "~/state/use-atom-command";
++import { cn } from "~/lib/utils";
++import { Button } from "../ui/button";
++
++const isReplayEvent = Schema.is(OrchestraReplayEvent);
++
++export function readOrchestraReplayEvent(value: unknown): OrchestraReplayEvent | null {
++  return isReplayEvent(value) ? value : null;
++}
++
++function readableError(cause: unknown): string {
++  return cause instanceof Error ? cause.message : "Could not load Orchestra details.";
++}
++
++export const OrchestraLifecycleEntry = memo(function OrchestraLifecycleEntry(props: {
++  readonly environmentId: EnvironmentId;
++  readonly threadId: ThreadId;
++  readonly event: OrchestraReplayEvent;
++}) {
++  const { environmentId, threadId, event } = props;
++  const query = useAtomCommand(queryOrchestra, { reportFailure: false });
++  const [expanded, setExpanded] = useState(false);
++  const [loading, setLoading] = useState(false);
++  const [steps, setSteps] = useState<ReadonlyArray<OrchestraExecutionStepProjection> | null>(null);
++  const [evidence, setEvidence] = useState<ReadonlyArray<OrchestraEvidenceReference> | null>(null);
++  const [error, setError] = useState<string | null>(null);
++
++  const load = useCallback(
++    (selector: "steps" | "evidence") => {
++      setLoading(true);
++      setError(null);
++      void query({
++        environmentId,
++        input: {
++          threadId,
++          runId: event.runId,
++          selector,
++          maxItems: selector === "steps" ? 50 : 100,
++          maxBytes: 64 * 1024,
++        },
++      }).then((result) => {
++        setLoading(false);
++        if (result._tag === "Success") {
++          if (result.value.selector === "steps") setSteps(result.value.result.items);
++          else setEvidence(result.value.result.items);
++          return;
++        }
++        if (!isAtomCommandInterrupted(result)) {
++          setError(readableError(squashAtomCommandFailure(result)));
++        }
++      });
++    },
++    [environmentId, event.runId, query, threadId],
++  );
++
++  const toggle = useCallback(() => {
++    setExpanded((current) => {
++      const next = !current;
++      if (next && steps === null && !loading) load("steps");
++      return next;
++    });
++  }, [load, loading, steps]);
++
++  return (
++    <div className="rounded-md px-0.5 py-0.5">
++      <button
++        type="button"
++        className="flex w-full items-center gap-1.5 rounded text-left hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
++        aria-expanded={expanded}
++        onClick={toggle}
++      >
++        <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground/70">
++          <GitBranchIcon className="size-3.5" aria-hidden />
++        </span>
++        <span className="min-w-0 flex-1 truncate text-[12px] leading-5">
++          <span className="font-medium text-foreground/82">Orchestra workflow</span>
++          <span className="ms-1.5 text-muted-foreground/60">
++            {event.projection.status} · {event.kind}
++          </span>
++        </span>
++        <ChevronDownIcon
++          className={cn(
++            "size-3 text-muted-foreground transition-transform",
++            expanded && "rotate-180",
++          )}
++          aria-hidden
++        />
++      </button>
++
++      {expanded ? (
++        <div className="mt-1 ms-7 border-s border-border/45 ps-3 py-1 text-[11px] text-muted-foreground">
++          <div className="flex flex-wrap gap-x-3 gap-y-1">
++            <span>Run {event.runId}</span>
++            <span>Revision {event.revision}</span>
++            <span>{event.projection.nextAction}</span>
++          </div>
++
++          {loading && steps === null ? <p className="mt-2">Loading bounded step details…</p> : null}
++          {steps?.map((step) => (
++            <div key={step.id} className="mt-2 rounded border border-border/45 px-2 py-1.5">
++              <div className="flex flex-wrap items-center gap-x-2">
++                <span className="font-medium text-foreground/80">{step.id}</span>
++                <span>{step.status}</span>
++                <span>{step.outputCount} outputs</span>
++              </div>
++              {step.agent ? (
++                <div className="mt-1 font-mono text-[10px]">
++                  Child {step.agent.taskPath} · {step.agent.threadId}
++                </div>
++              ) : null}
++              {step.error ? (
++                <div className="mt-1 text-destructive">
++                  {step.error.text}
++                  {step.error.truncated ? "…" : ""}
++                </div>
++              ) : null}
++            </div>
++          ))}
++
++          <div className="mt-2 flex items-center gap-2">
++            <Button
++              size="sm"
++              variant="outline"
++              disabled={loading || evidence !== null}
++              onClick={() => load("evidence")}
++            >
++              {evidence === null ? "Load evidence references" : "Evidence references loaded"}
++            </Button>
++            <span>References only; artifact contents stay out of the timeline.</span>
++          </div>
++          {evidence?.map((item) => (
++            <div key={`${item.path}:${item.sha256 ?? ""}`} className="mt-1 font-mono text-[10px]">
++              {item.kind} · {item.path} · {item.bytes} bytes
++            </div>
++          ))}
++          {error ? (
++            <div className="mt-2 flex items-start gap-1.5 text-destructive">
++              <CircleAlertIcon className="mt-0.5 size-3 shrink-0" aria-hidden />
++              <span>{error}</span>
++            </div>
++          ) : null}
++        </div>
++      ) : null}
++    </div>
++  );
++});
+diff --git a/apps/web/src/session-logic.test.ts b/apps/web/src/session-logic.test.ts
+index 0f12e672..007a2d02 100644
+--- a/apps/web/src/session-logic.test.ts
++++ b/apps/web/src/session-logic.test.ts
+@@ -756,6 +756,42 @@ describe("deriveWorkLogEntries", () => {
+     expect(entries[0]?.label).toBe("Searching for API endpoints");
+   });
+
++  it("retains bounded Orchestra lifecycle data for its native timeline row", () => {
++    const orchestra = {
++      schemaVersion: 1,
++      eventId: "native-event-1",
++      runId: "run-1",
++      sequence: 1,
++      revision: 2,
++      kind: "recovered",
++      projection: {
++        schemaVersion: 1,
++        runId: "run-1",
++        workflowSha256: "workflow-sha",
++        parentThreadId: "provider-thread-1",
++        sourceRevision: "source-revision",
++        status: "running",
++        promotion: "pending",
++        steps: [],
++        nextAction: "Continue step implementation",
++      },
++    };
++    const entries = deriveWorkLogEntries([
++      makeActivity({
++        id: "orchestra:native-event-1",
++        kind: "task.progress",
++        summary: "Workflow running",
++        payload: { summary: "Workflow running", usage: { orchestra } },
++      }),
++    ]);
++
++    expect(entries).toHaveLength(1);
++    expect(entries[0]?.toolData).toEqual(orchestra);
++    expect(entries[0]?.turnId).toBeNull();
++    expect(entries[0]?.tone).toBe("info");
++    expect(workEntryIndicatesToolNeutralStatus(entries[0]!)).toBe(false);
++  });
++
+   it("uses payload detail as label for task.completed and preserves error tone", () => {
+     const activities: OrchestrationThreadActivity[] = [
+       makeActivity({
+diff --git a/apps/web/src/session-logic.ts b/apps/web/src/session-logic.ts
+index 5d5051f7..0b4a26c4 100644
+--- a/apps/web/src/session-logic.ts
++++ b/apps/web/src/session-logic.ts
+@@ -740,6 +740,13 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
+       entry.toolData = data.item;
+     }
+   }
++  const usage = asRecord(payload?.usage);
++  if (usage?.orchestra !== undefined) {
++    entry.toolData = usage.orchestra;
++    // Orchestra lifecycle is durable task state, not transient model
++    // reasoning. Keep the task-scoped row visible even when it has no turn.
++    entry.tone = "info";
++  }
+   if (itemType) {
+     entry.itemType = itemType;
+   }
 diff --git a/apps/web/src/state/automation.ts b/apps/web/src/state/automation.ts
 new file mode 100644
 index 00000000..161b0d84
@@ -2105,6 +3118,21 @@ index 00000000..161b0d84
 +export const cancelAutomation = createEnvironmentRpcCommand(connectionAtomRuntime, {
 +  label: "Automation.cancel",
 +  tag: WS_METHODS.automationCancel,
++});
+diff --git a/apps/web/src/state/orchestra.ts b/apps/web/src/state/orchestra.ts
+new file mode 100644
+index 00000000..4557414a
+--- /dev/null
++++ b/apps/web/src/state/orchestra.ts
+@@ -0,0 +1,9 @@
++import { WS_METHODS } from "@t3tools/contracts";
++import { createEnvironmentRpcCommand } from "@t3tools/client-runtime/state/runtime";
++
++import { connectionAtomRuntime } from "../connection/runtime";
++
++export const queryOrchestra = createEnvironmentRpcCommand(connectionAtomRuntime, {
++  label: "Orchestra.query",
++  tag: WS_METHODS.orchestraQuery,
 +});
 diff --git a/packages/contracts/src/automation.ts b/packages/contracts/src/automation.ts
 new file mode 100644
@@ -2447,20 +3475,172 @@ index 00000000..0d25e2cd
 +  },
 +) {}
 diff --git a/packages/contracts/src/index.ts b/packages/contracts/src/index.ts
-index 43270efd..07cbd3aa 100644
+index 43270efd..bbe562dd 100644
 --- a/packages/contracts/src/index.ts
 +++ b/packages/contracts/src/index.ts
-@@ -25,4 +25,5 @@ export * from "./assets.ts";
+@@ -25,4 +25,6 @@ export * from "./assets.ts";
  export * from "./review.ts";
  export * from "./preview.ts";
  export * from "./previewAutomation.ts";
 +export * from "./automation.ts";
++export * from "./orchestra.ts";
  export * from "./rpc.ts";
+diff --git a/packages/contracts/src/orchestra.ts b/packages/contracts/src/orchestra.ts
+new file mode 100644
+index 00000000..c90008dd
+--- /dev/null
++++ b/packages/contracts/src/orchestra.ts
+@@ -0,0 +1,145 @@
++import * as Schema from "effect/Schema";
++
++import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
++
++export const OrchestraRunStatus = Schema.Literals([
++  "pending",
++  "running",
++  "waitingApproval",
++  "completed",
++  "failed",
++  "cancelled",
++]);
++export type OrchestraRunStatus = typeof OrchestraRunStatus.Type;
++
++export const OrchestraStepStatus = Schema.Literals([
++  "pending",
++  "running",
++  "retrying",
++  "waitingApproval",
++  "completed",
++  "failed",
++  "cancelled",
++]);
++
++export const OrchestraBoundedText = Schema.Struct({
++  text: Schema.String,
++  truncated: Schema.Boolean,
++});
++
++const NullableOptionalString = Schema.optional(Schema.NullOr(Schema.String));
++
++export const OrchestraRunProjection = Schema.Struct({
++  schemaVersion: NonNegativeInt,
++  runId: TrimmedNonEmptyString,
++  workflowSha256: TrimmedNonEmptyString,
++  parentThreadId: TrimmedNonEmptyString,
++  sourceRevision: TrimmedNonEmptyString,
++  status: OrchestraRunStatus,
++  promotion: Schema.Literals(["pending", "applied", "notRequired"]),
++  steps: Schema.Array(
++    Schema.Struct({
++      id: TrimmedNonEmptyString,
++      status: OrchestraStepStatus,
++      attempts: NonNegativeInt,
++      rounds: NonNegativeInt,
++      outputKeys: Schema.Array(Schema.String),
++      finalResponse: NullableOptionalString,
++      error: NullableOptionalString,
++    }),
++  ),
++  nextAction: Schema.String,
++});
++
++export const OrchestraLifecycleKind = Schema.Literals([
++  "invoked",
++  "resumed",
++  "cancelled",
++  "recovered",
++]);
++
++export const OrchestraReplayEvent = Schema.Struct({
++  schemaVersion: NonNegativeInt,
++  eventId: TrimmedNonEmptyString,
++  runId: TrimmedNonEmptyString,
++  sequence: NonNegativeInt,
++  revision: NonNegativeInt,
++  kind: OrchestraLifecycleKind,
++  projection: OrchestraRunProjection,
++});
++export type OrchestraReplayEvent = typeof OrchestraReplayEvent.Type;
++
++export const OrchestraTaskReplay = Schema.Struct({
++  latest: OrchestraReplayEvent,
++  events: Schema.Array(OrchestraReplayEvent),
++  replayTruncated: Schema.Boolean,
++});
++export type OrchestraTaskReplay = typeof OrchestraTaskReplay.Type;
++
++export const OrchestraAgentReference = Schema.Struct({
++  threadId: TrimmedNonEmptyString,
++  taskPath: TrimmedNonEmptyString,
++});
++
++export const OrchestraExecutionStepProjection = Schema.Struct({
++  id: TrimmedNonEmptyString,
++  status: OrchestraStepStatus,
++  attempts: NonNegativeInt,
++  rounds: NonNegativeInt,
++  agent: Schema.optional(Schema.NullOr(OrchestraAgentReference)),
++  contextSha256: NullableOptionalString,
++  approvalDecision: Schema.optional(Schema.NullOr(OrchestraBoundedText)),
++  error: Schema.optional(Schema.NullOr(OrchestraBoundedText)),
++  outputCount: NonNegativeInt,
++});
++export type OrchestraExecutionStepProjection = typeof OrchestraExecutionStepProjection.Type;
++
++export const OrchestraEvidenceReference = Schema.Struct({
++  path: TrimmedNonEmptyString,
++  kind: Schema.Literals(["check", "change", "skill", "other"]),
++  stepId: NullableOptionalString,
++  bytes: NonNegativeInt,
++  sha256: NullableOptionalString,
++});
++export type OrchestraEvidenceReference = typeof OrchestraEvidenceReference.Type;
++
++export const OrchestraQueryInput = Schema.Struct({
++  threadId: ThreadId,
++  runId: TrimmedNonEmptyString,
++  selector: Schema.Literals(["steps", "evidence"]),
++  stepId: Schema.optional(Schema.String),
++  after: Schema.optional(Schema.String),
++  maxItems: Schema.optional(NonNegativeInt),
++  maxBytes: Schema.optional(NonNegativeInt),
++});
++export type OrchestraQueryInput = typeof OrchestraQueryInput.Type;
++
++export const OrchestraStepsResult = Schema.Struct({
++  selector: Schema.Literal("steps"),
++  result: Schema.Struct({
++    items: Schema.Array(OrchestraExecutionStepProjection),
++    next: NullableOptionalString,
++  }),
++});
++
++export const OrchestraEvidenceResult = Schema.Struct({
++  selector: Schema.Literal("evidence"),
++  result: Schema.Struct({
++    items: Schema.Array(OrchestraEvidenceReference),
++    next: NullableOptionalString,
++  }),
++});
++
++export const OrchestraQueryResult = Schema.Union([OrchestraStepsResult, OrchestraEvidenceResult]);
++export type OrchestraQueryResult = typeof OrchestraQueryResult.Type;
++
++export const OrchestraQueryResponse = Schema.Struct({ result: OrchestraQueryResult });
++
++export class OrchestraQueryError extends Schema.TaggedErrorClass<OrchestraQueryError>()(
++  "OrchestraQueryError",
++  {
++    message: TrimmedNonEmptyString,
++    threadId: Schema.optional(ThreadId),
++    cause: Schema.optional(Schema.Defect()),
++  },
++) {}
 diff --git a/packages/contracts/src/rpc.ts b/packages/contracts/src/rpc.ts
-index 48c5d9a7..0b859e9b 100644
+index 48c5d9a7..4d9cc2ad 100644
 --- a/packages/contracts/src/rpc.ts
 +++ b/packages/contracts/src/rpc.ts
-@@ -143,6 +143,21 @@ import {
+@@ -143,6 +143,22 @@ import {
    SourceControlRepositoryLookupInput,
  } from "./sourceControl.ts";
  import { VcsError } from "./vcs.ts";
@@ -2479,10 +3659,11 @@ index 48c5d9a7..0b859e9b 100644
 +  AutomationValidateInput,
 +  AutomationValidateResult,
 +} from "./automation.ts";
++import { OrchestraQueryError, OrchestraQueryInput, OrchestraQueryResult } from "./orchestra.ts";
 
  export const WS_METHODS = {
    // Project registry methods
-@@ -179,6 +194,17 @@ export const WS_METHODS = {
+@@ -179,6 +195,18 @@ export const WS_METHODS = {
    // Review methods
    reviewGetDiffPreview: "review.getDiffPreview",
 
@@ -2496,11 +3677,12 @@ index 48c5d9a7..0b859e9b 100644
 +  automationRefresh: "automation.refresh",
 +  automationResume: "automation.resume",
 +  automationCancel: "automation.cancel",
++  orchestraQuery: "orchestra.query",
 +
    // Terminal methods
    terminalOpen: "terminal.open",
    terminalAttach: "terminal.attach",
-@@ -284,6 +310,60 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
+@@ -284,6 +312,66 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
  });
 
@@ -2558,10 +3740,16 @@ index 48c5d9a7..0b859e9b 100644
 +  error: Schema.Union([AutomationRunError, EnvironmentAuthorizationError]),
 +});
 +
++export const WsOrchestraQueryRpc = Rpc.make(WS_METHODS.orchestraQuery, {
++  payload: OrchestraQueryInput,
++  success: OrchestraQueryResult,
++  error: Schema.Union([OrchestraQueryError, EnvironmentAuthorizationError]),
++});
++
  export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
    payload: Schema.Struct({}),
    success: SourceControlDiscoveryResult,
-@@ -719,6 +799,15 @@ export const WsRpcGroup = RpcGroup.make(
+@@ -719,6 +807,16 @@ export const WsRpcGroup = RpcGroup.make(
    WsVcsSwitchRefRpc,
    WsVcsInitRpc,
    WsReviewGetDiffPreviewRpc,
@@ -2574,6 +3762,7 @@ index 48c5d9a7..0b859e9b 100644
 +  WsAutomationRefreshRpc,
 +  WsAutomationResumeRpc,
 +  WsAutomationCancelRpc,
++  WsOrchestraQueryRpc,
    WsTerminalOpenRpc,
    WsTerminalAttachRpc,
    WsTerminalWriteRpc,

@@ -44,6 +44,10 @@ verify_overlay() {
   done
   test -f "$generated/ClientRequest.ts"
   test -f "$generated/v2/OrchestraRunProjection.ts"
+  test -f "$generated/v2/OrchestraTaskReplay.ts"
+  test -f "$generated/v2/OrchestraQueryResponse.ts"
+  test -f "$generated/v2/OrchestraExecutionStepProjection.ts"
+  test -f "$generated/v2/OrchestraEvidenceReference.ts"
   test -f "$generated/v2/AutomationValidateParams.ts"
   test -f "$generated/v2/AutomationValidateResponse.ts"
   test -f "$generated/v2/AutomationRunFixtureParams.ts"
@@ -67,6 +71,10 @@ verify_overlay() {
   rg -q 'automation/refresh' "$target/apps/server/src/provider/Layers/CodexSessionRuntime.ts"
   rg -q 'automation/resume' "$target/apps/server/src/provider/Layers/CodexSessionRuntime.ts"
   rg -q 'automation/cancel' "$target/apps/server/src/provider/Layers/CodexSessionRuntime.ts"
+  rg -q 'expectedProductManifestSha256' "$target/apps/server/src/provider/Layers/CodexSessionRuntime.ts"
+  rg -q 'orchestra/lifecycle' "$target/apps/server/src/provider/Layers/CodexSessionRuntime.ts"
+  rg -q 'orchestra/query' "$target/apps/server/src/provider/Layers/CodexSessionRuntime.ts"
+  rg -q 'OrchestraLifecycleEntry' "$target/apps/web/src/components/chat/MessagesTimeline.tsx"
   rg -q 'AutomationProfileDialog' "$target/apps/web/src/components/chat/ChatHeader.tsx"
   rg -q 'const app = <AppRoot router=\{router\} />' "$target/apps/web/src/main.tsx"
   rg -q 'DesktopApp.program' "$target/apps/desktop/src/main.ts"
@@ -103,7 +111,8 @@ case "$command" in
       pnpm --dir apps/web exec vp test run \
         src/components/chat/AutomationProfileDialog.logic.test.ts \
         src/components/chat/MessagesTimeline.logic.test.ts \
-        src/components/chat/MessagesTimeline.test.tsx
+        src/components/chat/MessagesTimeline.test.tsx \
+        src/session-logic.test.ts
       pnpm --dir apps/server exec vp test run \
         src/provider/Layers/CodexAdapter.test.ts \
         src/provider/Layers/CodexSessionRuntime.test.ts
