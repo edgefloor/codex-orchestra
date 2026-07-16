@@ -667,6 +667,17 @@ export default workflow({ name: "slice", max_parallel: 2, steps: [pipeline([
     }
 
     #[test]
+    fn compiles_task_owned_automation_issue_fixture() {
+        let source = include_str!("../fixtures/automation-issue.workflow.ts");
+        let plan = compile_workflow(source).unwrap();
+        assert_eq!(plan.name, "automation-issue");
+        assert!(plan.inputs["issue"].required);
+        assert!(plan.inputs["task_prompt"].required);
+        assert!(plan.inputs["automation"].required);
+        assert_eq!(plan.steps.len(), 1);
+    }
+
+    #[test]
     fn compiles_typed_inputs_defaults_and_input_references_as_data() {
         let source = r#"import { workflow, agent, ref } from "@codex-orchestra/workflow";
 export default workflow({

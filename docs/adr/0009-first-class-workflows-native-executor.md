@@ -1,9 +1,10 @@
 ---
-status: superseded by ADR 0010
+status: superseded by ADR-0010
 ---
 
-# Legacy model-executed YAML workflow design
+# Execute declarative workflows through the model
 
-This ADR recorded the model-executed YAML design. It is retained as migration history and superseded by the Rust runtime in ADR 0010.
-
-The useful decisions carried forward are declarative authoring, bounded repeats, dependency-linked parallelism, deterministic checks, explicit approvals, and repository-local snapshots. Model-owned scheduling, YAML workflow definitions, and Python state transitions are retired.
+This historical decision used model-owned scheduling over declarative YAML workflows because no
+native executor existed. ADR 0010 replaced the model, YAML, and Python execution path with Rust while
+retaining declarative authoring, bounded repeats, dependency-linked parallelism, deterministic
+checks, explicit approvals, and repository snapshots.

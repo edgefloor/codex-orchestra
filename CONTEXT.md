@@ -2,13 +2,15 @@
 
 ## Domain language
 
-**Workflow source**: An Agents SDK-compatible `.workflow.ts` module evaluated only during hermetic workflow compilation from a pinned module graph.
+**Workflow source**: An Agents SDK-compatible `.workflow.ts` module parsed and lowered by Rust from a pinned module graph without executing it as JavaScript.
 
-**Workflow compilation**: Bounded execution of workflow TypeScript with no ambient filesystem, network, process, environment, clock, randomness, model, tool, or agent access. It emits a canonical execution plan and schema artifacts before a Run exists.
+**Workflow compilation**: Deterministic Rust parsing and lowering of a closed workflow module graph into a canonical execution plan and schema artifacts before a Run exists.
 
 **Execution plan**: The validated internal Rust representation produced by workflow compilation and consumed by the runtime without executing workflow TypeScript again.
 
 **Validation bundle**: The recorded, hashed source that defines the schemas available to a Run. Its source is authoritative; evaluator-specific compiled forms are disposable caches.
+
+**Workflow artifact**: The immutable, content-addressed compilation result that binds an Execution plan and Validation bundle to their source graph, guidance schemas, and exact Product compatibility.
 
 **Canonical value**: A JSON-compatible value whose representation is portable across workflow compilation, validation, checkpoints, recovery, and evaluator revisions.
 
@@ -19,6 +21,20 @@
 **Run**: One runtime-owned execution of a plan against a repository revision and parent Codex task.
 
 **Workflow invocation**: A user- or agent-initiated action inside a Codex task that asks native Orchestra to create or resume a Root Run from a validated workflow and resolved inputs. Its native tool call remains resident until the Run terminates or durably suspends; it never becomes detached background execution.
+
+**Automation**: The issue-driven Orchestra mode that selects tracker work and coordinates authored Workflows from a visible Codex task.
+
+**Automation task**: The Codex task that owns one active Automation Root Run for a repository and tracker project.
+
+**Automation profile**: A versioned declaration of issue eligibility, coordination policy, workflow selection, and prompt guidance for Automation.
+
+**Automation Root Run**: The resident Root Run owned by an Automation task and responsible for its Issue claims.
+
+**Issue task**: The persistent Codex task representing one claimed tracker issue within an Automation Root Run.
+
+**Issue claim**: The exclusive, lease-scoped ownership of one tracker issue and its current Automation attempt.
+
+**Tracker effect**: A typed, policy-gated tracker mutation scoped to the current Issue claim and recorded by durable identity and receipt.
 
 **Root Run**: The workflow entry-point Run created by a Workflow invocation and owned by that invocation's Codex task.
 
@@ -50,7 +66,13 @@
 
 **Product fork**: A long-lived, independently shipped fork that selectively incorporates upstream changes while owning its product semantics and compatibility. Orchestra maintains product forks of Codex and the T3Code-derived desktop rather than treating either integration as a temporary patch or disconnected rewrite.
 
-**Host protocol**: The pinned Codex App Server JSON-RPC protocol extended in the Codex Product fork with Orchestra methods, lifecycle notifications, and snapshot/replay recovery. It is the desktop's sole backend interface over private local IPC; transport privacy does not grant operation authority.
+**Product release**: One architecture-specific signed macOS app in which the desktop, native host, generated bindings, pinned integrations, schemas, capabilities, and effective limits form an exact lockstep compatibility unit.
+
+**Release manifest**: The sealed machine-readable identity of one Product release and its compatibility-relevant source, artifacts, schemas, capabilities, limits, signing requirements, and state transitions.
+
+**Authoring plugin release**: An independently versioned distribution of skills, documentation, configuration templates, and editor assets. It never installs or replaces native execution.
+
+**Host protocol**: The pinned Codex App Server JSON-RPC protocol extended in the Codex Product fork with Orchestra methods, lifecycle notifications, and snapshot/replay recovery. It is the sole native agent/workflow interface consumed by the retained T3Code provider adapter; T3Code's local server may adapt it for the normal renderer but never becomes execution authority. Transport privacy does not grant operation authority.
 
 **Protocol stream**: The replayable event partition for one Codex task, containing that task's Codex and Orchestra events under one monotonically increasing local sequence. The MVP has no global or cross-task replay stream; sequence defines display and replay order within the task, while graph references define causality.
 
@@ -88,7 +110,7 @@
 
 ## Invariants
 
-- TypeScript workflow source executes only during hermetic workflow compilation; a Run executes only its recorded execution plan.
+- TypeScript workflow source is never executed as JavaScript; Rust parses and lowers it, and a Run executes only its recorded execution plan.
 - Runtime schema validation accepts and returns only canonical values; evaluator-specific objects never cross into checkpoints.
 - Model and tool guidance uses recorded JSON Schema, while exact runtime acceptance uses the recorded validation bundle.
 - A Workflow invocation occurs inside and is owned by its parent Codex task; no renderer, sidecar, or external scheduler creates a detached Run.
@@ -112,3 +134,4 @@
 - Resumed runs use their recorded inputs, skill snapshots, human responses, and external-effect receipts rather than re-resolving mutable ambient state.
 - Verified isolated changes reach the target checkout only after successful checks and acceptance; rejection or a promotion conflict never overwrites target files.
 - Codex and the T3Code-derived desktop are intentional Product forks. Their upstream revisions are explicit and pinned, native primitives are reused first, and divergence stays concentrated in reviewed seams.
+- Native Product components update and roll back as one exact release. Plugin/configuration lifecycle remains independent, and neither path rewrites canonical Codex history or repository Run checkpoints.

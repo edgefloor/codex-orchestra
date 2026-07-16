@@ -43,6 +43,9 @@ pub struct OrchestraSpawnRequest {
     pub service_tier: Option<String>,
     pub fork_turns: OrchestraForkTurns,
     pub allow_delegation: bool,
+    /// Structural native tasks (such as an Automation Issue task) may reserve
+    /// a bounded descendant level without enabling general recursive agents.
+    pub minimum_descendant_depth: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -278,9 +281,12 @@ impl OrchestraControl {
                 request.skill_context,
             ));
         }
-        if !request.allow_delegation {
-            config.agent_max_depth = child_depth;
-        }
+        config.agent_max_depth = effective_agent_max_depth(
+            config.agent_max_depth,
+            child_depth,
+            request.allow_delegation,
+            request.minimum_descendant_depth,
+        );
         let parent_path = self
             .parent_source
             .get_agent_path()
@@ -386,6 +392,21 @@ impl OrchestraControl {
             stdout: output.stdout.text,
             stderr: output.stderr.text,
         })
+    }
+}
+
+fn effective_agent_max_depth(
+    configured: i32,
+    child_depth: i32,
+    allow_delegation: bool,
+    minimum_descendant_depth: i32,
+) -> i32 {
+    if !allow_delegation {
+        child_depth
+    } else if minimum_descendant_depth > 0 {
+        configured.max(child_depth.saturating_add(minimum_descendant_depth))
+    } else {
+        configured
     }
 }
 
@@ -509,6 +530,14 @@ mod tests {
             text: text.into(),
             text_elements: Vec::new(),
         }]
+    }
+
+    #[test]
+    fn structural_issue_task_reserves_one_native_child_level_only_when_requested() {
+        assert_eq!(effective_agent_max_depth(1, 1, true, 0), 1);
+        assert_eq!(effective_agent_max_depth(1, 1, true, 1), 2);
+        assert_eq!(effective_agent_max_depth(4, 1, true, 1), 4);
+        assert_eq!(effective_agent_max_depth(4, 2, false, 0), 2);
     }
 
     #[test]

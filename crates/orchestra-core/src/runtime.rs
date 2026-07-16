@@ -47,6 +47,7 @@ pub enum RunError {
 #[derive(Clone)]
 struct ActiveRun {
     cancelled: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
     agent_handles: Arc<Mutex<HashMap<String, AgentHandle>>>,
     step_tasks: Arc<Mutex<HashMap<String, ActiveStepTask>>>,
     finished: Arc<Notify>,
@@ -104,6 +105,26 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         plan: ExecutionPlan,
         provided_inputs: Option<&Value>,
     ) -> Result<RunOutcome, RunError> {
+        self.run_with_inputs_observed(repository, parent_thread_id, plan, provided_inputs, |_| {
+            Ok(())
+        })
+        .await
+    }
+
+    /// Run a workflow while publishing its durable identity immediately after
+    /// checkpoint creation. Automation uses this to attach cancellation to the
+    /// owning Issue claim before any workflow child can start.
+    pub async fn run_with_inputs_observed<F>(
+        &self,
+        repository: &Path,
+        parent_thread_id: &str,
+        plan: ExecutionPlan,
+        provided_inputs: Option<&Value>,
+        on_created: F,
+    ) -> Result<RunOutcome, RunError>
+    where
+        F: FnOnce(&RunCheckpoint) -> Result<(), String>,
+    {
         let errors = validate_plan(&plan);
         if !errors.is_empty() {
             return Err(RunError::Validation(
@@ -124,7 +145,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         let plan_bytes = serde_json::to_vec(&plan).expect("plan serializes");
         let hash = format!("{:x}", Sha256::digest(&plan_bytes));
         let run_id = new_run_id(&hash);
-        let revision = git_revision(repository)?;
+        let revision = repository_revision(repository)?;
         let resolved_skills = if skill_requirements.is_empty() {
             self.host
                 .resolve_skills(parent_thread_id, repository, &revision, &[])
@@ -178,6 +199,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
             inputs: &inputs,
             skills: &skills,
         })?;
+        on_created(&checkpoint).map_err(RunError::Host)?;
         let skill_instructions = verify_and_load(store.root(), &skills.manifest, &skills.sha256)?;
         self.execute(store, plan, checkpoint, skill_instructions)
             .await
@@ -324,6 +346,50 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         Ok(checkpoint)
     }
 
+    pub async fn pause(&self, repository: &Path, run_id: &str) -> Result<RunCheckpoint, RunError> {
+        if let Some(active) = self.active.lock().await.get(run_id).cloned() {
+            active.paused.store(true, Ordering::SeqCst);
+            let agent_handles: Vec<_> = active
+                .agent_handles
+                .lock()
+                .await
+                .values()
+                .cloned()
+                .collect();
+            for handle in agent_handles {
+                self.host.cancel(&handle).await.map_err(RunError::Host)?;
+            }
+            let tasks = active
+                .step_tasks
+                .lock()
+                .await
+                .values()
+                .map(|task| task.abort.clone())
+                .collect::<Vec<_>>();
+            for task in tasks {
+                task.abort();
+            }
+            let finished = active.finished.notified();
+            if !active.completed.load(Ordering::SeqCst) {
+                finished.await;
+            }
+            return self.status(repository, run_id).await;
+        }
+        let (store, _, mut checkpoint) = RunStore::open(repository, run_id)?;
+        if matches!(
+            checkpoint.status,
+            RunStatus::Completed | RunStatus::Failed | RunStatus::Cancelled
+        ) {
+            return Ok(checkpoint);
+        }
+        checkpoint.status = RunStatus::WaitingApproval;
+        checkpoint.next_action = "run paused; resume from the retained checkpoint".into();
+        mark_active_steps_paused(&mut checkpoint);
+        store.save(&checkpoint)?;
+        store.summary(&summary(&checkpoint))?;
+        Ok(checkpoint)
+    }
+
     pub async fn cancel(&self, repository: &Path, run_id: &str) -> Result<RunCheckpoint, RunError> {
         if let Some(active) = self.active.lock().await.get(run_id).cloned() {
             active.cancelled.store(true, Ordering::SeqCst);
@@ -394,6 +460,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
         skill_instructions: BTreeMap<String, String>,
     ) -> Result<RunOutcome, RunError> {
         let cancelled = Arc::new(AtomicBool::new(false));
+        let paused = Arc::new(AtomicBool::new(false));
         let agent_handles = Arc::new(Mutex::new(HashMap::new()));
         let step_tasks = Arc::new(Mutex::new(HashMap::new()));
         let finished = Arc::new(Notify::new());
@@ -402,6 +469,7 @@ impl<H: NativeHost> OrchestraRuntime<H> {
             checkpoint.run_id.clone(),
             ActiveRun {
                 cancelled: Arc::clone(&cancelled),
+                paused: Arc::clone(&paused),
                 agent_handles: Arc::clone(&agent_handles),
                 step_tasks: Arc::clone(&step_tasks),
                 finished: Arc::clone(&finished),
@@ -418,6 +486,12 @@ impl<H: NativeHost> OrchestraRuntime<H> {
             .await;
 
         loop {
+            if paused.load(Ordering::SeqCst) {
+                checkpoint.status = RunStatus::WaitingApproval;
+                checkpoint.next_action = "run paused; resume from the retained checkpoint".into();
+                mark_active_steps_paused(&mut checkpoint);
+                break;
+            }
             if cancelled.load(Ordering::SeqCst) {
                 checkpoint.status = RunStatus::Cancelled;
                 checkpoint.next_action = "run cancelled".into();
@@ -603,7 +677,10 @@ impl<H: NativeHost> OrchestraRuntime<H> {
             while let Some(result) = join_set.join_next().await {
                 let (step_id, workspace, mut result) = match result {
                     Ok(result) => result,
-                    Err(error) if cancelled.load(Ordering::SeqCst) && error.is_cancelled() => {
+                    Err(error)
+                        if (cancelled.load(Ordering::SeqCst) || paused.load(Ordering::SeqCst))
+                            && error.is_cancelled() =>
+                    {
                         continue;
                     }
                     Err(error) => return Err(RunError::Join(error.to_string())),
@@ -703,6 +780,12 @@ impl<H: NativeHost> OrchestraRuntime<H> {
                 checkpoint.status = RunStatus::Cancelled;
                 checkpoint.next_action = "run cancelled".into();
                 mark_active_steps_cancelled(&mut checkpoint);
+                break;
+            }
+            if paused.load(Ordering::SeqCst) {
+                checkpoint.status = RunStatus::WaitingApproval;
+                checkpoint.next_action = "run paused; resume from the retained checkpoint".into();
+                mark_active_steps_paused(&mut checkpoint);
                 break;
             }
         }
@@ -1017,6 +1100,7 @@ impl<H: NativeHost> StepTask<H> {
                     service_tier: agent.service_tier.clone(),
                     fork_turns: agent.fork_turns.clone(),
                     allow_delegation: agent.allow_delegation,
+                    minimum_descendant_depth: 0,
                 };
                 let handle = self.host.spawn(request).await?;
                 self.handles
@@ -1194,6 +1278,16 @@ fn mark_active_steps_cancelled(checkpoint: &mut RunCheckpoint) {
     }
 }
 
+fn mark_active_steps_paused(checkpoint: &mut RunCheckpoint) {
+    for step in checkpoint.steps.values_mut() {
+        if matches!(step.status, StepStatus::Running | StepStatus::Retrying) {
+            step.status = StepStatus::Pending;
+            step.agent = None;
+            step.error = None;
+        }
+    }
+}
+
 fn new_run_id(hash: &str) -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1221,7 +1315,7 @@ fn validate_approval_decision(
         )))
     }
 }
-fn git_revision(repository: &Path) -> Result<String, std::io::Error> {
+pub fn repository_revision(repository: &Path) -> Result<String, std::io::Error> {
     let snapshot = std::process::Command::new("git")
         .arg("-C")
         .arg(repository)
@@ -2243,6 +2337,50 @@ mod tests {
         runtime.cancel(dir.path(), &run_id).await.unwrap();
         assert!(matches!(task.await.unwrap(), RunOutcome::Cancelled(_)));
         assert_eq!(runtime.host.cancelled.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn explicit_pause_interrupts_active_work_and_resumes_the_same_run_checkpoint() {
+        let runtime =
+            OrchestraRuntime::new(FakeHost::new(vec![r#"{"ok":true}"#, r#"{"ok":true}"#]));
+        let dir = repo();
+        let runner = runtime.clone();
+        let repository = dir.path().to_path_buf();
+        let task = tokio::spawn(async move {
+            runner
+                .run(
+                    &repository,
+                    "parent",
+                    ExecutionPlan {
+                        inputs: BTreeMap::new(),
+                        name: "pause".into(),
+                        description: String::new(),
+                        max_parallel: 1,
+                        steps: vec![agent("a", vec![])],
+                    },
+                )
+                .await
+                .unwrap()
+        });
+        let runs = dir.path().join(".codex/orchestra/runs");
+        let run_id = loop {
+            if let Ok(mut entries) = std::fs::read_dir(&runs)
+                && let Some(Ok(entry)) = entries.next()
+            {
+                break entry.file_name().to_string_lossy().into_owned();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        };
+        while runtime.host.running.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        let paused = runtime.pause(dir.path(), &run_id).await.unwrap();
+        assert_eq!(paused.run_id, run_id);
+        assert_eq!(paused.status, RunStatus::WaitingApproval);
+        assert!(matches!(task.await.unwrap(), RunOutcome::Paused(_)));
+        assert_eq!(runtime.host.cancelled.load(Ordering::SeqCst), 1);
+        let completed = runtime.resume(dir.path(), &run_id).await.unwrap();
+        assert!(matches!(completed, RunOutcome::Completed(_)));
     }
 
     #[tokio::test]

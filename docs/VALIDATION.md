@@ -8,3 +8,7 @@ Repository verification has four layers:
 4. `scripts/codex-integration.sh <fresh-dir> verify` applies the patch to the pinned Codex source, tests both Orchestra crates, and checks `codex-app-server`.
 
 Interactive UI rendering of native Orchestra tools and real provider-backed child completion remains human-only evidence; it must not be marked complete until observed.
+
+The accepted evaluator determinism, provenance, bounded-failure, and candidate resource-limit contract
+is defined in [WORKFLOW-COMPILATION.md](./WORKFLOW-COMPILATION.md). The MVP makes no hostile-code
+sandbox claim; those behavioral claims remain gated by issue #16 evidence.

@@ -1,5 +1,10 @@
 # Issue #20 disposable desktop-host prototype — 2026-07-15
 
+> Superseded product conclusion (2026-07-16): the harness remains valid evidence about a possible
+> direct byte bridge, but the replacement workflow dashboard built from it failed product review.
+> The MVP retains the normal T3Code application and its existing Codex provider adapter. Nothing in
+> this record is production evidence for the current desktop path unless repeated there.
+
 This record covers the deterministic architecture gate for
 [issue #20](https://github.com/edgefloor/codex-orchestra/issues/20). It tests the retained
 T3Code-derived client boundary against one direct, length-framed Rust host process without paid
@@ -46,6 +51,19 @@ Command: `scripts/desktop-host-prototype.sh`
 | Unknown event and redaction | passed | Unknown sequenced event remained in bounded diagnostics; exported token field was `[REDACTED]` |
 | Privileged confirmation plumbing | partial | Challenge traversed inherited fd 3 to the main-bridge module and the renderer client API received only its `MessagePort`; actual renderer-process inaccessibility still requires Electron process isolation |
 
+## Retained Electron process follow-up
+
+`scripts/electron-host-prototype.sh /path/to/pinned-t3code` uses the exact pinned T3Code checkout and
+its Electron 41.5.0 runtime. A real hidden `BrowserWindow` runs with `sandbox: true`,
+`contextIsolation: true`, and `nodeIntegration: false`; its renderer confirmed that `process` and
+`require` are absent. Electron main transfers one `MessagePort`, owns the Rust child stdio, and alone
+answers the inherited fd 3 confirmation challenge. The renderer successfully initialized, read
+`task-parent`, and received the confirmation result through protocol frames.
+
+The pinned T3Code desktop smoke baseline also passed before the bridge test. This closes the
+renderer-process-isolation observation, but does not exercise retained React lifecycle components or
+a genuinely blocked host writer queue.
+
 Focused results: 5 Rust unit tests and 2 renderer reducer tests passed before the end-to-end trace.
 
 ## Gaps that remain pending
@@ -54,13 +72,11 @@ Focused results: 5 Rust unit tests and 2 renderer reducer tests passed before th
   `app-server-protocol` generator or handled by the real `MessageProcessor`.
 - Replay tails and projection snapshots are in memory here, not the pinned Codex SQLite
   `StateRuntime`; the restart case therefore proves typed invalidation/recovery, not durable replay.
-- The harness adapts T3Code's pure reducer/snapshot concepts but does not build the retained React
-  components or Electron application.
+- The harness does not yet render through the retained React lifecycle components.
 - The parent/child fixture uses canonical Codex IDs and separation rules, but no provider-backed V2
   child was created during this deterministic run.
-- fd 3 plumbing and API separation are proven, but main and renderer modules share one Node harness
-  process. Actual Electron renderer inaccessibility, native macOS confirmation UI, signing,
-  packaging, CSP, preload hardening, and hostile-renderer testing remain unobserved.
+- fd 3 and renderer process separation are proven in Electron. Native macOS confirmation UI,
+  signing, packaging, final CSP/preload hardening, and hostile-renderer testing remain unobserved.
 - The fixture World State replacement proves reducer semantics, not the actual Codex extension-owned
   prompt contribution API.
 
@@ -68,13 +84,14 @@ These are product-fork absorption tasks, not reasons to add a fallback backend o
 
 ## Verdict
 
-**Keep with changes.** Keep the retained T3Code product components, pure reducer/cache concepts,
-Electron lifecycle shell, and the direct extended App Server seam. Replace Effect RPC/WebSocket,
-Node-owned Codex supervision, and T3 persistence with generated bindings and Rust-authorized task
-projection/replay. Adapt lifecycle rendering around stable typed items and subscribe to child tasks
-only when expanded.
+**Historical prototype result only.** Keep the transport/reducer findings as disposable evidence,
+but do not use them to replace T3Code's normal task/chat product. The accepted MVP retains T3Code's
+server and Codex provider supervision while keeping Codex/Rust authoritative for task and workflow
+semantics.
 
-The architecture is not falsified by transport, reducer, recovery, context-economy, or privileged
-channel behavior. Issue #20 should remain open until the same trace runs against the actual pinned
-Codex protocol/`StateRuntime` integration and retained Electron/React fork; this disposable fixture
-should then be deleted and its validated reducer rules absorbed.
+The architecture is not falsified by the fresh pinned Codex overlay build, retained Electron smoke,
+transport, reducer, recovery, context-economy, process isolation, or privileged-channel behavior.
+The remaining real protocol, `StateRuntime`, rollout, native-child, World State/query, retained-React,
+and blocked-writer work is production fork absorption, not another architecture decision. Issue #12
+decomposes it into implementation slices; this disposable fixture is deleted only after those native
+tests supersede its evidence.

@@ -13,3 +13,4 @@ Orchestra is a native V2 Rust runtime with an installable plugin for skills, con
 - Use `colgrep` as the primary semantic search tool and `rg --files` for filename discovery.
 - Run the unit suite, canonical plugin validator, and lifecycle doctor after structural changes.
 - Record assumptions and leave human-only UI checks pending until they are actually observed.
+- Promote framework lessons only when they are general, testable, versioned, and placed in the narrowest durable source.

@@ -12,6 +12,7 @@ this task; Rust schedules canonical V2 children after the tool accepts the invoc
 2. Summarize its parallel stages, writers, checks, repeats, and approvals.
 3. Call `orchestra_run`. The Rust runtime owns compilation, DAG scheduling, exact context hashing, V2 spawning, retries, checks, worktrees, checkpoints, and summaries.
 4. If it pauses, report the exact approval request and run id. Do not invent or pre-record a decision.
-5. Read authoritative state with `orchestra_status` and report the promotion status on terminal outcomes.
+5. Read the current checkpoint with `orchestra_status`; use `orchestra_query` only when a bounded
+   Run, Step, output, evidence, history, or digest expansion is needed.
 
 Do not manually spawn workflow agents or write run state on the model's behalf.

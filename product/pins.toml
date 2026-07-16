@@ -1,0 +1,50 @@
+capabilities = [
+  "host/framedStdio",
+  "host/replay",
+  "host/snapshot",
+  "orchestra/query",
+  "orchestra/threadItem",
+  "orchestra/worldState",
+  "thread/read",
+]
+
+[product]
+version = "0.2.0-dev"
+minimum_macos = "13.0"
+
+[sources]
+codex = "f90e7deea6a715bbd153044af6f475eefa749177"
+t3code = "ecb35f75839925dd1ac6f854efeef5c9e291d11b"
+agents = "4e1f842f63673db59018a7fa4a441c64c274caf2"
+zod = "1fb56a5c18c27102dbc92260a4007c7732a0ccca"
+bun = "be77b652884b16a103cfaa4af3c1102f72f2dcd3"
+
+[schemas]
+protocol = "codex-app-server+orchestra-v1"
+snapshot = "orchestra-task-snapshot-v1"
+
+[evaluator]
+revision = "bun-1.3.14-zod-4.4.3-mvp-1"
+adapter_abi = "orchestra-evaluator-abi-v1"
+canonicalizer = "rfc8785-jcs-v1"
+issue_format = "orchestra-validation-issues-v1"
+
+[limits]
+frame_bytes = 65536
+delivery_queue = 4
+replay_batch = 32
+replay_tail = 1024
+workflow_source_bytes = 4194304
+workflow_module_count = 256
+workflow_module_source_bytes = 1048576
+validation_request_bytes = 2097152
+validation_response_bytes = 2097152
+validation_bundle_bytes = 1048576
+validation_value_bytes = 1048576
+validation_value_depth = 64
+validation_value_nodes = 100000
+validation_collection_entries = 10000
+validation_string_bytes = 262144
+validation_issue_count = 128
+validation_issue_text_bytes = 512
+validation_wall_ms = 1000

@@ -5,10 +5,13 @@ crates/orchestra-core/              restricted compiler, plan validation, runtim
 crates/orchestra-host-prototype/    disposable issue #20 length-framed host fixture
 crates/orchestra-lifecycle/         preview-first plugin configuration lifecycle CLI and tests
 prototypes/desktop-host/            disposable T3-derived renderer and MessagePort harness
+prototypes/hermetic-evaluator/      disposable exact-Zod worker harness for issue #16
 sdk/                                TypeScript authoring declarations (never executed)
 integration/codex/                  pinned revision, minimal patch, and Codex overlay crates
 scripts/codex-integration.sh        deterministic apply/build verification
 scripts/desktop-host-prototype.sh   one-command issue #20 architecture gate
+scripts/electron-host-prototype.sh  pinned T3Code Electron process-boundary gate
+scripts/hermetic-evaluator-prototype.sh one-command issue #16 MVP evaluator gate
 scripts/characterize-pinned-skills.sh pinned native skill boundary verification
 skills/                             user-facing native-tool guidance
 config/                             optional project/global Codex configuration
@@ -16,6 +19,8 @@ assets/templates/                   .workflow.ts and summary templates
 evals/workflows/                    compiler/runtime fixtures
 evals/scenarios/                    behavioral acceptance scenarios
 docs/adr/                           architecture decisions
+docs/ARCHITECTURE.md                decision-complete product-fork synthesis
+docs/WORKFLOW-COMPILATION.md        accepted evaluator artifact and trust contract
 docs/agents/                        tracker and agent-operation contracts
 ```
 

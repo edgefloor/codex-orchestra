@@ -14,6 +14,7 @@ tools from that task, but it must never create or imply detached host execution.
 2. Resume an existing run with `orchestra_resume`; pass an approval decision only when the user explicitly supplied it.
 3. Validate an existing `.workflow.ts` with `orchestra_validate`, then run it with `orchestra_run`.
 4. Otherwise use `$orchestra:create-workflow`, validate the result, show material mutations and approvals, and run only when authorized.
-5. Use `orchestra_status` and `orchestra_cancel` for runtime-owned state and cancellation.
+5. Use `orchestra_status` for the current checkpoint, `orchestra_query` for one bounded targeted
+   expansion or digest, and `orchestra_cancel` for cancellation.
 
 Never emulate missing native tools with SDK threads, MCP, `codex exec`, an App Server client, a daemon, a sidecar, or model-mediated scheduling. If the native tools are absent, explain that the Orchestra-enabled pinned Codex build is required.

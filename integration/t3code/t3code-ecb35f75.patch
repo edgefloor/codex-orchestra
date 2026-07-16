@@ -1,0 +1,2579 @@
+diff --git a/apps/server/src/provider/Drivers/CodexDriver.ts b/apps/server/src/provider/Drivers/CodexDriver.ts
+index ffcc94ca..aaec0eb5 100644
+--- a/apps/server/src/provider/Drivers/CodexDriver.ts
++++ b/apps/server/src/provider/Drivers/CodexDriver.ts
+@@ -120,6 +120,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
+       const serverSettings = yield* ServerSettingsService;
+       const eventLoggers = yield* ProviderEventLoggers;
+       const processEnv = mergeProviderInstanceEnvironment(environment);
++      const productCodexPath = process.env.ORCHESTRA_CODEX_PATH?.trim();
+       const homeLayout = yield* resolveCodexHomeLayout(config);
+       const continuationIdentity = codexContinuationIdentity(homeLayout);
+       const stampIdentity = withInstanceIdentity({
+@@ -143,6 +144,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
+         ...config,
+         enabled,
+         homePath: homeLayout.effectiveHomePath ?? "",
++        ...(productCodexPath ? { binaryPath: productCodexPath } : {}),
+       } satisfies CodexSettings;
+       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+         binaryPath: effectiveConfig.binaryPath,
+diff --git a/apps/server/src/provider/Layers/CodexAdapter.ts b/apps/server/src/provider/Layers/CodexAdapter.ts
+index 270126e9..b62c5c82 100644
+--- a/apps/server/src/provider/Layers/CodexAdapter.ts
++++ b/apps/server/src/provider/Layers/CodexAdapter.ts
+@@ -1613,6 +1613,159 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+     );
+   };
+
++  const validateAutomationProfile: NonNullable<CodexAdapterShape["validateAutomationProfile"]> =
++    Effect.fn("validateAutomationProfile")(function* (threadId, input) {
++      const session = yield* requireSession(threadId);
++      if (!session.runtime.validateAutomationProfile) {
++        return yield* new ProviderAdapterRequestError({
++          provider: PROVIDER,
++          method: "automation/validate",
++          detail: "This Codex runtime does not expose Automation profile validation.",
++        });
++      }
++      return yield* session.runtime
++        .validateAutomationProfile(input)
++        .pipe(
++          Effect.mapError((cause) => mapCodexRuntimeError(threadId, "automation/validate", cause)),
++        );
++    });
++
++  const runAutomationFixture: NonNullable<CodexAdapterShape["runAutomationFixture"]> = Effect.fn(
++    "runAutomationFixture",
++  )(function* (threadId, input) {
++    const session = yield* requireSession(threadId);
++    if (!session.runtime.runAutomationFixture) {
++      return yield* new ProviderAdapterRequestError({
++        provider: PROVIDER,
++        method: "automation/runFixture",
++        detail: "This Codex runtime does not expose task-owned Automation execution.",
++      });
++    }
++    return yield* session.runtime
++      .runAutomationFixture(input)
++      .pipe(
++        Effect.mapError((cause) => mapCodexRuntimeError(threadId, "automation/runFixture", cause)),
++      );
++  });
++
++  const readLinearAutomation: NonNullable<CodexAdapterShape["readLinearAutomation"]> = Effect.fn(
++    "readLinearAutomation",
++  )(function* (threadId, input) {
++    const session = yield* requireSession(threadId);
++    if (!session.runtime.readLinearAutomation) {
++      return yield* new ProviderAdapterRequestError({
++        provider: PROVIDER,
++        method: "automation/linear/read",
++        detail: "This Codex runtime does not expose live read-only Linear intake.",
++      });
++    }
++    return yield* session.runtime
++      .readLinearAutomation(input)
++      .pipe(
++        Effect.mapError((cause) => mapCodexRuntimeError(threadId, "automation/linear/read", cause)),
++      );
++  });
++
++  const readAutomationQueue: NonNullable<CodexAdapterShape["readAutomationQueue"]> = Effect.fn(
++    "readAutomationQueue",
++  )(function* (threadId, input) {
++    const session = yield* requireSession(threadId);
++    if (!session.runtime.readAutomationQueue) {
++      return yield* new ProviderAdapterRequestError({
++        provider: PROVIDER,
++        method: "automation/queue/read",
++        detail: "This Codex runtime does not expose bounded Automation queue pages.",
++      });
++    }
++    return yield* session.runtime
++      .readAutomationQueue(input)
++      .pipe(
++        Effect.mapError((cause) => mapCodexRuntimeError(threadId, "automation/queue/read", cause)),
++      );
++  });
++
++  const cancelAutomation: NonNullable<CodexAdapterShape["cancelAutomation"]> = Effect.fn(
++    "cancelAutomation",
++  )(function* (threadId, input) {
++    const session = yield* requireSession(threadId);
++    if (!session.runtime.cancelAutomation) {
++      return yield* new ProviderAdapterRequestError({
++        provider: PROVIDER,
++        method: "automation/cancel",
++        detail: "This Codex runtime does not expose task-owned Automation cancellation.",
++      });
++    }
++    return yield* session.runtime
++      .cancelAutomation(input)
++      .pipe(Effect.mapError((cause) => mapCodexRuntimeError(threadId, "automation/cancel", cause)));
++  });
++
++  const automationStatus: NonNullable<CodexAdapterShape["automationStatus"]> = Effect.fn(
++    "automationStatus",
++  )(function* (threadId, input) {
++    const session = yield* requireSession(threadId);
++    if (!session.runtime.automationStatus) {
++      return yield* new ProviderAdapterRequestError({
++        provider: PROVIDER,
++        method: "automation/status",
++        detail: "This Codex runtime does not expose Automation inspection.",
++      });
++    }
++    return yield* session.runtime
++      .automationStatus(input)
++      .pipe(Effect.mapError((cause) => mapCodexRuntimeError(threadId, "automation/status", cause)));
++  });
++
++  const pauseAutomation: NonNullable<CodexAdapterShape["pauseAutomation"]> = Effect.fn(
++    "pauseAutomation",
++  )(function* (threadId, input) {
++    const session = yield* requireSession(threadId);
++    if (!session.runtime.pauseAutomation) {
++      return yield* new ProviderAdapterRequestError({
++        provider: PROVIDER,
++        method: "automation/pause",
++        detail: "This Codex runtime does not expose fenced Automation pause.",
++      });
++    }
++    return yield* session.runtime
++      .pauseAutomation(input)
++      .pipe(Effect.mapError((cause) => mapCodexRuntimeError(threadId, "automation/pause", cause)));
++  });
++
++  const refreshAutomation: NonNullable<CodexAdapterShape["refreshAutomation"]> = Effect.fn(
++    "refreshAutomation",
++  )(function* (threadId, input) {
++    const session = yield* requireSession(threadId);
++    if (!session.runtime.refreshAutomation) {
++      return yield* new ProviderAdapterRequestError({
++        provider: PROVIDER,
++        method: "automation/refresh",
++        detail: "This Codex runtime does not expose Automation reconciliation refresh.",
++      });
++    }
++    return yield* session.runtime
++      .refreshAutomation(input)
++      .pipe(
++        Effect.mapError((cause) => mapCodexRuntimeError(threadId, "automation/refresh", cause)),
++      );
++  });
++
++  const resumeAutomation: NonNullable<CodexAdapterShape["resumeAutomation"]> = Effect.fn(
++    "resumeAutomation",
++  )(function* (threadId, input) {
++    const session = yield* requireSession(threadId);
++    if (!session.runtime.resumeAutomation) {
++      return yield* new ProviderAdapterRequestError({
++        provider: PROVIDER,
++        method: "automation/resume",
++        detail: "This Codex runtime does not expose reconciled Automation resume.",
++      });
++    }
++    return yield* session.runtime
++      .resumeAutomation(input)
++      .pipe(Effect.mapError((cause) => mapCodexRuntimeError(threadId, "automation/resume", cause)));
++  });
++
+   const respondToRequest: CodexAdapterShape["respondToRequest"] = (threadId, requestId, decision) =>
+     requireSession(threadId).pipe(
+       Effect.flatMap((session) => session.runtime.respondToRequest(requestId, decision)),
+@@ -1700,6 +1853,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+     interruptTurn,
+     readThread,
+     rollbackThread,
++    validateAutomationProfile,
++    runAutomationFixture,
++    readLinearAutomation,
++    readAutomationQueue,
++    automationStatus,
++    pauseAutomation,
++    refreshAutomation,
++    resumeAutomation,
++    cancelAutomation,
+     respondToRequest,
+     respondToUserInput,
+     stopSession,
+diff --git a/apps/server/src/provider/Layers/CodexSessionRuntime.ts b/apps/server/src/provider/Layers/CodexSessionRuntime.ts
+index 99ac498f..e86fb17f 100644
+--- a/apps/server/src/provider/Layers/CodexSessionRuntime.ts
++++ b/apps/server/src/provider/Layers/CodexSessionRuntime.ts
+@@ -1,4 +1,15 @@
+ import {
++  AutomationLinearReadResult,
++  type AutomationLinearReadInput,
++  AutomationQueueReadResult,
++  AutomationLifecycleInput,
++  AutomationReconcileInput,
++  type AutomationQueueReadInput,
++  AutomationRunResult,
++  type AutomationRunInput,
++  type AutomationCancelInput,
++  AutomationValidateResult,
++  type AutomationValidateInput,
+   ApprovalRequestId,
+   DEFAULT_MODEL,
+   EventId,
+@@ -42,6 +53,10 @@ import {
+   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+ } from "../CodexDeveloperInstructions.ts";
+ const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
++const decodeAutomationValidateResponse = Schema.decodeUnknownEffect(AutomationValidateResult);
++const decodeAutomationRunResponse = Schema.decodeUnknownEffect(AutomationRunResult);
++const decodeAutomationLinearReadResponse = Schema.decodeUnknownEffect(AutomationLinearReadResult);
++const decodeAutomationQueueReadResponse = Schema.decodeUnknownEffect(AutomationQueueReadResult);
+
+ const PROVIDER = ProviderDriverKind.make("codex");
+
+@@ -142,6 +157,33 @@ export interface CodexSessionRuntimeShape {
+   readonly rollbackThread: (
+     numTurns: number,
+   ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
++  readonly validateAutomationProfile?: (
++    input: Omit<AutomationValidateInput, "threadId">,
++  ) => Effect.Effect<AutomationValidateResult, CodexSessionRuntimeError>;
++  readonly runAutomationFixture?: (
++    input: Omit<AutomationRunInput, "threadId">,
++  ) => Effect.Effect<AutomationRunResult, CodexSessionRuntimeError>;
++  readonly readLinearAutomation?: (
++    input: Omit<AutomationLinearReadInput, "threadId">,
++  ) => Effect.Effect<AutomationLinearReadResult, CodexSessionRuntimeError>;
++  readonly readAutomationQueue?: (
++    input: Omit<AutomationQueueReadInput, "threadId">,
++  ) => Effect.Effect<AutomationQueueReadResult, CodexSessionRuntimeError>;
++  readonly automationStatus?: (
++    input: Omit<AutomationLifecycleInput, "threadId">,
++  ) => Effect.Effect<AutomationRunResult, CodexSessionRuntimeError>;
++  readonly pauseAutomation?: (
++    input: Omit<AutomationLifecycleInput, "threadId">,
++  ) => Effect.Effect<AutomationRunResult, CodexSessionRuntimeError>;
++  readonly refreshAutomation?: (
++    input: Omit<AutomationReconcileInput, "threadId">,
++  ) => Effect.Effect<AutomationRunResult, CodexSessionRuntimeError>;
++  readonly resumeAutomation?: (
++    input: Omit<AutomationReconcileInput, "threadId">,
++  ) => Effect.Effect<AutomationRunResult, CodexSessionRuntimeError>;
++  readonly cancelAutomation?: (
++    input: Omit<AutomationCancelInput, "threadId">,
++  ) => Effect.Effect<AutomationRunResult, CodexSessionRuntimeError>;
+   readonly respondToRequest: (
+     requestId: ApprovalRequestId,
+     decision: ProviderApprovalDecision,
+@@ -1346,6 +1388,159 @@ export const makeCodexSessionRuntime = (
+           });
+           return parseThreadSnapshot(response);
+         }),
++      validateAutomationProfile: (input) =>
++        Effect.gen(function* () {
++          const providerThreadId = yield* readProviderThreadId;
++          const response = yield* client.raw.request("automation/validate", {
++            ...input,
++            threadId: providerThreadId,
++          });
++          return yield* decodeAutomationValidateResponse(response).pipe(
++            Effect.mapError((error) =>
++              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
++                "decode-response-payload",
++                error,
++                { method: "automation/validate" },
++              ),
++            ),
++          );
++        }),
++      runAutomationFixture: (input) =>
++        Effect.gen(function* () {
++          const providerThreadId = yield* readProviderThreadId;
++          const response = yield* client.raw.request("automation/runFixture", {
++            ...input,
++            threadId: providerThreadId,
++          });
++          return yield* decodeAutomationRunResponse(response).pipe(
++            Effect.mapError((error) =>
++              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
++                "decode-response-payload",
++                error,
++                { method: "automation/runFixture" },
++              ),
++            ),
++          );
++        }),
++      readLinearAutomation: (input) =>
++        Effect.gen(function* () {
++          const providerThreadId = yield* readProviderThreadId;
++          const response = yield* client.raw.request("automation/linear/read", {
++            ...input,
++            threadId: providerThreadId,
++          });
++          return yield* decodeAutomationLinearReadResponse(response).pipe(
++            Effect.mapError((error) =>
++              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
++                "decode-response-payload",
++                error,
++                { method: "automation/linear/read" },
++              ),
++            ),
++          );
++        }),
++      readAutomationQueue: (input) =>
++        Effect.gen(function* () {
++          const providerThreadId = yield* readProviderThreadId;
++          const response = yield* client.raw.request("automation/queue/read", {
++            ...input,
++            threadId: providerThreadId,
++          });
++          return yield* decodeAutomationQueueReadResponse(response).pipe(
++            Effect.mapError((error) =>
++              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
++                "decode-response-payload",
++                error,
++                { method: "automation/queue/read" },
++              ),
++            ),
++          );
++        }),
++      automationStatus: (input) =>
++        Effect.gen(function* () {
++          const providerThreadId = yield* readProviderThreadId;
++          const response = yield* client.raw.request("automation/status", {
++            ...input,
++            threadId: providerThreadId,
++          });
++          return yield* decodeAutomationRunResponse(response).pipe(
++            Effect.mapError((error) =>
++              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
++                "decode-response-payload",
++                error,
++                { method: "automation/status" },
++              ),
++            ),
++          );
++        }),
++      pauseAutomation: (input) =>
++        Effect.gen(function* () {
++          const providerThreadId = yield* readProviderThreadId;
++          const response = yield* client.raw.request("automation/pause", {
++            ...input,
++            threadId: providerThreadId,
++          });
++          return yield* decodeAutomationRunResponse(response).pipe(
++            Effect.mapError((error) =>
++              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
++                "decode-response-payload",
++                error,
++                { method: "automation/pause" },
++              ),
++            ),
++          );
++        }),
++      refreshAutomation: (input) =>
++        Effect.gen(function* () {
++          const providerThreadId = yield* readProviderThreadId;
++          const response = yield* client.raw.request("automation/refresh", {
++            ...input,
++            threadId: providerThreadId,
++          });
++          return yield* decodeAutomationRunResponse(response).pipe(
++            Effect.mapError((error) =>
++              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
++                "decode-response-payload",
++                error,
++                { method: "automation/refresh" },
++              ),
++            ),
++          );
++        }),
++      resumeAutomation: (input) =>
++        Effect.gen(function* () {
++          const providerThreadId = yield* readProviderThreadId;
++          const response = yield* client.raw.request("automation/resume", {
++            ...input,
++            threadId: providerThreadId,
++          });
++          return yield* decodeAutomationRunResponse(response).pipe(
++            Effect.mapError((error) =>
++              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
++                "decode-response-payload",
++                error,
++                { method: "automation/resume" },
++              ),
++            ),
++          );
++        }),
++      cancelAutomation: (input) =>
++        Effect.gen(function* () {
++          const providerThreadId = yield* readProviderThreadId;
++          const response = yield* client.raw.request("automation/cancel", {
++            ...input,
++            threadId: providerThreadId,
++          });
++          return yield* decodeAutomationRunResponse(response).pipe(
++            Effect.mapError((error) =>
++              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
++                "decode-response-payload",
++                error,
++                { method: "automation/cancel" },
++              ),
++            ),
++          );
++        }),
+       respondToRequest: (requestId, decision) =>
+         Effect.gen(function* () {
+           const pending = (yield* Ref.get(pendingApprovalsRef)).get(requestId);
+diff --git a/apps/server/src/provider/Layers/ProviderService.ts b/apps/server/src/provider/Layers/ProviderService.ts
+index 2eaaeb8c..0cb04cab 100644
+--- a/apps/server/src/provider/Layers/ProviderService.ts
++++ b/apps/server/src/provider/Layers/ProviderService.ts
+@@ -10,6 +10,13 @@
+  * @module ProviderServiceLive
+  */
+ import {
++  AutomationCancelInput,
++  AutomationLinearReadInput,
++  AutomationLifecycleInput,
++  AutomationQueueReadInput,
++  AutomationReconcileInput,
++  AutomationRunInput,
++  AutomationValidateInput,
+   ModelSelection,
+   NonNegativeInt,
+   ThreadId,
+@@ -1008,6 +1015,213 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+     );
+   });
+
++  const validateAutomationProfile = Effect.fn("validateAutomationProfile")(function* (
++    rawInput: AutomationValidateInput,
++  ) {
++    const input = yield* decodeInputOrValidationError({
++      operation: "ProviderService.validateAutomationProfile",
++      schema: AutomationValidateInput,
++      payload: rawInput,
++    });
++    const routed = yield* resolveRoutableSession({
++      threadId: input.threadId,
++      operation: "ProviderService.validateAutomationProfile",
++      allowRecovery: true,
++    });
++    if (routed.adapter.provider !== "codex" || !routed.adapter.validateAutomationProfile) {
++      return yield* toValidationError(
++        "ProviderService.validateAutomationProfile",
++        "Automation profiles require an active Codex task.",
++      );
++    }
++    const { threadId: _threadId, ...request } = input;
++    return yield* routed.adapter.validateAutomationProfile(routed.threadId, request);
++  });
++
++  const runAutomationFixture = Effect.fn("runAutomationFixture")(function* (
++    rawInput: AutomationRunInput,
++  ) {
++    const input = yield* decodeInputOrValidationError({
++      operation: "ProviderService.runAutomationFixture",
++      schema: AutomationRunInput,
++      payload: rawInput,
++    });
++    const routed = yield* resolveRoutableSession({
++      threadId: input.threadId,
++      operation: "ProviderService.runAutomationFixture",
++      allowRecovery: true,
++    });
++    if (routed.adapter.provider !== "codex" || !routed.adapter.runAutomationFixture) {
++      return yield* toValidationError(
++        "ProviderService.runAutomationFixture",
++        "Task-owned Automation requires an active Codex task.",
++      );
++    }
++    const { threadId: _threadId, ...request } = input;
++    return yield* routed.adapter.runAutomationFixture(routed.threadId, request);
++  });
++
++  const readLinearAutomation = Effect.fn("readLinearAutomation")(function* (
++    rawInput: AutomationLinearReadInput,
++  ) {
++    const input = yield* decodeInputOrValidationError({
++      operation: "ProviderService.readLinearAutomation",
++      schema: AutomationLinearReadInput,
++      payload: rawInput,
++    });
++    const routed = yield* resolveRoutableSession({
++      threadId: input.threadId,
++      operation: "ProviderService.readLinearAutomation",
++      allowRecovery: true,
++    });
++    if (routed.adapter.provider !== "codex" || !routed.adapter.readLinearAutomation) {
++      return yield* toValidationError(
++        "ProviderService.readLinearAutomation",
++        "Live Linear intake requires an active Codex task.",
++      );
++    }
++    const { threadId: _threadId, ...request } = input;
++    return yield* routed.adapter.readLinearAutomation(routed.threadId, request);
++  });
++
++  const readAutomationQueue = Effect.fn("readAutomationQueue")(function* (
++    rawInput: AutomationQueueReadInput,
++  ) {
++    const input = yield* decodeInputOrValidationError({
++      operation: "ProviderService.readAutomationQueue",
++      schema: AutomationQueueReadInput,
++      payload: rawInput,
++    });
++    const routed = yield* resolveRoutableSession({
++      threadId: input.threadId,
++      operation: "ProviderService.readAutomationQueue",
++      allowRecovery: true,
++    });
++    if (routed.adapter.provider !== "codex" || !routed.adapter.readAutomationQueue) {
++      return yield* toValidationError(
++        "ProviderService.readAutomationQueue",
++        "Automation queue inspection requires an active Codex task.",
++      );
++    }
++    const { threadId: _threadId, ...request } = input;
++    return yield* routed.adapter.readAutomationQueue(routed.threadId, request);
++  });
++
++  const cancelAutomation = Effect.fn("cancelAutomation")(function* (
++    rawInput: AutomationCancelInput,
++  ) {
++    const input = yield* decodeInputOrValidationError({
++      operation: "ProviderService.cancelAutomation",
++      schema: AutomationCancelInput,
++      payload: rawInput,
++    });
++    const routed = yield* resolveRoutableSession({
++      threadId: input.threadId,
++      operation: "ProviderService.cancelAutomation",
++      allowRecovery: true,
++    });
++    if (routed.adapter.provider !== "codex" || !routed.adapter.cancelAutomation) {
++      return yield* toValidationError(
++        "ProviderService.cancelAutomation",
++        "Task-owned Automation cancellation requires an active Codex task.",
++      );
++    }
++    const { threadId: _threadId, ...request } = input;
++    return yield* routed.adapter.cancelAutomation(routed.threadId, request);
++  });
++
++  const automationStatus = Effect.fn("automationStatus")(function* (
++    rawInput: AutomationLifecycleInput,
++  ) {
++    const input = yield* decodeInputOrValidationError({
++      operation: "ProviderService.automationStatus",
++      schema: AutomationLifecycleInput,
++      payload: rawInput,
++    });
++    const routed = yield* resolveRoutableSession({
++      threadId: input.threadId,
++      operation: "ProviderService.automationStatus",
++      allowRecovery: true,
++    });
++    if (routed.adapter.provider !== "codex" || !routed.adapter.automationStatus) {
++      return yield* toValidationError(
++        "ProviderService.automationStatus",
++        "Automation inspection requires an active Codex task.",
++      );
++    }
++    const { threadId: _threadId, ...request } = input;
++    return yield* routed.adapter.automationStatus(routed.threadId, request);
++  });
++
++  const pauseAutomation = Effect.fn("pauseAutomation")(function* (
++    rawInput: AutomationLifecycleInput,
++  ) {
++    const input = yield* decodeInputOrValidationError({
++      operation: "ProviderService.pauseAutomation",
++      schema: AutomationLifecycleInput,
++      payload: rawInput,
++    });
++    const routed = yield* resolveRoutableSession({
++      threadId: input.threadId,
++      operation: "ProviderService.pauseAutomation",
++      allowRecovery: true,
++    });
++    if (routed.adapter.provider !== "codex" || !routed.adapter.pauseAutomation) {
++      return yield* toValidationError(
++        "ProviderService.pauseAutomation",
++        "Automation pause requires an active Codex task.",
++      );
++    }
++    const { threadId: _threadId, ...request } = input;
++    return yield* routed.adapter.pauseAutomation(routed.threadId, request);
++  });
++
++  const refreshAutomation = Effect.fn("refreshAutomation")(function* (
++    rawInput: AutomationReconcileInput,
++  ) {
++    const input = yield* decodeInputOrValidationError({
++      operation: "ProviderService.refreshAutomation",
++      schema: AutomationReconcileInput,
++      payload: rawInput,
++    });
++    const routed = yield* resolveRoutableSession({
++      threadId: input.threadId,
++      operation: "ProviderService.refreshAutomation",
++      allowRecovery: true,
++    });
++    if (routed.adapter.provider !== "codex" || !routed.adapter.refreshAutomation) {
++      return yield* toValidationError(
++        "ProviderService.refreshAutomation",
++        "Automation refresh requires an active Codex task.",
++      );
++    }
++    const { threadId: _threadId, ...request } = input;
++    return yield* routed.adapter.refreshAutomation(routed.threadId, request);
++  });
++
++  const resumeAutomation = Effect.fn("resumeAutomation")(function* (
++    rawInput: AutomationReconcileInput,
++  ) {
++    const input = yield* decodeInputOrValidationError({
++      operation: "ProviderService.resumeAutomation",
++      schema: AutomationReconcileInput,
++      payload: rawInput,
++    });
++    const routed = yield* resolveRoutableSession({
++      threadId: input.threadId,
++      operation: "ProviderService.resumeAutomation",
++      allowRecovery: true,
++    });
++    if (routed.adapter.provider !== "codex" || !routed.adapter.resumeAutomation) {
++      return yield* toValidationError(
++        "ProviderService.resumeAutomation",
++        "Automation resume requires an active Codex task.",
++      );
++    }
++    const { threadId: _threadId, ...request } = input;
++    return yield* routed.adapter.resumeAutomation(routed.threadId, request);
++  });
++
+   const runStopAll = Effect.fn("runStopAll")(function* () {
+     const threadIds = yield* directory.listThreadIds();
+     const currentAdapters = yield* getAdapterEntries;
+@@ -1079,6 +1293,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+     getCapabilities,
+     getInstanceInfo,
+     rollbackConversation,
++    validateAutomationProfile,
++    runAutomationFixture,
++    readLinearAutomation,
++    readAutomationQueue,
++    automationStatus,
++    pauseAutomation,
++    refreshAutomation,
++    resumeAutomation,
++    cancelAutomation,
+     // Each access creates a fresh PubSub subscription so that multiple
+     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
+     // independently receive all runtime events.
+diff --git a/apps/server/src/provider/Services/ProviderAdapter.ts b/apps/server/src/provider/Services/ProviderAdapter.ts
+index 01eeae7b..334b9615 100644
+--- a/apps/server/src/provider/Services/ProviderAdapter.ts
++++ b/apps/server/src/provider/Services/ProviderAdapter.ts
+@@ -8,6 +8,17 @@
+  * @module ProviderAdapter
+  */
+ import type {
++  AutomationLinearReadInput,
++  AutomationLinearReadResult,
++  AutomationLifecycleInput,
++  AutomationQueueReadInput,
++  AutomationQueueReadResult,
++  AutomationReconcileInput,
++  AutomationRunInput,
++  AutomationRunResult,
++  AutomationCancelInput,
++  AutomationValidateInput,
++  AutomationValidateResult,
+   ApprovalRequestId,
+   ProviderApprovalDecision,
+   ProviderDriverKind,
+@@ -114,6 +125,44 @@ export interface ProviderAdapterShape<TError> {
+     numTurns: number,
+   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
+
++  /** Codex-native extension point. Other provider adapters leave this absent. */
++  readonly validateAutomationProfile?: (
++    threadId: ThreadId,
++    input: Omit<AutomationValidateInput, "threadId">,
++  ) => Effect.Effect<AutomationValidateResult, TError>;
++  readonly runAutomationFixture?: (
++    threadId: ThreadId,
++    input: Omit<AutomationRunInput, "threadId">,
++  ) => Effect.Effect<AutomationRunResult, TError>;
++  readonly readLinearAutomation?: (
++    threadId: ThreadId,
++    input: Omit<AutomationLinearReadInput, "threadId">,
++  ) => Effect.Effect<AutomationLinearReadResult, TError>;
++  readonly readAutomationQueue?: (
++    threadId: ThreadId,
++    input: Omit<AutomationQueueReadInput, "threadId">,
++  ) => Effect.Effect<AutomationQueueReadResult, TError>;
++  readonly automationStatus?: (
++    threadId: ThreadId,
++    input: Omit<AutomationLifecycleInput, "threadId">,
++  ) => Effect.Effect<AutomationRunResult, TError>;
++  readonly pauseAutomation?: (
++    threadId: ThreadId,
++    input: Omit<AutomationLifecycleInput, "threadId">,
++  ) => Effect.Effect<AutomationRunResult, TError>;
++  readonly refreshAutomation?: (
++    threadId: ThreadId,
++    input: Omit<AutomationReconcileInput, "threadId">,
++  ) => Effect.Effect<AutomationRunResult, TError>;
++  readonly resumeAutomation?: (
++    threadId: ThreadId,
++    input: Omit<AutomationReconcileInput, "threadId">,
++  ) => Effect.Effect<AutomationRunResult, TError>;
++  readonly cancelAutomation?: (
++    threadId: ThreadId,
++    input: Omit<AutomationCancelInput, "threadId">,
++  ) => Effect.Effect<AutomationRunResult, TError>;
++
+   /**
+    * Stop all sessions owned by this adapter.
+    */
+diff --git a/apps/server/src/provider/Services/ProviderService.ts b/apps/server/src/provider/Services/ProviderService.ts
+index 4d4cb4fa..e8728400 100644
+--- a/apps/server/src/provider/Services/ProviderService.ts
++++ b/apps/server/src/provider/Services/ProviderService.ts
+@@ -12,6 +12,17 @@
+  * @module ProviderService
+  */
+ import type {
++  AutomationLinearReadInput,
++  AutomationLinearReadResult,
++  AutomationLifecycleInput,
++  AutomationQueueReadInput,
++  AutomationQueueReadResult,
++  AutomationReconcileInput,
++  AutomationRunInput,
++  AutomationRunResult,
++  AutomationCancelInput,
++  AutomationValidateInput,
++  AutomationValidateResult,
+   ProviderInterruptTurnInput,
+   ProviderInstanceId,
+   ProviderRespondToRequestInput,
+@@ -105,6 +116,34 @@ export interface ProviderServiceShape {
+     readonly numTurns: number;
+   }) => Effect.Effect<void, ProviderServiceError>;
+
++  readonly validateAutomationProfile?: (
++    input: AutomationValidateInput,
++  ) => Effect.Effect<AutomationValidateResult, ProviderServiceError>;
++  readonly runAutomationFixture?: (
++    input: AutomationRunInput,
++  ) => Effect.Effect<AutomationRunResult, ProviderServiceError>;
++  readonly readLinearAutomation?: (
++    input: AutomationLinearReadInput,
++  ) => Effect.Effect<AutomationLinearReadResult, ProviderServiceError>;
++  readonly readAutomationQueue?: (
++    input: AutomationQueueReadInput,
++  ) => Effect.Effect<AutomationQueueReadResult, ProviderServiceError>;
++  readonly automationStatus?: (
++    input: AutomationLifecycleInput,
++  ) => Effect.Effect<AutomationRunResult, ProviderServiceError>;
++  readonly pauseAutomation?: (
++    input: AutomationLifecycleInput,
++  ) => Effect.Effect<AutomationRunResult, ProviderServiceError>;
++  readonly refreshAutomation?: (
++    input: AutomationReconcileInput,
++  ) => Effect.Effect<AutomationRunResult, ProviderServiceError>;
++  readonly resumeAutomation?: (
++    input: AutomationReconcileInput,
++  ) => Effect.Effect<AutomationRunResult, ProviderServiceError>;
++  readonly cancelAutomation?: (
++    input: AutomationCancelInput,
++  ) => Effect.Effect<AutomationRunResult, ProviderServiceError>;
++
+   /**
+    * Canonical provider runtime event stream.
+    *
+diff --git a/apps/server/src/ws.ts b/apps/server/src/ws.ts
+index fafdbfa6..6bdbd5a1 100644
+--- a/apps/server/src/ws.ts
++++ b/apps/server/src/ws.ts
+@@ -11,6 +11,8 @@ import * as Schema from "effect/Schema";
+ import * as Stream from "effect/Stream";
+ import {
+   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
++  AutomationRunError,
++  AutomationValidateError,
+   AuthOrchestrationOperateScope,
+   AuthOrchestrationReadScope,
+   AuthReviewWriteScope,
+@@ -76,6 +78,7 @@ import {
+   observeRpcStreamEffect as instrumentRpcStreamEffect,
+ } from "./observability/RpcInstrumentation.ts";
+ import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
++import * as ProviderService from "./provider/Services/ProviderService.ts";
+ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
+ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
+ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+@@ -321,6 +324,15 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
+   [WS_METHODS.vcsSwitchRef, AuthOrchestrationOperateScope],
+   [WS_METHODS.vcsInit, AuthOrchestrationOperateScope],
+   [WS_METHODS.reviewGetDiffPreview, AuthReviewWriteScope],
++  [WS_METHODS.automationValidate, AuthOrchestrationReadScope],
++  [WS_METHODS.automationRunFixture, AuthOrchestrationOperateScope],
++  [WS_METHODS.automationLinearRead, AuthOrchestrationReadScope],
++  [WS_METHODS.automationQueueRead, AuthOrchestrationReadScope],
++  [WS_METHODS.automationStatus, AuthOrchestrationReadScope],
++  [WS_METHODS.automationPause, AuthOrchestrationOperateScope],
++  [WS_METHODS.automationRefresh, AuthOrchestrationOperateScope],
++  [WS_METHODS.automationResume, AuthOrchestrationOperateScope],
++  [WS_METHODS.automationCancel, AuthOrchestrationOperateScope],
+   [WS_METHODS.terminalOpen, AuthTerminalOperateScope],
+   [WS_METHODS.terminalAttach, AuthTerminalOperateScope],
+   [WS_METHODS.terminalWrite, AuthTerminalOperateScope],
+@@ -1242,6 +1254,240 @@ const makeWsRpcLayer = (
+           observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {
+             "rpc.aggregate": "server",
+           }),
++        [WS_METHODS.automationValidate]: (input) =>
++          observeRpcEffect(
++            WS_METHODS.automationValidate,
++            Effect.gen(function* () {
++              const providerService = Option.getOrUndefined(
++                yield* Effect.serviceOption(ProviderService.ProviderService),
++              );
++              if (!providerService?.validateAutomationProfile) {
++                return yield* new AutomationValidateError({
++                  threadId: input.threadId,
++                  message: "Automation validation is unavailable.",
++                });
++              }
++              return yield* providerService.validateAutomationProfile(input).pipe(
++                Effect.mapError(
++                  (cause) =>
++                    new AutomationValidateError({
++                      threadId: input.threadId,
++                      message: cause.message,
++                      cause,
++                    }),
++                ),
++              );
++            }),
++            { "rpc.aggregate": "automation", "thread.id": input.threadId },
++          ),
++        [WS_METHODS.automationRunFixture]: (input) =>
++          observeRpcEffect(
++            WS_METHODS.automationRunFixture,
++            Effect.gen(function* () {
++              const providerService = Option.getOrUndefined(
++                yield* Effect.serviceOption(ProviderService.ProviderService),
++              );
++              if (!providerService?.runAutomationFixture) {
++                return yield* new AutomationRunError({
++                  threadId: input.threadId,
++                  message: "Task-owned Automation execution is unavailable.",
++                });
++              }
++              return yield* providerService.runAutomationFixture(input).pipe(
++                Effect.mapError(
++                  (cause) =>
++                    new AutomationRunError({
++                      threadId: input.threadId,
++                      message: cause.message,
++                      cause,
++                    }),
++                ),
++              );
++            }),
++            { "rpc.aggregate": "automation", "thread.id": input.threadId },
++          ),
++        [WS_METHODS.automationLinearRead]: (input) =>
++          observeRpcEffect(
++            WS_METHODS.automationLinearRead,
++            Effect.gen(function* () {
++              const providerService = Option.getOrUndefined(
++                yield* Effect.serviceOption(ProviderService.ProviderService),
++              );
++              if (!providerService?.readLinearAutomation) {
++                return yield* new AutomationValidateError({
++                  threadId: input.threadId,
++                  message: "Live read-only Linear intake is unavailable.",
++                });
++              }
++              return yield* providerService.readLinearAutomation(input).pipe(
++                Effect.mapError(
++                  (cause) =>
++                    new AutomationValidateError({
++                      threadId: input.threadId,
++                      message: cause.message,
++                      cause,
++                    }),
++                ),
++              );
++            }),
++            { "rpc.aggregate": "automation", "thread.id": input.threadId },
++          ),
++        [WS_METHODS.automationQueueRead]: (input) =>
++          observeRpcEffect(
++            WS_METHODS.automationQueueRead,
++            Effect.gen(function* () {
++              const providerService = Option.getOrUndefined(
++                yield* Effect.serviceOption(ProviderService.ProviderService),
++              );
++              if (!providerService?.readAutomationQueue) {
++                return yield* new AutomationRunError({
++                  threadId: input.threadId,
++                  message: "Automation queue inspection is unavailable.",
++                });
++              }
++              return yield* providerService.readAutomationQueue(input).pipe(
++                Effect.mapError(
++                  (cause) =>
++                    new AutomationRunError({
++                      threadId: input.threadId,
++                      message: cause.message,
++                      cause,
++                    }),
++                ),
++              );
++            }),
++            { "rpc.aggregate": "automation", "thread.id": input.threadId },
++          ),
++        [WS_METHODS.automationCancel]: (input) =>
++          observeRpcEffect(
++            WS_METHODS.automationCancel,
++            Effect.gen(function* () {
++              const providerService = Option.getOrUndefined(
++                yield* Effect.serviceOption(ProviderService.ProviderService),
++              );
++              if (!providerService?.cancelAutomation) {
++                return yield* new AutomationRunError({
++                  threadId: input.threadId,
++                  message: "Task-owned Automation cancellation is unavailable.",
++                });
++              }
++              return yield* providerService.cancelAutomation(input).pipe(
++                Effect.mapError(
++                  (cause) =>
++                    new AutomationRunError({
++                      threadId: input.threadId,
++                      message: cause.message,
++                      cause,
++                    }),
++                ),
++              );
++            }),
++            { "rpc.aggregate": "automation", "thread.id": input.threadId },
++          ),
++        [WS_METHODS.automationStatus]: (input) =>
++          observeRpcEffect(
++            WS_METHODS.automationStatus,
++            Effect.gen(function* () {
++              const service = Option.getOrUndefined(
++                yield* Effect.serviceOption(ProviderService.ProviderService),
++              );
++              if (!service?.automationStatus) {
++                return yield* new AutomationRunError({
++                  threadId: input.threadId,
++                  message: "Automation inspection is unavailable.",
++                });
++              }
++              return yield* service.automationStatus(input).pipe(
++                Effect.mapError(
++                  (cause) =>
++                    new AutomationRunError({
++                      threadId: input.threadId,
++                      message: cause.message,
++                      cause,
++                    }),
++                ),
++              );
++            }),
++            { "rpc.aggregate": "automation", "thread.id": input.threadId },
++          ),
++        [WS_METHODS.automationPause]: (input) =>
++          observeRpcEffect(
++            WS_METHODS.automationPause,
++            Effect.gen(function* () {
++              const service = Option.getOrUndefined(
++                yield* Effect.serviceOption(ProviderService.ProviderService),
++              );
++              if (!service?.pauseAutomation) {
++                return yield* new AutomationRunError({
++                  threadId: input.threadId,
++                  message: "Automation pause is unavailable.",
++                });
++              }
++              return yield* service.pauseAutomation(input).pipe(
++                Effect.mapError(
++                  (cause) =>
++                    new AutomationRunError({
++                      threadId: input.threadId,
++                      message: cause.message,
++                      cause,
++                    }),
++                ),
++              );
++            }),
++            { "rpc.aggregate": "automation", "thread.id": input.threadId },
++          ),
++        [WS_METHODS.automationRefresh]: (input) =>
++          observeRpcEffect(
++            WS_METHODS.automationRefresh,
++            Effect.gen(function* () {
++              const service = Option.getOrUndefined(
++                yield* Effect.serviceOption(ProviderService.ProviderService),
++              );
++              if (!service?.refreshAutomation) {
++                return yield* new AutomationRunError({
++                  threadId: input.threadId,
++                  message: "Automation reconciliation refresh is unavailable.",
++                });
++              }
++              return yield* service.refreshAutomation(input).pipe(
++                Effect.mapError(
++                  (cause) =>
++                    new AutomationRunError({
++                      threadId: input.threadId,
++                      message: cause.message,
++                      cause,
++                    }),
++                ),
++              );
++            }),
++            { "rpc.aggregate": "automation", "thread.id": input.threadId },
++          ),
++        [WS_METHODS.automationResume]: (input) =>
++          observeRpcEffect(
++            WS_METHODS.automationResume,
++            Effect.gen(function* () {
++              const service = Option.getOrUndefined(
++                yield* Effect.serviceOption(ProviderService.ProviderService),
++              );
++              if (!service?.resumeAutomation) {
++                return yield* new AutomationRunError({
++                  threadId: input.threadId,
++                  message: "Automation resume is unavailable.",
++                });
++              }
++              return yield* service.resumeAutomation(input).pipe(
++                Effect.mapError(
++                  (cause) =>
++                    new AutomationRunError({
++                      threadId: input.threadId,
++                      message: cause.message,
++                      cause,
++                    }),
++                ),
++              );
++            }),
++            { "rpc.aggregate": "automation", "thread.id": input.threadId },
++          ),
+         [WS_METHODS.serverRefreshProviders]: (input) =>
+           observeRpcEffect(
+             WS_METHODS.serverRefreshProviders,
+diff --git a/apps/web/src/components/chat/AutomationProfileDialog.logic.test.ts b/apps/web/src/components/chat/AutomationProfileDialog.logic.test.ts
+new file mode 100644
+index 00000000..d7515de7
+--- /dev/null
++++ b/apps/web/src/components/chat/AutomationProfileDialog.logic.test.ts
+@@ -0,0 +1,178 @@
++import { ThreadId } from "@t3tools/contracts";
++import { describe, expect, it } from "vite-plus/test";
++
++import {
++  automationLinearRows,
++  automationRunRows,
++  buildAutomationValidateInput,
++} from "./AutomationProfileDialog.logic";
++
++describe("buildAutomationValidateInput", () => {
++  it("creates only a task-scoped native validation request", () => {
++    const request = buildAutomationValidateInput({
++      threadId: ThreadId.make("task-13"),
++      profilePath: " WORKFLOW.md ",
++      issueIdentifier: " DOGFOOD-13 ",
++      issueTitle: "Exercise Automation",
++      issueState: " Todo ",
++      issueLabels: " automation, dogfood ",
++      attempt: "2",
++    });
++
++    expect(request).toEqual({
++      threadId: "task-13",
++      profilePath: "WORKFLOW.md",
++      fixtureIssue: {
++        id: "DOGFOOD-13",
++        identifier: "DOGFOOD-13",
++        title: "Exercise Automation",
++        state: "Todo",
++        labels: ["automation", "dogfood"],
++        blockedBy: [],
++      },
++      attempt: 2,
++    });
++    expect(request).not.toHaveProperty("repositoryRoot");
++    expect(request).not.toHaveProperty("approvalPolicy");
++    expect(request).not.toHaveProperty("sandboxPolicy");
++  });
++
++  it("bounds malformed attempts to the first attempt", () => {
++    const request = buildAutomationValidateInput({
++      threadId: ThreadId.make("task-13"),
++      profilePath: "WORKFLOW.md",
++      issueIdentifier: "DOGFOOD-13",
++      issueTitle: "Exercise Automation",
++      issueState: "Todo",
++      issueLabels: "automation",
++      attempt: "-4",
++    });
++
++    expect(request.attempt).toBe(1);
++  });
++});
++
++describe("automationRunRows", () => {
++  it("carries the native fixture claim and stable task link into the bounded desktop model", () => {
++    const rows = automationRunRows({
++      run: {
++        schemaVersion: 1,
++        runId: "automation-root-1",
++        ownerThreadId: "task-33",
++        sourceRevision: "abc123",
++        profileDigest: "profile-digest",
++        trackerProjectSlug: "orchestra",
++        leaseEpoch: 1,
++        revision: 4,
++        status: "running",
++        reconciliation: "complete",
++        queueCounts: {
++          queued: 0,
++          running: 0,
++          blocked: 0,
++          waitingGate: 0,
++          handoff: 0,
++          terminal: 1,
++        },
++        claimsTotal: 1,
++        queuePreview: [],
++        queuePreviewTruncated: false,
++        nextAction: { text: "Automation remains resident", truncated: false },
++        claims: [
++          {
++            claimId: "claim-1",
++            issueId: "issue-33",
++            issueIdentifier: "ORC-33",
++            issueTitle: { text: "Run one fixture issue", truncated: false },
++            trackerState: "Todo",
++            priority: 2,
++            attempt: 1,
++            status: "completed",
++            worktree: "/repo/.worktrees/orc-33-a1",
++            sourceRevision: "abc123",
++            issueTask: { threadId: "issue-task-33", taskPath: "/root/automation_orc_33" },
++            workflowRunId: "workflow-run-33",
++            workflowStatus: "completed",
++            effects: [
++              {
++                effectId: "effect-34",
++                idempotencyKey: "idem-34",
++                kind: "tracker.comment",
++                status: "committed",
++                gatePolicy: "auto_accept",
++                requestSha256: "request-sha",
++                bodyPreview: { text: "Implemented and verified.", truncated: false },
++                providerReceipt: "fixture-comment:idem-34",
++              },
++            ],
++            nextAction: { text: "claim complete", truncated: false },
++          },
++        ],
++      },
++    });
++
++    expect(rows).toEqual([
++      {
++        claimId: "claim-1",
++        issueIdentifier: "ORC-33",
++        issueTitle: { text: "Run one fixture issue", truncated: false },
++        trackerState: "Todo",
++        priority: 2,
++        status: "completed",
++        issueTaskThreadId: "issue-task-33",
++        workflowRunId: "workflow-run-33",
++        effects: [
++          {
++            effectId: "effect-34",
++            kind: "tracker.comment",
++            status: "committed",
++            gatePolicy: "auto_accept",
++            bodyPreview: { text: "Implemented and verified.", truncated: false },
++            providerReceipt: "fixture-comment:idem-34",
++            failure: undefined,
++          },
++        ],
++        nextAction: { text: "claim complete", truncated: false },
++      },
++    ]);
++    expect(rows[0]).not.toHaveProperty("worktree");
++    expect(rows[0]).not.toHaveProperty("outputs");
++  });
++});
++
++describe("automationLinearRows", () => {
++  it("projects a bounded normalized summary without provider-specific detail", () => {
++    const issues = Array.from({ length: 26 }, (_, index) => ({
++      id: `issue-${index}`,
++      identifier: `ORC-${index}`,
++      title: `Issue ${index}`,
++      state: "Todo",
++      priority: index % 4 || undefined,
++      labels: ["automation"],
++      blockedBy: index === 0 ? [{ identifier: "ORC-99" }] : [],
++      description: "must not cross the renderer projection",
++      url: "https://linear.app/example",
++    }));
++
++    const rows = automationLinearRows({
++      status: "ready",
++      issues,
++      hasNextPage: true,
++      endCursor: "cursor-25",
++      nextAction: { text: "Read the next page", truncated: false },
++    });
++
++    expect(rows).toHaveLength(25);
++    expect(rows[0]).toEqual({
++      id: "issue-0",
++      identifier: "ORC-0",
++      title: "Issue 0",
++      state: "Todo",
++      priority: undefined,
++      labels: ["automation"],
++      blockedByCount: 1,
++    });
++    expect(rows[0]).not.toHaveProperty("description");
++    expect(rows[0]).not.toHaveProperty("url");
++  });
++});
+diff --git a/apps/web/src/components/chat/AutomationProfileDialog.logic.ts b/apps/web/src/components/chat/AutomationProfileDialog.logic.ts
+new file mode 100644
+index 00000000..039d841a
+--- /dev/null
++++ b/apps/web/src/components/chat/AutomationProfileDialog.logic.ts
+@@ -0,0 +1,69 @@
++import type {
++  AutomationLinearReadResult,
++  AutomationRunResult,
++  AutomationValidateInput,
++  ThreadId,
++} from "@t3tools/contracts";
++
++export function buildAutomationValidateInput(input: {
++  readonly threadId: ThreadId;
++  readonly profilePath: string;
++  readonly issueIdentifier: string;
++  readonly issueTitle: string;
++  readonly issueState: string;
++  readonly issueLabels: string;
++  readonly attempt: string;
++}): AutomationValidateInput {
++  const identifier = input.issueIdentifier.trim();
++  return {
++    threadId: input.threadId,
++    profilePath: input.profilePath.trim(),
++    fixtureIssue: {
++      id: identifier,
++      identifier,
++      title: input.issueTitle,
++      state: input.issueState.trim(),
++      labels: input.issueLabels
++        .split(",")
++        .map((label) => label.trim())
++        .filter(Boolean),
++      blockedBy: [],
++    },
++    attempt: Math.max(1, Number.parseInt(input.attempt, 10) || 1),
++  };
++}
++
++export function automationRunRows(result: AutomationRunResult) {
++  return result.run.claims.slice(0, 8).map((claim) => ({
++    claimId: claim.claimId,
++    issueIdentifier: claim.issueIdentifier,
++    issueTitle: claim.issueTitle,
++    trackerState: claim.trackerState,
++    priority: claim.priority,
++    status: claim.status,
++    issueTaskThreadId: claim.issueTask?.threadId,
++    workflowRunId: claim.workflowRunId,
++    effects: claim.effects.slice(0, 4).map((effect) => ({
++      effectId: effect.effectId,
++      kind: effect.kind,
++      status: effect.status,
++      gatePolicy: effect.gatePolicy,
++      bodyPreview: effect.bodyPreview,
++      providerReceipt: effect.providerReceipt,
++      failure: effect.failure,
++    })),
++    nextAction: claim.nextAction,
++  }));
++}
++
++export function automationLinearRows(result: AutomationLinearReadResult) {
++  return result.issues.slice(0, 25).map((issue) => ({
++    id: issue.id,
++    identifier: issue.identifier,
++    title: issue.title,
++    state: issue.state,
++    priority: issue.priority,
++    labels: issue.labels,
++    blockedByCount: issue.blockedBy.length,
++  }));
++}
+diff --git a/apps/web/src/components/chat/AutomationProfileDialog.tsx b/apps/web/src/components/chat/AutomationProfileDialog.tsx
+new file mode 100644
+index 00000000..0438b14a
+--- /dev/null
++++ b/apps/web/src/components/chat/AutomationProfileDialog.tsx
+@@ -0,0 +1,687 @@
++import type {
++  AutomationLinearReadResult,
++  AutomationQueueReadInput,
++  AutomationQueueReadResult,
++  AutomationRunResult,
++  AutomationValidateResult,
++  EnvironmentId,
++  ThreadId,
++} from "@t3tools/contracts";
++import {
++  isAtomCommandInterrupted,
++  squashAtomCommandFailure,
++} from "@t3tools/client-runtime/state/runtime";
++import { BotIcon, CheckCircle2Icon, CircleAlertIcon } from "lucide-react";
++import { memo, useCallback, useState } from "react";
++
++import {
++  cancelAutomation,
++  pauseAutomation,
++  readLinearAutomation,
++  readAutomationQueue,
++  readAutomationStatus,
++  refreshAutomation,
++  resumeAutomation,
++  runAutomationFixture,
++  validateAutomationProfile,
++} from "~/state/automation";
++import { useAtomCommand } from "~/state/use-atom-command";
++import {
++  automationLinearRows,
++  automationRunRows,
++  buildAutomationValidateInput,
++} from "./AutomationProfileDialog.logic";
++import { Badge } from "../ui/badge";
++import { Button } from "../ui/button";
++import {
++  Dialog,
++  DialogDescription,
++  DialogFooter,
++  DialogHeader,
++  DialogPanel,
++  DialogPopup,
++  DialogTitle,
++  DialogTrigger,
++} from "../ui/dialog";
++import { Input } from "../ui/input";
++import { Label } from "../ui/label";
++import { Spinner } from "../ui/spinner";
++import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
++
++interface AutomationProfileDialogProps {
++  readonly environmentId: EnvironmentId;
++  readonly threadId: ThreadId;
++  readonly threadTitle: string;
++}
++
++function readableError(cause: unknown): string {
++  return cause instanceof Error ? cause.message : "Could not validate the Automation profile.";
++}
++
++export const AutomationProfileDialog = memo(function AutomationProfileDialog({
++  environmentId,
++  threadId,
++  threadTitle,
++}: AutomationProfileDialogProps) {
++  const validate = useAtomCommand(validateAutomationProfile, { reportFailure: false });
++  const runFixture = useAtomCommand(runAutomationFixture, { reportFailure: false });
++  const cancel = useAtomCommand(cancelAutomation, { reportFailure: false });
++  const pause = useAtomCommand(pauseAutomation, { reportFailure: false });
++  const readStatus = useAtomCommand(readAutomationStatus, { reportFailure: false });
++  const refresh = useAtomCommand(refreshAutomation, { reportFailure: false });
++  const resume = useAtomCommand(resumeAutomation, { reportFailure: false });
++  const readLinear = useAtomCommand(readLinearAutomation, { reportFailure: false });
++  const readQueue = useAtomCommand(readAutomationQueue, { reportFailure: false });
++  const [open, setOpen] = useState(false);
++  const [profilePath, setProfilePath] = useState("WORKFLOW.md");
++  const [issueIdentifier, setIssueIdentifier] = useState("DOGFOOD-1");
++  const [issueState, setIssueState] = useState("Todo");
++  const [issueLabels, setIssueLabels] = useState("automation");
++  const [attempt, setAttempt] = useState("1");
++  const [pending, setPending] = useState(false);
++  const [result, setResult] = useState<AutomationValidateResult | null>(null);
++  const [runResult, setRunResult] = useState<AutomationRunResult | null>(null);
++  const [linearResult, setLinearResult] = useState<AutomationLinearReadResult | null>(null);
++  const [queueResult, setQueueResult] = useState<AutomationQueueReadResult | null>(null);
++  const [error, setError] = useState<string | null>(null);
++
++  const submit = useCallback(() => {
++    setPending(true);
++    setError(null);
++    setResult(null);
++    setRunResult(null);
++    setQueueResult(null);
++    void validate({
++      environmentId,
++      input: buildAutomationValidateInput({
++        threadId,
++        profilePath: profilePath.trim(),
++        issueIdentifier,
++        issueTitle: threadTitle,
++        issueState,
++        issueLabels,
++        attempt,
++      }),
++    }).then((commandResult) => {
++      setPending(false);
++      if (commandResult._tag === "Success") {
++        setResult(commandResult.value);
++        return;
++      }
++      if (!isAtomCommandInterrupted(commandResult)) {
++        setError(readableError(squashAtomCommandFailure(commandResult)));
++      }
++    });
++  }, [
++    attempt,
++    environmentId,
++    issueIdentifier,
++    issueLabels,
++    issueState,
++    profilePath,
++    threadId,
++    threadTitle,
++    validate,
++  ]);
++
++  const run = useCallback(() => {
++    setPending(true);
++    setError(null);
++    setRunResult(null);
++    void runFixture({
++      environmentId,
++      input: buildAutomationValidateInput({
++        threadId,
++        profilePath: profilePath.trim(),
++        issueIdentifier,
++        issueTitle: threadTitle,
++        issueState,
++        issueLabels,
++        attempt,
++      }),
++    }).then((commandResult) => {
++      setPending(false);
++      if (commandResult._tag === "Success") {
++        setRunResult(commandResult.value);
++        return;
++      }
++      if (!isAtomCommandInterrupted(commandResult)) {
++        setError(readableError(squashAtomCommandFailure(commandResult)));
++      }
++    });
++  }, [
++    attempt,
++    environmentId,
++    issueIdentifier,
++    issueLabels,
++    issueState,
++    profilePath,
++    runFixture,
++    threadId,
++    threadTitle,
++  ]);
++
++  const cancelRun = useCallback(() => {
++    if (!runResult) return;
++    setPending(true);
++    setError(null);
++    void cancel({
++      environmentId,
++      input: { threadId, runId: runResult.run.runId },
++    }).then((commandResult) => {
++      setPending(false);
++      if (commandResult._tag === "Success") {
++        setRunResult(commandResult.value);
++        return;
++      }
++      if (!isAtomCommandInterrupted(commandResult)) {
++        setError(readableError(squashAtomCommandFailure(commandResult)));
++      }
++    });
++  }, [cancel, environmentId, runResult, threadId]);
++
++  const runLifecycleAction = useCallback(
++    (action: "status" | "pause" | "refresh" | "resume") => {
++      if (!runResult) return;
++      setPending(true);
++      setError(null);
++      const base = {
++        environmentId,
++        input: { threadId, runId: runResult.run.runId },
++      };
++      const command =
++        action === "status"
++          ? readStatus(base)
++          : action === "pause"
++            ? pause(base)
++            : action === "refresh"
++              ? refresh({
++                  environmentId,
++                  input: { ...base.input, profilePath: profilePath.trim() },
++                })
++              : resume({
++                  environmentId,
++                  input: { ...base.input, profilePath: profilePath.trim() },
++                });
++      void command.then((commandResult) => {
++        setPending(false);
++        if (commandResult._tag === "Success") {
++          setRunResult(commandResult.value);
++          return;
++        }
++        if (!isAtomCommandInterrupted(commandResult)) {
++          setError(readableError(squashAtomCommandFailure(commandResult)));
++        }
++      });
++    },
++    [environmentId, pause, profilePath, readStatus, refresh, resume, runResult, threadId],
++  );
++
++  const readLinearIssues = useCallback(
++    (kind: "candidates" | "terminal" | "refresh") => {
++      setPending(true);
++      setError(null);
++      setLinearResult(null);
++      void readLinear({
++        environmentId,
++        input: {
++          threadId,
++          profilePath: profilePath.trim(),
++          kind,
++          first: 25,
++          issueIdentifier: kind === "refresh" ? issueIdentifier.trim() : undefined,
++        },
++      }).then((commandResult) => {
++        setPending(false);
++        if (commandResult._tag === "Success") {
++          setLinearResult(commandResult.value);
++          return;
++        }
++        if (!isAtomCommandInterrupted(commandResult)) {
++          setError(readableError(squashAtomCommandFailure(commandResult)));
++        }
++      });
++    },
++    [environmentId, issueIdentifier, profilePath, readLinear, threadId],
++  );
++
++  const inspectQueue = useCallback(
++    (category: AutomationQueueReadInput["category"], offset?: number) => {
++      if (!runResult) return;
++      setPending(true);
++      setError(null);
++      void readQueue({
++        environmentId,
++        input: {
++          threadId,
++          runId: runResult.run.runId,
++          category,
++          offset,
++          limit: 25,
++        },
++      }).then((commandResult) => {
++        setPending(false);
++        if (commandResult._tag === "Success") {
++          setQueueResult(commandResult.value);
++          return;
++        }
++        if (!isAtomCommandInterrupted(commandResult)) {
++          setError(readableError(squashAtomCommandFailure(commandResult)));
++        }
++      });
++    },
++    [environmentId, readQueue, runResult, threadId],
++  );
++
++  return (
++    <Dialog open={open} onOpenChange={setOpen}>
++      <Tooltip>
++        <TooltipTrigger
++          render={
++            <DialogTrigger
++              render={<Button aria-label="Automation profile" size="icon-sm" variant="ghost" />}
++            />
++          }
++        >
++          <BotIcon />
++        </TooltipTrigger>
++        <TooltipPopup>Automation profile</TooltipPopup>
++      </Tooltip>
++      <DialogPopup className="max-w-2xl">
++        <DialogHeader>
++          <DialogTitle>Automation profile</DialogTitle>
++          <DialogDescription>
++            Validate a Symphony-compatible profile against this Codex task and preview its native
++            Orchestra workflow.
++          </DialogDescription>
++        </DialogHeader>
++        <DialogPanel className="space-y-5">
++          <div className="grid gap-4 sm:grid-cols-2">
++            <div className="space-y-2 sm:col-span-2">
++              <Label htmlFor="automation-profile-path">Profile path</Label>
++              <Input
++                id="automation-profile-path"
++                value={profilePath}
++                onChange={(event) => setProfilePath(event.target.value)}
++                placeholder="WORKFLOW.md"
++              />
++              <p className="text-xs text-muted-foreground">
++                Resolved inside the task repository by Codex. Paths outside the repository are
++                rejected.
++              </p>
++            </div>
++            <div className="space-y-2">
++              <Label htmlFor="automation-issue-identifier">Fixture issue</Label>
++              <Input
++                id="automation-issue-identifier"
++                value={issueIdentifier}
++                onChange={(event) => setIssueIdentifier(event.target.value)}
++              />
++            </div>
++            <div className="space-y-2">
++              <Label htmlFor="automation-issue-state">Issue state</Label>
++              <Input
++                id="automation-issue-state"
++                value={issueState}
++                onChange={(event) => setIssueState(event.target.value)}
++              />
++            </div>
++            <div className="space-y-2">
++              <Label htmlFor="automation-issue-labels">Issue labels</Label>
++              <Input
++                id="automation-issue-labels"
++                value={issueLabels}
++                onChange={(event) => setIssueLabels(event.target.value)}
++                placeholder="automation, dogfood"
++              />
++            </div>
++            <div className="space-y-2">
++              <Label htmlFor="automation-attempt">Attempt</Label>
++              <Input
++                id="automation-attempt"
++                inputMode="numeric"
++                value={attempt}
++                onChange={(event) => setAttempt(event.target.value)}
++              />
++            </div>
++          </div>
++
++          {error ? (
++            <div className="flex gap-2 rounded-lg border border-destructive/40 bg-destructive/8 p-3 text-sm text-destructive">
++              <CircleAlertIcon className="mt-0.5 size-4 shrink-0" />
++              <span>{error}</span>
++            </div>
++          ) : null}
++
++          {result ? (
++            <div className="space-y-4 rounded-xl border bg-muted/25 p-4">
++              <div className="flex flex-wrap items-center gap-2">
++                {result.valid ? (
++                  <CheckCircle2Icon className="size-4 text-emerald-500" />
++                ) : (
++                  <CircleAlertIcon className="size-4 text-destructive" />
++                )}
++                <span className="text-sm font-medium">
++                  {result.valid ? "Profile is valid" : "Profile needs changes"}
++                </span>
++                {result.profile?.orchestra.workflowName ? (
++                  <Badge variant="outline">{result.profile.orchestra.workflowName}</Badge>
++                ) : null}
++              </div>
++              {result.profileDigest ? (
++                <div className="text-xs text-muted-foreground">
++                  Digest <code className="select-all">{result.profileDigest}</code>
++                </div>
++              ) : null}
++              {result.preview?.effects.length ? (
++                <div className="flex flex-wrap gap-1.5">
++                  {result.preview.effects.map((effect) => (
++                    <Badge key={effect} variant="secondary">
++                      {effect}
++                    </Badge>
++                  ))}
++                </div>
++              ) : null}
++              {result.diagnostics.length ? (
++                <div className="space-y-2">
++                  {result.diagnostics.map((diagnostic, index) => (
++                    <div key={`${diagnostic.path}:${diagnostic.code}:${index}`} className="text-sm">
++                      <span
++                        className={
++                          diagnostic.severity === "error" ? "text-destructive" : "text-amber-600"
++                        }
++                      >
++                        {diagnostic.path || "profile"}
++                      </span>{" "}
++                      <span className="text-muted-foreground">{diagnostic.message}</span>
++                    </div>
++                  ))}
++                </div>
++              ) : null}
++              {result.preview?.renderedPrompt ? (
++                <div className="space-y-2">
++                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
++                    Rendered task prompt
++                  </div>
++                  <pre className="max-h-52 overflow-auto whitespace-pre-wrap rounded-lg border bg-background p-3 text-xs">
++                    {result.preview.renderedPrompt}
++                  </pre>
++                </div>
++              ) : null}
++              {result.profile ? (
++                <details className="text-xs">
++                  <summary className="cursor-pointer text-muted-foreground">
++                    Canonical profile
++                  </summary>
++                  <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border bg-background p-3">
++                    {JSON.stringify(result.profile, null, 2)}
++                  </pre>
++                </details>
++              ) : null}
++            </div>
++          ) : null}
++
++          {runResult ? (
++            <div className="space-y-3 rounded-xl border bg-muted/25 p-4">
++              <div className="flex flex-wrap items-center gap-2">
++                <CheckCircle2Icon className="size-4 text-emerald-500" />
++                <span className="text-sm font-medium">Automation {runResult.run.status}</span>
++                <Badge variant="outline">{runResult.run.trackerProjectSlug}</Badge>
++              </div>
++              <div className="text-xs text-muted-foreground">
++                Root Run <code className="select-all">{runResult.run.runId}</code>
++              </div>
++              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
++                <Badge variant="outline">reconciliation {runResult.run.reconciliation}</Badge>
++                <span>lease epoch {runResult.run.leaseEpoch}</span>
++                <span>revision {runResult.run.revision}</span>
++              </div>
++              <div className="flex flex-wrap gap-1.5">
++                {(
++                  [
++                    ["queued", runResult.run.queueCounts.queued],
++                    ["running", runResult.run.queueCounts.running],
++                    ["blocked", runResult.run.queueCounts.blocked],
++                    ["waiting_gate", runResult.run.queueCounts.waitingGate],
++                    ["handoff", runResult.run.queueCounts.handoff],
++                    ["terminal", runResult.run.queueCounts.terminal],
++                  ] as const
++                ).map(([category, count]) => (
++                  <Button
++                    disabled={pending || count === 0}
++                    key={category}
++                    onClick={() => inspectQueue(category)}
++                    size="xs"
++                    variant="outline"
++                  >
++                    {category.replace("_", " ")} {count}
++                  </Button>
++                ))}
++              </div>
++              {automationRunRows(runResult).map((claim) => (
++                <div key={claim.claimId} className="space-y-2 rounded-lg border bg-background p-3">
++                  <div className="flex flex-wrap items-center gap-2 text-sm">
++                    <span className="font-medium">{claim.issueIdentifier}</span>
++                    <Badge variant="secondary">{claim.status}</Badge>
++                  </div>
++                  <div className="text-xs text-muted-foreground">
++                    {claim.issueTitle.text}
++                    {claim.issueTitle.truncated ? "…" : ""}
++                  </div>
++                  {claim.issueTaskThreadId ? (
++                    <div className="text-xs text-muted-foreground">
++                      Issue task <code className="select-all">{claim.issueTaskThreadId}</code>
++                    </div>
++                  ) : null}
++                  {claim.workflowRunId ? (
++                    <div className="text-xs text-muted-foreground">
++                      Workflow Run <code className="select-all">{claim.workflowRunId}</code>
++                    </div>
++                  ) : null}
++                  {claim.effects.map((effect) => (
++                    <div
++                      key={effect.effectId}
++                      className="space-y-1 rounded-md border bg-muted/25 p-2 text-xs"
++                    >
++                      <div className="flex flex-wrap items-center gap-2">
++                        <span className="font-medium">{effect.kind}</span>
++                        <Badge variant={effect.status === "committed" ? "secondary" : "outline"}>
++                          {effect.status}
++                        </Badge>
++                        <span className="text-muted-foreground">{effect.gatePolicy}</span>
++                      </div>
++                      <div className="text-muted-foreground">
++                        {effect.bodyPreview.text}
++                        {effect.bodyPreview.truncated ? "…" : ""}
++                      </div>
++                      {effect.providerReceipt ? (
++                        <div className="text-muted-foreground">
++                          Provider receipt{" "}
++                          <code className="select-all">{effect.providerReceipt}</code>
++                        </div>
++                      ) : null}
++                      {effect.failure ? (
++                        <div className="text-destructive">
++                          {effect.failure.text}
++                          {effect.failure.truncated ? "…" : ""}
++                        </div>
++                      ) : null}
++                    </div>
++                  ))}
++                  <div className="text-xs text-muted-foreground">
++                    {claim.nextAction.text}
++                    {claim.nextAction.truncated ? "…" : ""}
++                  </div>
++                </div>
++              ))}
++              <div className="text-xs text-muted-foreground">
++                {runResult.run.nextAction.text}
++                {runResult.run.nextAction.truncated ? "…" : ""}
++              </div>
++            </div>
++          ) : null}
++
++          {queueResult ? (
++            <div className="space-y-2 rounded-xl border bg-muted/25 p-4">
++              <div className="flex items-center justify-between gap-2">
++                <span className="text-sm font-medium">
++                  {queueResult.category.replace("_", " ")} ({queueResult.total})
++                </span>
++                {queueResult.nextOffset !== undefined ? (
++                  <Button
++                    disabled={pending}
++                    onClick={() => inspectQueue(queueResult.category, queueResult.nextOffset)}
++                    size="xs"
++                    variant="ghost"
++                  >
++                    Next page
++                  </Button>
++                ) : null}
++              </div>
++              {queueResult.items.map((item) => (
++                <details key={`${item.issueId}:${item.claimId ?? "queue"}`}>
++                  <summary className="cursor-pointer text-xs">
++                    {item.issueIdentifier} · {item.state}
++                    {item.priority ? ` · priority ${item.priority}` : ""}
++                  </summary>
++                  <div className="mt-1 space-y-1 pl-4 text-xs text-muted-foreground">
++                    <div>
++                      {item.issueTitle.text}
++                      {item.issueTitle.truncated ? "…" : ""}
++                    </div>
++                    <div>
++                      {item.nextAction.text}
++                      {item.nextAction.truncated ? "…" : ""}
++                    </div>
++                    {item.claimId ? <code className="select-all">Claim {item.claimId}</code> : null}
++                  </div>
++                </details>
++              ))}
++            </div>
++          ) : null}
++
++          {linearResult ? (
++            <div className="space-y-3 rounded-xl border bg-muted/25 p-4">
++              <div className="flex flex-wrap items-center gap-2">
++                <span className="text-sm font-medium">Linear intake</span>
++                <Badge variant="outline">{linearResult.status}</Badge>
++              </div>
++              {automationLinearRows(linearResult).map((issue) => (
++                <div key={issue.id} className="rounded-lg border bg-background p-3 text-xs">
++                  <div className="flex flex-wrap items-center gap-2">
++                    <span className="font-medium">{issue.identifier}</span>
++                    <Badge variant="secondary">{issue.state}</Badge>
++                    {issue.priority ? <span>priority {issue.priority}</span> : null}
++                  </div>
++                  <div className="mt-1 text-muted-foreground">{issue.title}</div>
++                  {issue.labels.length ? (
++                    <div className="mt-2 flex flex-wrap gap-1">
++                      {issue.labels.map((label) => (
++                        <Badge key={label} variant="outline">
++                          {label}
++                        </Badge>
++                      ))}
++                    </div>
++                  ) : null}
++                  {issue.blockedByCount ? (
++                    <div className="mt-2 text-muted-foreground">
++                      Blocked by {issue.blockedByCount} issue
++                      {issue.blockedByCount === 1 ? "" : "s"}
++                    </div>
++                  ) : null}
++                </div>
++              ))}
++              <div className="text-xs text-muted-foreground">
++                {linearResult.nextAction.text}
++                {linearResult.nextAction.truncated ? "…" : ""}
++              </div>
++            </div>
++          ) : null}
++        </DialogPanel>
++        <DialogFooter>
++          {result?.valid ? (
++            <>
++              <Button
++                disabled={pending}
++                onClick={() => readLinearIssues("candidates")}
++                variant="ghost"
++              >
++                Read active Linear
++              </Button>
++              <Button
++                disabled={pending}
++                onClick={() => readLinearIssues("terminal")}
++                variant="ghost"
++              >
++                Read terminal Linear
++              </Button>
++              <Button
++                disabled={pending}
++                onClick={() => readLinearIssues("refresh")}
++                variant="ghost"
++              >
++                Refresh issue
++              </Button>
++            </>
++          ) : null}
++          {runResult?.run.status === "running" ? (
++            <Button
++              disabled={pending}
++              onClick={() => runLifecycleAction("pause")}
++              variant="outline"
++            >
++              Pause
++            </Button>
++          ) : null}
++          {runResult && !["cancelled", "failed"].includes(runResult.run.status) ? (
++            <>
++              <Button
++                disabled={pending}
++                onClick={() => runLifecycleAction("status")}
++                variant="ghost"
++              >
++                Inspect
++              </Button>
++              <Button
++                disabled={pending}
++                onClick={() => runLifecycleAction("refresh")}
++                variant="ghost"
++              >
++                Refresh
++              </Button>
++            </>
++          ) : null}
++          {runResult?.run.status === "suspended" ? (
++            <Button
++              disabled={pending}
++              onClick={() => runLifecycleAction("resume")}
++              variant="outline"
++            >
++              Resume
++            </Button>
++          ) : null}
++          {runResult && !["cancelled", "failed"].includes(runResult.run.status) ? (
++            <Button disabled={pending} onClick={cancelRun} variant="destructive">
++              Cancel
++            </Button>
++          ) : null}
++          {result?.valid ? (
++            <Button disabled={pending} onClick={run} variant="outline">
++              {pending ? <Spinner /> : null}
++              Run fixture
++            </Button>
++          ) : null}
++          <Button
++            disabled={
++              pending || !profilePath.trim() || !issueIdentifier.trim() || !issueState.trim()
++            }
++            onClick={submit}
++          >
++            {pending ? <Spinner /> : null}
++            Validate and preview
++          </Button>
++        </DialogFooter>
++      </DialogPopup>
++    </Dialog>
++  );
++});
+diff --git a/apps/web/src/components/chat/ChatHeader.tsx b/apps/web/src/components/chat/ChatHeader.tsx
+index ef3ec863..59e5900a 100644
+--- a/apps/web/src/components/chat/ChatHeader.tsx
++++ b/apps/web/src/components/chat/ChatHeader.tsx
+@@ -17,6 +17,7 @@ import ProjectScriptsControl, {
+ import { OpenInPicker } from "./OpenInPicker";
+ import { usePrimaryEnvironmentId } from "../../state/environments";
+ import { cn } from "~/lib/utils";
++import { AutomationProfileDialog } from "./AutomationProfileDialog";
+
+ interface ChatHeaderProps {
+   activeThreadEnvironmentId: EnvironmentId;
+@@ -100,6 +101,13 @@ export const ChatHeader = memo(function ChatHeader({
+           rightPanelOpen ? "pr-0" : "pr-16",
+         )}
+       >
++        {activeProjectName && (
++          <AutomationProfileDialog
++            environmentId={activeThreadEnvironmentId}
++            threadId={activeThreadId}
++            threadTitle={activeThreadTitle}
++          />
++        )}
+         {activeProjectScripts && (
+           <ProjectScriptsControl
+             scripts={activeProjectScripts}
+diff --git a/apps/web/src/state/automation.ts b/apps/web/src/state/automation.ts
+new file mode 100644
+index 00000000..161b0d84
+--- /dev/null
++++ b/apps/web/src/state/automation.ts
+@@ -0,0 +1,49 @@
++import { WS_METHODS } from "@t3tools/contracts";
++import { createEnvironmentRpcCommand } from "@t3tools/client-runtime/state/runtime";
++
++import { connectionAtomRuntime } from "../connection/runtime";
++
++export const validateAutomationProfile = createEnvironmentRpcCommand(connectionAtomRuntime, {
++  label: "Automation.validateProfile",
++  tag: WS_METHODS.automationValidate,
++});
++
++export const runAutomationFixture = createEnvironmentRpcCommand(connectionAtomRuntime, {
++  label: "Automation.runFixture",
++  tag: WS_METHODS.automationRunFixture,
++});
++
++export const readLinearAutomation = createEnvironmentRpcCommand(connectionAtomRuntime, {
++  label: "Automation.readLinear",
++  tag: WS_METHODS.automationLinearRead,
++});
++
++export const readAutomationQueue = createEnvironmentRpcCommand(connectionAtomRuntime, {
++  label: "Automation.readQueue",
++  tag: WS_METHODS.automationQueueRead,
++});
++
++export const readAutomationStatus = createEnvironmentRpcCommand(connectionAtomRuntime, {
++  label: "Automation.status",
++  tag: WS_METHODS.automationStatus,
++});
++
++export const pauseAutomation = createEnvironmentRpcCommand(connectionAtomRuntime, {
++  label: "Automation.pause",
++  tag: WS_METHODS.automationPause,
++});
++
++export const refreshAutomation = createEnvironmentRpcCommand(connectionAtomRuntime, {
++  label: "Automation.refresh",
++  tag: WS_METHODS.automationRefresh,
++});
++
++export const resumeAutomation = createEnvironmentRpcCommand(connectionAtomRuntime, {
++  label: "Automation.resume",
++  tag: WS_METHODS.automationResume,
++});
++
++export const cancelAutomation = createEnvironmentRpcCommand(connectionAtomRuntime, {
++  label: "Automation.cancel",
++  tag: WS_METHODS.automationCancel,
++});
+diff --git a/packages/contracts/src/automation.ts b/packages/contracts/src/automation.ts
+new file mode 100644
+index 00000000..0d25e2cd
+--- /dev/null
++++ b/packages/contracts/src/automation.ts
+@@ -0,0 +1,334 @@
++import * as Schema from "effect/Schema";
++
++import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
++
++export const AutomationIssueBlocker = Schema.Struct({
++  id: Schema.optional(Schema.String),
++  identifier: Schema.optional(Schema.String),
++  state: Schema.optional(Schema.String),
++});
++
++export const AutomationIssue = Schema.Struct({
++  id: TrimmedNonEmptyString,
++  identifier: TrimmedNonEmptyString,
++  title: TrimmedNonEmptyString,
++  description: Schema.optional(Schema.String),
++  priority: Schema.optional(Schema.Number),
++  state: TrimmedNonEmptyString,
++  branchName: Schema.optional(Schema.String),
++  url: Schema.optional(Schema.String),
++  labels: Schema.Array(Schema.String),
++  blockedBy: Schema.Array(AutomationIssueBlocker),
++  createdAt: Schema.optional(Schema.String),
++  updatedAt: Schema.optional(Schema.String),
++});
++export type AutomationIssue = typeof AutomationIssue.Type;
++
++export const AutomationValidateInput = Schema.Struct({
++  threadId: ThreadId,
++  profilePath: TrimmedNonEmptyString,
++  fixtureIssue: AutomationIssue,
++  attempt: Schema.optional(NonNegativeInt),
++});
++export type AutomationValidateInput = typeof AutomationValidateInput.Type;
++
++export const AutomationValidationSeverity = Schema.Literals(["error", "warning"]);
++export const AutomationDiagnosticCode = Schema.Literals([
++  "missing_workflow_file",
++  "workflow_parse_error",
++  "workflow_front_matter_not_a_map",
++  "missing_field",
++  "invalid_value",
++  "unknown_field",
++  "unsupported_tracker",
++  "missing_secret",
++  "prohibited_codex_command",
++  "policy_broadening",
++  "unsafe_workspace_root",
++  "missing_orchestra_extension",
++  "unsupported_effect",
++  "workflow_compile_error",
++  "workflow_input_missing",
++  "workflow_input_incompatible",
++  "workflow_input_needs_default",
++  "template_parse_error",
++  "template_render_error",
++]);
++
++export const AutomationDiagnostic = Schema.Struct({
++  severity: AutomationValidationSeverity,
++  code: AutomationDiagnosticCode,
++  path: Schema.String,
++  message: Schema.String,
++});
++
++export const AutomationEffect = Schema.Literals([
++  "tracker.comment",
++  "tracker.transition",
++  "tracker.link_pull_request",
++]);
++export type AutomationEffect = typeof AutomationEffect.Type;
++
++export const AutomationSecretReference = Schema.Struct({
++  kind: Schema.Literals(["environment", "inline_digest"]),
++  reference: Schema.String,
++  digest: Schema.String,
++});
++
++export const AutomationWorkflowInput = Schema.Struct({
++  name: Schema.String,
++  kind: Schema.Literals(["string", "number", "boolean", "object", "array", "json"]),
++  required: Schema.Boolean,
++  default: Schema.optional(Schema.Json),
++});
++
++export const AutomationWorkflowPreview = Schema.Struct({
++  renderedPrompt: Schema.optional(Schema.String),
++  workflow: Schema.optional(Schema.String),
++  effects: Schema.Array(AutomationEffect),
++  inputs: Schema.Array(AutomationWorkflowInput),
++  secretReferences: Schema.Array(AutomationSecretReference),
++});
++export type AutomationWorkflowPreview = typeof AutomationWorkflowPreview.Type;
++
++export const AutomationProfile = Schema.Struct({
++  tracker: Schema.Struct({
++    kind: Schema.String,
++    endpoint: Schema.String,
++    projectSlug: Schema.String,
++    requiredLabels: Schema.Array(Schema.String),
++    activeStates: Schema.Array(Schema.String),
++    terminalStates: Schema.Array(Schema.String),
++    credential: AutomationSecretReference,
++  }),
++  polling: Schema.Struct({ intervalMs: Schema.Number }),
++  workspace: Schema.Struct({ root: Schema.String }),
++  hooks: Schema.Struct({
++    afterCreate: Schema.optional(Schema.String),
++    beforeRun: Schema.optional(Schema.String),
++    afterRun: Schema.optional(Schema.String),
++    beforeRemove: Schema.optional(Schema.String),
++    timeoutMs: Schema.Number,
++  }),
++  agent: Schema.Struct({
++    maxConcurrentAgents: Schema.Number,
++    maxTurns: Schema.Number,
++    maxRetryBackoffMs: Schema.Number,
++    maxConcurrentAgentsByState: Schema.Record(Schema.String, Schema.Number),
++  }),
++  codex: Schema.Struct({
++    approvalPolicy: Schema.Json,
++    threadSandbox: Schema.String,
++    turnSandboxPolicy: Schema.Json,
++    turnTimeoutMs: Schema.Number,
++    readTimeoutMs: Schema.Number,
++    stallTimeoutMs: Schema.Number,
++  }),
++  orchestra: Schema.Struct({
++    workflowPath: Schema.String,
++    workflowSha256: Schema.String,
++    workflowName: Schema.String,
++    effects: Schema.Array(AutomationEffect),
++  }),
++  promptTemplate: Schema.String,
++});
++export type AutomationProfile = typeof AutomationProfile.Type;
++
++export const AutomationValidateResult = Schema.Struct({
++  valid: Schema.Boolean,
++  profile: Schema.optional(AutomationProfile),
++  profileDigest: Schema.optional(Schema.String),
++  preview: Schema.optional(AutomationWorkflowPreview),
++  diagnostics: Schema.Array(AutomationDiagnostic),
++});
++export type AutomationValidateResult = typeof AutomationValidateResult.Type;
++
++export const AutomationRootStatus = Schema.Literals([
++  "running",
++  "suspended",
++  "cancelled",
++  "failed",
++]);
++export const AutomationClaimStatus = Schema.Literals([
++  "claimed",
++  "running",
++  "completed",
++  "suspended",
++  "cancelled",
++  "failed",
++]);
++export const AutomationBoundedText = Schema.Struct({
++  text: Schema.String,
++  truncated: Schema.Boolean,
++});
++export const AutomationGatePolicy = Schema.Literals(["auto_accept", "auto_reject", "ask_human"]);
++export const AutomationEffectStatus = Schema.Literals([
++  "waiting_gate",
++  "rejected",
++  "executing",
++  "committed",
++  "failed",
++  "ambiguous",
++]);
++export const AutomationEffectReceipt = Schema.Struct({
++  effectId: Schema.String,
++  idempotencyKey: Schema.String,
++  kind: AutomationEffect,
++  status: AutomationEffectStatus,
++  gatePolicy: AutomationGatePolicy,
++  requestSha256: Schema.String,
++  bodyPreview: AutomationBoundedText,
++  providerReceipt: Schema.optional(Schema.String),
++  failure: Schema.optional(AutomationBoundedText),
++});
++export type AutomationEffectReceipt = typeof AutomationEffectReceipt.Type;
++export const AutomationIssueClaim = Schema.Struct({
++  claimId: Schema.String,
++  issueId: Schema.String,
++  issueIdentifier: Schema.String,
++  issueTitle: AutomationBoundedText,
++  trackerState: Schema.String,
++  priority: Schema.optional(Schema.Number),
++  attempt: NonNegativeInt,
++  status: AutomationClaimStatus,
++  worktree: Schema.String,
++  sourceRevision: Schema.String,
++  issueTask: Schema.optional(
++    Schema.Struct({
++      threadId: Schema.String,
++      taskPath: Schema.String,
++    }),
++  ),
++  workflowRunId: Schema.optional(Schema.String),
++  workflowStatus: Schema.optional(
++    Schema.Literals(["pending", "running", "waitingApproval", "completed", "failed", "cancelled"]),
++  ),
++  effects: Schema.Array(AutomationEffectReceipt),
++  nextAction: AutomationBoundedText,
++});
++export type AutomationIssueClaim = typeof AutomationIssueClaim.Type;
++
++export const AutomationQueueCategory = Schema.Literals([
++  "queued",
++  "running",
++  "blocked",
++  "waiting_gate",
++  "handoff",
++  "terminal",
++]);
++export const AutomationQueueCounts = Schema.Struct({
++  queued: NonNegativeInt,
++  running: NonNegativeInt,
++  blocked: NonNegativeInt,
++  waitingGate: NonNegativeInt,
++  handoff: NonNegativeInt,
++  terminal: NonNegativeInt,
++});
++export const AutomationQueueItem = Schema.Struct({
++  issueId: Schema.String,
++  issueIdentifier: Schema.String,
++  issueTitle: AutomationBoundedText,
++  state: Schema.String,
++  priority: Schema.optional(Schema.Number),
++  claimId: Schema.optional(Schema.String),
++  category: AutomationQueueCategory,
++  nextAction: AutomationBoundedText,
++});
++export type AutomationQueueItem = typeof AutomationQueueItem.Type;
++
++export const AutomationRun = Schema.Struct({
++  schemaVersion: Schema.Number,
++  runId: Schema.String,
++  ownerThreadId: Schema.String,
++  sourceRevision: Schema.String,
++  profileDigest: Schema.String,
++  trackerProjectSlug: Schema.String,
++  leaseEpoch: NonNegativeInt,
++  revision: NonNegativeInt,
++  status: AutomationRootStatus,
++  reconciliation: Schema.Literals(["complete", "required", "in_progress", "blocked"]),
++  queueCounts: AutomationQueueCounts,
++  claimsTotal: NonNegativeInt,
++  claims: Schema.Array(AutomationIssueClaim),
++  queuePreview: Schema.Array(AutomationQueueItem),
++  queuePreviewTruncated: Schema.Boolean,
++  nextAction: AutomationBoundedText,
++});
++export type AutomationRun = typeof AutomationRun.Type;
++
++export const AutomationRunInput = AutomationValidateInput;
++export type AutomationRunInput = typeof AutomationRunInput.Type;
++
++export const AutomationRunResult = Schema.Struct({ run: AutomationRun });
++export type AutomationRunResult = typeof AutomationRunResult.Type;
++
++export const AutomationLinearReadKind = Schema.Literals(["candidates", "terminal", "refresh"]);
++export const AutomationLinearReadInput = Schema.Struct({
++  threadId: ThreadId,
++  profilePath: TrimmedNonEmptyString,
++  kind: AutomationLinearReadKind,
++  after: Schema.optional(Schema.String),
++  first: Schema.optional(NonNegativeInt),
++  issueIdentifier: Schema.optional(Schema.String),
++});
++export type AutomationLinearReadInput = typeof AutomationLinearReadInput.Type;
++
++export const AutomationLinearReadResult = Schema.Struct({
++  status: Schema.Literals(["ready", "skipped"]),
++  issues: Schema.Array(AutomationIssue),
++  hasNextPage: Schema.Boolean,
++  endCursor: Schema.optional(Schema.String),
++  nextAction: AutomationBoundedText,
++});
++export type AutomationLinearReadResult = typeof AutomationLinearReadResult.Type;
++
++export const AutomationQueueReadInput = Schema.Struct({
++  threadId: ThreadId,
++  runId: TrimmedNonEmptyString,
++  category: AutomationQueueCategory,
++  offset: Schema.optional(NonNegativeInt),
++  limit: Schema.optional(NonNegativeInt),
++});
++export type AutomationQueueReadInput = typeof AutomationQueueReadInput.Type;
++
++export const AutomationQueueReadResult = Schema.Struct({
++  category: AutomationQueueCategory,
++  total: NonNegativeInt,
++  items: Schema.Array(AutomationQueueItem),
++  nextOffset: Schema.optional(NonNegativeInt),
++});
++export type AutomationQueueReadResult = typeof AutomationQueueReadResult.Type;
++
++export const AutomationCancelInput = Schema.Struct({
++  threadId: ThreadId,
++  runId: TrimmedNonEmptyString,
++});
++export type AutomationCancelInput = typeof AutomationCancelInput.Type;
++
++export const AutomationLifecycleInput = AutomationCancelInput;
++export type AutomationLifecycleInput = typeof AutomationLifecycleInput.Type;
++
++export const AutomationReconcileInput = Schema.Struct({
++  threadId: ThreadId,
++  runId: TrimmedNonEmptyString,
++  profilePath: TrimmedNonEmptyString,
++});
++export type AutomationReconcileInput = typeof AutomationReconcileInput.Type;
++
++export class AutomationValidateError extends Schema.TaggedErrorClass<AutomationValidateError>()(
++  "AutomationValidateError",
++  {
++    message: TrimmedNonEmptyString,
++    threadId: Schema.optional(ThreadId),
++    cause: Schema.optional(Schema.Defect()),
++  },
++) {}
++
++export class AutomationRunError extends Schema.TaggedErrorClass<AutomationRunError>()(
++  "AutomationRunError",
++  {
++    message: TrimmedNonEmptyString,
++    threadId: Schema.optional(ThreadId),
++    cause: Schema.optional(Schema.Defect()),
++  },
++) {}
+diff --git a/packages/contracts/src/index.ts b/packages/contracts/src/index.ts
+index 43270efd..07cbd3aa 100644
+--- a/packages/contracts/src/index.ts
++++ b/packages/contracts/src/index.ts
+@@ -25,4 +25,5 @@ export * from "./assets.ts";
+ export * from "./review.ts";
+ export * from "./preview.ts";
+ export * from "./previewAutomation.ts";
++export * from "./automation.ts";
+ export * from "./rpc.ts";
+diff --git a/packages/contracts/src/rpc.ts b/packages/contracts/src/rpc.ts
+index 48c5d9a7..0b859e9b 100644
+--- a/packages/contracts/src/rpc.ts
++++ b/packages/contracts/src/rpc.ts
+@@ -143,6 +143,21 @@ import {
+   SourceControlRepositoryLookupInput,
+ } from "./sourceControl.ts";
+ import { VcsError } from "./vcs.ts";
++import {
++  AutomationCancelInput,
++  AutomationLinearReadInput,
++  AutomationLinearReadResult,
++  AutomationLifecycleInput,
++  AutomationQueueReadInput,
++  AutomationQueueReadResult,
++  AutomationReconcileInput,
++  AutomationRunError,
++  AutomationRunInput,
++  AutomationRunResult,
++  AutomationValidateError,
++  AutomationValidateInput,
++  AutomationValidateResult,
++} from "./automation.ts";
+
+ export const WS_METHODS = {
+   // Project registry methods
+@@ -179,6 +194,17 @@ export const WS_METHODS = {
+   // Review methods
+   reviewGetDiffPreview: "review.getDiffPreview",
+
++  // Codex-native Automation methods
++  automationValidate: "automation.validate",
++  automationRunFixture: "automation.runFixture",
++  automationLinearRead: "automation.linearRead",
++  automationQueueRead: "automation.queueRead",
++  automationStatus: "automation.status",
++  automationPause: "automation.pause",
++  automationRefresh: "automation.refresh",
++  automationResume: "automation.resume",
++  automationCancel: "automation.cancel",
++
+   // Terminal methods
+   terminalOpen: "terminal.open",
+   terminalAttach: "terminal.attach",
+@@ -284,6 +310,60 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
+   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+ });
+
++export const WsAutomationValidateRpc = Rpc.make(WS_METHODS.automationValidate, {
++  payload: AutomationValidateInput,
++  success: AutomationValidateResult,
++  error: Schema.Union([AutomationValidateError, EnvironmentAuthorizationError]),
++});
++
++export const WsAutomationRunFixtureRpc = Rpc.make(WS_METHODS.automationRunFixture, {
++  payload: AutomationRunInput,
++  success: AutomationRunResult,
++  error: Schema.Union([AutomationRunError, EnvironmentAuthorizationError]),
++});
++
++export const WsAutomationLinearReadRpc = Rpc.make(WS_METHODS.automationLinearRead, {
++  payload: AutomationLinearReadInput,
++  success: AutomationLinearReadResult,
++  error: Schema.Union([AutomationValidateError, EnvironmentAuthorizationError]),
++});
++
++export const WsAutomationQueueReadRpc = Rpc.make(WS_METHODS.automationQueueRead, {
++  payload: AutomationQueueReadInput,
++  success: AutomationQueueReadResult,
++  error: Schema.Union([AutomationRunError, EnvironmentAuthorizationError]),
++});
++
++export const WsAutomationStatusRpc = Rpc.make(WS_METHODS.automationStatus, {
++  payload: AutomationLifecycleInput,
++  success: AutomationRunResult,
++  error: Schema.Union([AutomationRunError, EnvironmentAuthorizationError]),
++});
++
++export const WsAutomationPauseRpc = Rpc.make(WS_METHODS.automationPause, {
++  payload: AutomationLifecycleInput,
++  success: AutomationRunResult,
++  error: Schema.Union([AutomationRunError, EnvironmentAuthorizationError]),
++});
++
++export const WsAutomationRefreshRpc = Rpc.make(WS_METHODS.automationRefresh, {
++  payload: AutomationReconcileInput,
++  success: AutomationRunResult,
++  error: Schema.Union([AutomationRunError, EnvironmentAuthorizationError]),
++});
++
++export const WsAutomationResumeRpc = Rpc.make(WS_METHODS.automationResume, {
++  payload: AutomationReconcileInput,
++  success: AutomationRunResult,
++  error: Schema.Union([AutomationRunError, EnvironmentAuthorizationError]),
++});
++
++export const WsAutomationCancelRpc = Rpc.make(WS_METHODS.automationCancel, {
++  payload: AutomationCancelInput,
++  success: AutomationRunResult,
++  error: Schema.Union([AutomationRunError, EnvironmentAuthorizationError]),
++});
++
+ export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
+   payload: Schema.Struct({}),
+   success: SourceControlDiscoveryResult,
+@@ -719,6 +799,15 @@ export const WsRpcGroup = RpcGroup.make(
+   WsVcsSwitchRefRpc,
+   WsVcsInitRpc,
+   WsReviewGetDiffPreviewRpc,
++  WsAutomationValidateRpc,
++  WsAutomationRunFixtureRpc,
++  WsAutomationLinearReadRpc,
++  WsAutomationQueueReadRpc,
++  WsAutomationStatusRpc,
++  WsAutomationPauseRpc,
++  WsAutomationRefreshRpc,
++  WsAutomationResumeRpc,
++  WsAutomationCancelRpc,
+   WsTerminalOpenRpc,
+   WsTerminalAttachRpc,
+   WsTerminalWriteRpc,

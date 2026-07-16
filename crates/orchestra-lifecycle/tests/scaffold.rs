@@ -138,7 +138,7 @@ fn pinned_integration_is_explicit_and_minimal() {
 }
 
 #[test]
-fn five_native_tools_are_registered() {
+fn six_native_tools_are_registered() {
     let source = fs::read_to_string(
         root().join("integration/codex/overlay/codex-rs/ext/orchestra/src/tool.rs"),
     )
@@ -149,6 +149,7 @@ fn five_native_tools_are_registered() {
         "orchestra_resume",
         "orchestra_status",
         "orchestra_cancel",
+        "orchestra_query",
     ] {
         assert!(source.contains(name));
     }
@@ -172,6 +173,7 @@ fn skills_delegate_to_runtime_not_model_scheduling() {
         "orchestra_resume",
         "orchestra_status",
         "orchestra_cancel",
+        "orchestra_query",
     ] {
         assert!(combined.contains(name));
     }
@@ -318,21 +320,22 @@ fn mutable_run_state_is_not_tracked() {
 }
 
 #[test]
-fn skill_backed_workflow_contract_and_tracker_operations_are_documented() {
+fn skill_backed_workflow_decision_and_tracker_operations_are_documented() {
     let root = root();
     let adr =
         fs::read_to_string(root.join("docs/adr/0013-skill-backed-workflow-contract.md")).unwrap();
     for required in [
-        "Skill identity and requirement closure",
-        "Inputs and immutable snapshots",
-        "Human interaction and acceptance authority",
-        "Tracker authority and external effects",
-        "Recovery",
-        "AgentControl",
+        "exact skill requirements",
+        "typed inputs",
+        "external-effect authority",
+        "complete skill closure",
+        "recovery uses that snapshot",
+        "Human input is data, not acceptance",
+        "native Codex capabilities",
     ] {
         assert!(
             adr.contains(required),
-            "missing contract section: {required}"
+            "missing skill-backed workflow invariant: {required}"
         );
     }
     for forbidden in ["MCP server", "App Server client", "daemon", "sidecar"] {

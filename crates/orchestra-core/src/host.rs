@@ -59,6 +59,9 @@ pub struct SpawnRequest {
     pub service_tier: Option<String>,
     pub fork_turns: ForkTurns,
     pub allow_delegation: bool,
+    /// Additional native descendant levels required by a structural task
+    /// container. Ordinary workflow agents set this to zero.
+    pub minimum_descendant_depth: i32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -119,6 +122,15 @@ pub trait NativeHost: Send + Sync + 'static {
         policy: &WorktreePolicy,
         source_revision: &str,
     ) -> Result<PathBuf, String>;
+    async fn create_persistent_worktree(
+        &self,
+        _parent_thread_id: &str,
+        _repository: &Path,
+        _path: &Path,
+        _source_revision: &str,
+    ) -> Result<PathBuf, String> {
+        Err("native host does not support persistent Automation worktrees".into())
+    }
     async fn remove_worktree(
         &self,
         parent_thread_id: &str,

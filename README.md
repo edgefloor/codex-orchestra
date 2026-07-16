@@ -94,12 +94,14 @@ Replay cursors are supplied only when subscribing to an individual task stream. 
 it does not enumerate task cursors.
 
 > [!IMPORTANT]
-> Orchestra is experimental and source-first. The authoring skills can load on stock Codex, but the five native workflow tools require the Codex revision pinned in [`integration/codex/UPSTREAM_REVISION`](integration/codex/UPSTREAM_REVISION) with Orchestra's integration patch. The repository does not yet provide a complete end-user installer for that custom App Server build.
+> Orchestra is an experimental development build, not a signed macOS release. The authoring skills can load on stock Codex, but the six native workflow and query tools require the exact Codex and T3Code revisions declared in [`product/pins.toml`](product/pins.toml).
 
-The verified implementation today is the task-native tool surface in that patched build. The
-single-process desktop host mode and extended pinned App Server desktop protocol in ADR 0015 are the
-accepted MVP target and are not yet implemented; dated verification records describe only what was
-actually observed.
+The working MVP builds one Orchestra-enabled Codex CLI, the normal pinned T3Code
+Electron/React/server application, the generated Codex-plus-Orchestra protocol, and the evaluator as
+one sealed development tuple. T3Code keeps its existing task, chat, provider, and subagent surfaces;
+its server launches the exact product Codex binary through the existing provider seam. Codex remains
+the agent and workflow authority, while execution checkpoints remain under the target repository.
+The ownership model is summarized in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Prerequisites
 
@@ -107,6 +109,8 @@ Required for development and automated verification:
 
 - Git;
 - a current Rust toolchain with Cargo;
+- Node.js 24.13.1 and pnpm 11.10.0 for the retained desktop fork;
+- Bun 1.3.14 for the pinned exact-Zod evaluator worker;
 - the native build dependencies required by the pinned Codex source;
 - a Codex CLI on `PATH` for lifecycle capability checks;
 - a clean directory in which the integration script can clone Codex.
@@ -139,7 +143,16 @@ scripts/codex-integration.sh /tmp/codex-orchestra-codex verify
 
 The integration script clones the pinned Codex revision when necessary, applies the patch and Rust overlay, tests the Orchestra core and adapter, and checks `codex-app-server`. A successful run ends with the pinned revision reported as verified.
 
-This is the shortest fully automated path supported by the repository. The script prepares and verifies the patched App Server source; connecting that build to a Codex client still depends on the client's development setup and has not yet been packaged as an Orchestra install command.
+To build and launch the dogfood desktop from exact source pins:
+
+```bash
+scripts/product-source-prepare.sh /tmp/orchestra-product-sources
+scripts/product-dev-build.sh /tmp/orchestra-product-sources
+scripts/product-dogfood.sh /tmp/orchestra-product-sources
+```
+
+The build fails closed on source, generated-schema, artifact, capability, or manifest drift and runs
+the real host handshake plus Electron isolation smoke before reporting success.
 
 ### 2. Configure a target repository
 
@@ -616,6 +629,7 @@ All paths are resolved against the active Codex task's repository.
 | `orchestra_resume` | `run_id` | `approval_decision`, `inputs` | Run outcome after checkpoint and input reconciliation |
 | `orchestra_status` | `run_id` | — | Current `RunCheckpoint` |
 | `orchestra_cancel` | `run_id` | — | Updated `RunCheckpoint` |
+| `orchestra_query` | `run_id`, fixed `selector` | bounded cursor/filter/budget fields | Authorized Run, Steps, outputs, evidence, history, or digest projection |
 
 `workflow_path` must be repository-relative, must end in `.workflow.ts`, and must not escape the repository. `run_id` names a directory directly under `.codex/orchestra/runs/`.
 
@@ -691,9 +705,13 @@ its remaining gaps and deletion criteria are recorded in
 ## Current limitations
 
 - Stock Codex cannot dynamically load the Rust extension; the pinned integration patch is required.
-- The repository does not yet automate connecting the custom App Server build to a Codex client.
-- Step-output template markers are not expanded at runtime; use `dependency_output` context.
-- Interactive UI rendering, provider-backed child completion, approval flow, cancellation, and transcript-free recovery remain recorded as human-only pending checks in [`docs/verification/2026-07-14-interactive-baseline.md`](docs/verification/2026-07-14-interactive-baseline.md).
+- The dogfood build is unsigned and arm64 development-only; signing, notarization, x86_64 artifacts,
+  updater publication, and automatic rollback remain distribution work in issue #29.
+- The retained desktop is intentionally a narrow coding-harness UI; richer evidence browsing and
+  release UX are follow-up product work, not alternate runtime paths.
+- A provider-backed native subagent completion has been observed through the packaged T3Code app.
+  Orchestra-specific lifecycle rendering and privileged native confirmation UX remain follow-up
+  integration work; the MVP does not claim that the disposable direct-host prototype supplies them.
 
 These constraints are tracked explicitly rather than hidden behind an alternate runtime.
 

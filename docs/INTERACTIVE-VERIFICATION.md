@@ -10,7 +10,7 @@ Install the packaged candidate, start a task outside the source repository, invo
 
 ## Stage 2 — native tool surface
 
-Using the Orchestra-enabled Codex build, confirm `orchestra_validate`, `orchestra_run`, `orchestra_resume`, `orchestra_status`, and `orchestra_cancel` appear as native tools.
+Using the Orchestra-enabled Codex build, confirm `orchestra_validate`, `orchestra_run`, `orchestra_resume`, `orchestra_status`, `orchestra_cancel`, and `orchestra_query` appear as native tools.
 
 ## Stage 3 — V2 vertical slice
 

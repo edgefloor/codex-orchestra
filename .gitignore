@@ -1,4 +1,7 @@
 target/
+prototypes/*/.build/
+prototypes/*/node_modules/
+evaluator/node_modules/
 .DS_Store
 .codex/config.toml
 .codex/agents/
