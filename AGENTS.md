@@ -14,3 +14,4 @@ Orchestra is a native V2 Rust runtime with an installable plugin for skills, con
 - Run the unit suite, canonical plugin validator, and lifecycle doctor after structural changes.
 - Record assumptions and leave human-only UI checks pending until they are actually observed.
 - Promote framework lessons only when they are general, testable, versioned, and placed in the narrowest durable source.
+- If you need a paragraph-long comment to justify why the workaround is OK, the code is wrong - fix the code.
