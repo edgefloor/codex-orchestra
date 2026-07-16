@@ -11,11 +11,12 @@ use codex_extension_api::{
 use codex_http_client::{HttpClient, build_reqwest_client_with_custom_ca};
 use codex_orchestra_core::{
     AgentHandle, AgentOutcome, AgentStatus, AutomationClaimLiveness, AutomationClaimReconciliation,
-    AutomationClaimStatus, AutomationCleanupStatus, AutomationEffectExecution,
-    AutomationEffectStatus, AutomationGatePolicy, AutomationHookKind, AutomationHookStatus,
-    AutomationIssue, AutomationProfile, AutomationQueueCategory, AutomationQueuePage,
-    AutomationRetryKind, AutomationRootCheckpoint, AutomationRootStatus, AutomationRunStart,
-    AutomationRunStore, AutomationSecretKind, AutomationTrackerCommentRequest,
+    AutomationClaimStatus, AutomationCleanupStatus, AutomationEffect, AutomationEffectExecution,
+    AutomationEffectReceipt, AutomationEffectStatus, AutomationGatePolicy, AutomationHookKind,
+    AutomationHookStatus, AutomationIssue, AutomationProfile, AutomationQueueCategory,
+    AutomationQueuePage, AutomationRetryKind, AutomationRootCheckpoint, AutomationRootStatus,
+    AutomationRunStart, AutomationRunStore, AutomationSecretKind, AutomationTrackerCommentRequest,
+    AutomationTrackerPullRequestLinkRequest, AutomationTrackerTransitionRequest,
     AutomationValidationRequest, AutomationValidationResult, CommandOutcome,
     ExecutionHistoryRecord, ExecutionHistorySource, ExecutionPlan, ExecutionQueryBudget,
     ExecutionQueryLimits, ExecutionQueryResult, ExecutionQueryService, ExecutionSelector,
@@ -23,8 +24,8 @@ use codex_orchestra_core::{
     OrchestraRuntime, ResolvedSkill, RunCheckpoint, RunDigest, RunOutcome, RunStatus,
     SkillIdentity, SkillRequirement, SkillSourceKind, SkillToolDependency, SpawnRequest,
     WorktreePolicy, automation_claim_liveness, automation_source_sha256, compile_workflow,
-    normalize_linear_issue, normalize_linear_issue_page, repository_revision,
-    validate_automation_profile,
+    normalize_linear_issue, normalize_linear_issue_page, normalize_pull_request_url,
+    repository_revision, validate_automation_profile,
 };
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AgentStatus as CodexAgentStatus;
@@ -749,6 +750,103 @@ impl OrchestraService {
             .await
     }
 
+    /// Execute a prepared transition through the task-owned Automation Root
+    /// Run. The durable `executing` receipt is written before provider I/O and
+    /// the lease revision fences late results after pause or reconciliation.
+    pub async fn transition_live_automation_issue(
+        &self,
+        parent_thread_id: &str,
+        run_id: &str,
+        claim_id: &str,
+        refreshed_state: &str,
+        target_state: &str,
+        gate_policy: AutomationGatePolicy,
+    ) -> Result<AutomationEffectReceipt, String> {
+        let repository = self.repository(parent_thread_id).await?;
+        let store =
+            AutomationRunStore::open(&repository, run_id).map_err(|error| error.to_string())?;
+        let mut root = store.load().map_err(|error| error.to_string())?;
+        authorize_automation_root(&root, parent_thread_id)?;
+        let claim = root
+            .claims
+            .get(claim_id)
+            .ok_or_else(|| format!("Automation claim `{claim_id}` was not found"))?;
+        let profile = store
+            .load_profile_revision(&claim.profile_digest)
+            .map_err(|error| error.to_string())?;
+        let (receipt, request) = store
+            .prepare_tracker_transition(
+                &mut root,
+                claim_id,
+                &profile,
+                refreshed_state,
+                target_state,
+                gate_policy,
+            )
+            .map_err(|error| error.to_string())?;
+        let Some(request) = request else {
+            return Ok(receipt);
+        };
+        let execution = match linear_credential(&profile) {
+            Some(credential) => {
+                execute_live_linear_transition(&profile, &credential, &request).await
+            }
+            None => AutomationEffectExecution::Failed {
+                message: "referenced Linear credential is unavailable for a live mutation".into(),
+            },
+        };
+        store
+            .complete_tracker_transition(&mut root, claim_id, &request, execution)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Link one normalized pull request to the current task-owned claim using
+    /// the same durable two-phase effect protocol as tracker comments.
+    pub async fn link_live_automation_pull_request(
+        &self,
+        parent_thread_id: &str,
+        run_id: &str,
+        claim_id: &str,
+        pull_request_url: &str,
+        gate_policy: AutomationGatePolicy,
+    ) -> Result<AutomationEffectReceipt, String> {
+        let repository = self.repository(parent_thread_id).await?;
+        let store =
+            AutomationRunStore::open(&repository, run_id).map_err(|error| error.to_string())?;
+        let mut root = store.load().map_err(|error| error.to_string())?;
+        authorize_automation_root(&root, parent_thread_id)?;
+        let claim = root
+            .claims
+            .get(claim_id)
+            .ok_or_else(|| format!("Automation claim `{claim_id}` was not found"))?;
+        let profile = store
+            .load_profile_revision(&claim.profile_digest)
+            .map_err(|error| error.to_string())?;
+        let (receipt, request) = store
+            .prepare_tracker_pull_request_link(
+                &mut root,
+                claim_id,
+                &profile,
+                pull_request_url,
+                gate_policy,
+            )
+            .map_err(|error| error.to_string())?;
+        let Some(request) = request else {
+            return Ok(receipt);
+        };
+        let execution = match linear_credential(&profile) {
+            Some(credential) => {
+                execute_live_linear_pull_request_link(&profile, &credential, &request).await
+            }
+            None => AutomationEffectExecution::Failed {
+                message: "referenced Linear credential is unavailable for a live mutation".into(),
+            },
+        };
+        store
+            .complete_tracker_effect(&mut root, claim_id, &request.idempotency_key, execution)
+            .map_err(|error| error.to_string())
+    }
+
     async fn read_linear_automation_with_profile(
         &self,
         profile: &AutomationProfile,
@@ -757,14 +855,7 @@ impl OrchestraService {
         first: Option<u32>,
         issue_identifier: Option<&str>,
     ) -> Result<AutomationLinearRead, String> {
-        let credential = match profile.tracker.credential.kind {
-            AutomationSecretKind::Environment => {
-                std::env::var(&profile.tracker.credential.reference)
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
-            }
-            AutomationSecretKind::InlineDigest => None,
-        };
+        let credential = linear_credential(profile);
         let Some(credential) = credential else {
             return Ok(AutomationLinearRead {
                 status: AutomationLinearReadStatus::Skipped,
@@ -1276,6 +1367,7 @@ impl OrchestraService {
             store.save(&mut root).map_err(|error| error.to_string())?;
             return Ok(root);
         }
+        let fixture_tracker_state = fixture_issue.state.clone();
         let normalized_inputs = json!({
             "issue": fixture_issue,
             "task_prompt": execution_task_prompt,
@@ -1390,99 +1482,131 @@ impl OrchestraService {
             store.save(&mut root).map_err(|error| error.to_string())?;
             return Ok(root);
         }
-        let effect_status = if matches!(&outcome, RunOutcome::Completed(_))
-            && execution_profile
-                .orchestra
-                .effects
-                .contains(&codex_orchestra_core::AutomationEffect::TrackerComment)
-        {
-            let body = extract_tracker_comment(workflow)?;
-            Some(
-                store
-                    .resolve_tracker_comment(
-                        &mut root,
-                        &claim_id,
-                        &execution_profile,
-                        &body,
-                        AutomationGatePolicy::AutoAccept,
-                        |request| execute_fixture_tracker_comment(&repository, request),
-                    )
-                    .map_err(|error| error.to_string())?
-                    .status,
-            )
-        } else {
-            None
-        };
+        let mut effect_statuses = Vec::new();
+        if matches!(&outcome, RunOutcome::Completed(_)) {
+            for effect in &execution_profile.orchestra.effects {
+                let receipt = match effect {
+                    AutomationEffect::TrackerComment => {
+                        let body = extract_tracker_comment(workflow)?;
+                        store.resolve_tracker_comment(
+                            &mut root,
+                            &claim_id,
+                            &execution_profile,
+                            &body,
+                            AutomationGatePolicy::AutoAccept,
+                            |request| execute_fixture_tracker_comment(&repository, request),
+                        )
+                    }
+                    AutomationEffect::TrackerTransition => {
+                        let target_state = extract_tracker_transition(workflow)?;
+                        store.resolve_tracker_transition(
+                            &mut root,
+                            &claim_id,
+                            &execution_profile,
+                            &fixture_tracker_state,
+                            &target_state,
+                            AutomationGatePolicy::AutoAccept,
+                            |request| execute_fixture_tracker_transition(&repository, request),
+                        )
+                    }
+                    AutomationEffect::TrackerLinkPullRequest => {
+                        let pull_request_url = extract_tracker_pull_request(workflow)?;
+                        store.resolve_tracker_pull_request_link(
+                            &mut root,
+                            &claim_id,
+                            &execution_profile,
+                            &pull_request_url,
+                            AutomationGatePolicy::AutoAccept,
+                            |request| execute_fixture_tracker_pull_request(&repository, request),
+                        )
+                    }
+                }
+                .map_err(|error| error.to_string())?;
+                effect_statuses.push(receipt.status);
+            }
+        }
         store
             .update_claim(&mut root, &claim_id, |claim| {
                 claim.workflow_run_id = Some(workflow.run_id.clone());
                 claim.workflow_status = Some(workflow.status.clone());
             })
             .map_err(|error| error.to_string())?;
-        match (&outcome, effect_status) {
-            (_, Some(AutomationEffectStatus::WaitingGate)) => {
-                store
-                    .update_claim(&mut root, &claim_id, |claim| {
-                        claim.status = AutomationClaimStatus::Suspended;
-                        claim.next_action = "wait for the native Tracker effect gate".into();
-                    })
-                    .map_err(|error| error.to_string())?;
-            }
-            (_, Some(AutomationEffectStatus::Rejected)) => {
-                fail_automation_claim(
-                    &store,
+        if effect_statuses.contains(&AutomationEffectStatus::WaitingGate) {
+            store
+                .update_claim(&mut root, &claim_id, |claim| {
+                    claim.status = AutomationClaimStatus::Suspended;
+                    claim.next_action = "wait for the native Tracker effect gate".into();
+                })
+                .map_err(|error| error.to_string())?;
+        } else if effect_statuses.contains(&AutomationEffectStatus::Rejected) {
+            fail_automation_claim(
+                &store,
+                &mut root,
+                &claim_id,
+                "Tracker effect was rejected by policy",
+            )?;
+        } else if effect_statuses.contains(&AutomationEffectStatus::Failed)
+            || matches!(&outcome, RunOutcome::Failed(_))
+        {
+            store
+                .schedule_claim_retry(
                     &mut root,
                     &claim_id,
-                    "Tracker effect was rejected by policy",
-                )?;
-            }
-            (_, Some(AutomationEffectStatus::Failed)) | (RunOutcome::Failed(_), _) => {
-                store
-                    .schedule_claim_retry(
-                        &mut root,
-                        &claim_id,
-                        &execution_profile,
-                        unix_epoch_millis(),
-                        "Workflow or Tracker effect failed",
-                    )
-                    .map_err(|error| error.to_string())?;
-            }
-            (_, Some(AutomationEffectStatus::Ambiguous | AutomationEffectStatus::Executing)) => {
-                store
-                    .update_claim(&mut root, &claim_id, |claim| {
-                        claim.status = AutomationClaimStatus::Suspended;
-                        claim.next_action =
-                            "reconcile ambiguous Tracker effect before retry".into();
-                    })
-                    .map_err(|error| error.to_string())?;
-            }
-            (RunOutcome::Completed(_), _) => {
-                store
-                    .record_completed_invocation(
-                        &mut root,
-                        &claim_id,
-                        &execution_profile,
-                        true,
-                        unix_epoch_millis(),
-                    )
-                    .map_err(|error| error.to_string())?;
-            }
-            (RunOutcome::Paused(_), _) => {
-                store
-                    .update_claim(&mut root, &claim_id, |claim| {
-                        claim.status = AutomationClaimStatus::Suspended;
-                        claim.next_action = "resume Workflow from checkpoint".into();
-                    })
-                    .map_err(|error| error.to_string())?;
-            }
-            (RunOutcome::Cancelled(_), _) => {
-                store
-                    .update_claim(&mut root, &claim_id, |claim| {
-                        claim.status = AutomationClaimStatus::Cancelled;
-                        claim.retry = None;
-                        claim.next_action = "claim cancelled".into();
-                    })
-                    .map_err(|error| error.to_string())?;
+                    &execution_profile,
+                    unix_epoch_millis(),
+                    "Workflow or Tracker effect failed",
+                )
+                .map_err(|error| error.to_string())?;
+        } else if effect_statuses.iter().any(|status| {
+            matches!(
+                status,
+                AutomationEffectStatus::Ambiguous | AutomationEffectStatus::Executing
+            )
+        }) {
+            store
+                .update_claim(&mut root, &claim_id, |claim| {
+                    claim.status = AutomationClaimStatus::Suspended;
+                    claim.next_action = "reconcile ambiguous Tracker effect before retry".into();
+                })
+                .map_err(|error| error.to_string())?;
+        } else {
+            match &outcome {
+                RunOutcome::Completed(_) => {
+                    let tracker_issue_active = !execution_profile
+                        .tracker
+                        .terminal_states
+                        .iter()
+                        .any(|state| {
+                            state.eq_ignore_ascii_case(&root.claims[&claim_id].tracker_state)
+                        });
+                    store
+                        .record_completed_invocation(
+                            &mut root,
+                            &claim_id,
+                            &execution_profile,
+                            tracker_issue_active,
+                            unix_epoch_millis(),
+                        )
+                        .map_err(|error| error.to_string())?;
+                }
+                RunOutcome::Paused(_) => {
+                    store
+                        .update_claim(&mut root, &claim_id, |claim| {
+                            claim.status = AutomationClaimStatus::Suspended;
+                            claim.next_action = "resume Workflow from checkpoint".into();
+                        })
+                        .map_err(|error| error.to_string())?;
+                }
+                RunOutcome::Cancelled(_) => {
+                    store
+                        .update_claim(&mut root, &claim_id, |claim| {
+                            claim.status = AutomationClaimStatus::Cancelled;
+                            claim.retry = None;
+                            claim.next_action = "claim cancelled".into();
+                        })
+                        .map_err(|error| error.to_string())?;
+                }
+                RunOutcome::Failed(_) => unreachable!("failed outcomes schedule a retry"),
             }
         }
         root.next_action = root.claims[&claim_id].next_action.clone();
@@ -2094,6 +2218,15 @@ fn validate_linear_endpoint(endpoint: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn linear_credential(profile: &AutomationProfile) -> Option<String> {
+    match profile.tracker.credential.kind {
+        AutomationSecretKind::Environment => std::env::var(&profile.tracker.credential.reference)
+            .ok()
+            .filter(|value| !value.trim().is_empty()),
+        AutomationSecretKind::InlineDigest => None,
+    }
+}
+
 fn linear_project_issues_query() -> String {
     format!(
         "query OrchestraProjectIssues($projectId: String!, $first: Int!, $after: String) {{ project(id: $projectId) {{ issues(first: $first, after: $after, orderBy: updatedAt) {{ nodes {{ {LINEAR_ISSUE_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }} }} }}"
@@ -2104,6 +2237,217 @@ fn linear_issue_query() -> String {
     format!(
         "query OrchestraIssueRefresh($issueId: String!) {{ issue(id: $issueId) {{ {LINEAR_ISSUE_FIELDS} }} }}"
     )
+}
+
+fn linear_mutation_context_query() -> &'static str {
+    "query OrchestraIssueMutationContext($issueId: String!, $projectId: String!) { issue(id: $issueId) { id state { name } project { id } team { states(first: 50) { nodes { id name } } } attachments(first: 50) { nodes { id url } } } project(id: $projectId) { id } }"
+}
+
+fn linear_transition_mutation() -> &'static str {
+    "mutation OrchestraTransitionIssue($issueId: String!, $stateId: String!) { issueUpdate(id: $issueId, input: { stateId: $stateId }) { success issue { id state { name } } } }"
+}
+
+fn linear_pull_request_mutation() -> &'static str {
+    "mutation OrchestraLinkPullRequest($issueId: String!, $url: String!) { attachmentCreate(input: { issueId: $issueId, url: $url, title: \"Pull request\" }) { success attachment { id url } } }"
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum LinearTransitionDecision {
+    AlreadyApplied,
+    Apply { state_id: String },
+}
+
+fn linear_transition_decision(
+    profile: &AutomationProfile,
+    request: &AutomationTrackerTransitionRequest,
+    context: &Value,
+) -> Result<LinearTransitionDecision, String> {
+    let current_state = context
+        .pointer("/data/issue/state/name")
+        .and_then(Value::as_str)
+        .ok_or("refreshed Linear Issue has no workflow state")?;
+    if current_state.eq_ignore_ascii_case(&request.target_state) {
+        return Ok(LinearTransitionDecision::AlreadyApplied);
+    }
+    if profile
+        .tracker
+        .terminal_states
+        .iter()
+        .any(|state| state.eq_ignore_ascii_case(current_state))
+    {
+        return Err("refreshed Linear Issue became terminal before the transition".into());
+    }
+    if !current_state.eq_ignore_ascii_case(&request.expected_state) {
+        return Err(format!(
+            "Linear Issue state changed from `{}` to `{current_state}` before the transition",
+            request.expected_state
+        ));
+    }
+    let state_id = context
+        .pointer("/data/issue/team/states/nodes")
+        .and_then(Value::as_array)
+        .and_then(|states| {
+            states.iter().find(|state| {
+                state
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| name.eq_ignore_ascii_case(&request.target_state))
+            })
+        })
+        .and_then(|state| state.get("id"))
+        .and_then(Value::as_str)
+        .ok_or("transition target is not a workflow state for the refreshed Issue team")?;
+    Ok(LinearTransitionDecision::Apply {
+        state_id: state_id.into(),
+    })
+}
+
+async fn execute_live_linear_transition(
+    profile: &AutomationProfile,
+    credential: &str,
+    request: &AutomationTrackerTransitionRequest,
+) -> AutomationEffectExecution {
+    let context = match linear_mutation_context(profile, credential, &request.issue_id).await {
+        Ok(context) => context,
+        Err(message) => return AutomationEffectExecution::Failed { message },
+    };
+    let state_id = match linear_transition_decision(profile, request, &context) {
+        Ok(LinearTransitionDecision::AlreadyApplied) => {
+            return AutomationEffectExecution::Committed {
+                provider_receipt: format!(
+                    "linear-transition-already:{}:{}",
+                    request.issue_id, request.target_state
+                ),
+            };
+        }
+        Ok(LinearTransitionDecision::Apply { state_id }) => state_id,
+        Err(message) => return AutomationEffectExecution::Failed { message },
+    };
+    match execute_linear_read(
+        &profile.tracker.endpoint,
+        credential,
+        profile.codex.read_timeout_ms,
+        linear_transition_mutation().into(),
+        json!({"issueId": request.issue_id, "stateId": state_id}),
+    )
+    .await
+    {
+        Ok(value)
+            if value
+                .pointer("/data/issueUpdate/success")
+                .and_then(Value::as_bool)
+                == Some(true)
+                && value
+                    .pointer("/data/issueUpdate/issue/state/name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|state| state.eq_ignore_ascii_case(&request.target_state)) =>
+        {
+            AutomationEffectExecution::Committed {
+                provider_receipt: format!(
+                    "linear-transition:{}:{}",
+                    request.issue_id, request.target_state
+                ),
+            }
+        }
+        Ok(_) => AutomationEffectExecution::Ambiguous {
+            message: "Linear transition returned no matching durable state".into(),
+        },
+        Err(message) => AutomationEffectExecution::Ambiguous { message },
+    }
+}
+
+async fn execute_live_linear_pull_request_link(
+    profile: &AutomationProfile,
+    credential: &str,
+    request: &AutomationTrackerPullRequestLinkRequest,
+) -> AutomationEffectExecution {
+    let context = match linear_mutation_context(profile, credential, &request.issue_id).await {
+        Ok(context) => context,
+        Err(message) => return AutomationEffectExecution::Failed { message },
+    };
+    let already_linked = linear_pull_request_already_linked(&context, &request.pull_request_url);
+    if already_linked {
+        return AutomationEffectExecution::Committed {
+            provider_receipt: format!("linear-link-already:{}", request.idempotency_key),
+        };
+    }
+    match execute_linear_read(
+        &profile.tracker.endpoint,
+        credential,
+        profile.codex.read_timeout_ms,
+        linear_pull_request_mutation().into(),
+        json!({"issueId": request.issue_id, "url": request.pull_request_url}),
+    )
+    .await
+    {
+        Ok(value)
+            if value
+                .pointer("/data/attachmentCreate/success")
+                .and_then(Value::as_bool)
+                == Some(true)
+                && value
+                    .pointer("/data/attachmentCreate/attachment/url")
+                    .and_then(Value::as_str)
+                    == Some(request.pull_request_url.as_str()) =>
+        {
+            let attachment_id = value
+                .pointer("/data/attachmentCreate/attachment/id")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            AutomationEffectExecution::Committed {
+                provider_receipt: format!("linear-attachment:{attachment_id}"),
+            }
+        }
+        Ok(_) => AutomationEffectExecution::Ambiguous {
+            message: "Linear pull-request link returned no matching durable attachment".into(),
+        },
+        Err(message) => AutomationEffectExecution::Ambiguous { message },
+    }
+}
+
+fn linear_pull_request_already_linked(context: &Value, canonical_url: &str) -> bool {
+    context
+        .pointer("/data/issue/attachments/nodes")
+        .and_then(Value::as_array)
+        .is_some_and(|attachments| {
+            attachments.iter().any(|attachment| {
+                attachment
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .and_then(normalize_pull_request_url)
+                    .as_deref()
+                    == Some(canonical_url)
+            })
+        })
+}
+
+async fn linear_mutation_context(
+    profile: &AutomationProfile,
+    credential: &str,
+    issue_id: &str,
+) -> Result<Value, String> {
+    validate_linear_endpoint(&profile.tracker.endpoint)?;
+    let context = execute_linear_read(
+        &profile.tracker.endpoint,
+        credential,
+        profile.codex.read_timeout_ms,
+        linear_mutation_context_query().into(),
+        json!({"issueId": issue_id, "projectId": profile.tracker.project_slug}),
+    )
+    .await?;
+    validate_linear_mutation_scope(&context)?;
+    Ok(context)
+}
+
+fn validate_linear_mutation_scope(context: &Value) -> Result<(), String> {
+    let issue_project = context
+        .pointer("/data/issue/project/id")
+        .and_then(Value::as_str);
+    let requested_project = context.pointer("/data/project/id").and_then(Value::as_str);
+    if issue_project.is_none() || issue_project != requested_project {
+        return Err("refreshed Linear Issue is outside the configured tracker project".into());
+    }
+    Ok(())
 }
 
 async fn execute_linear_read(
@@ -2145,6 +2489,9 @@ async fn execute_linear_read(
             "Linear returned HTTP {}: {message}",
             status.as_u16()
         ));
+    }
+    if let Some(message) = value.pointer("/errors/0/message").and_then(Value::as_str) {
+        return Err(format!("Linear GraphQL error: {message}"));
     }
     Ok(value)
 }
@@ -2213,32 +2560,114 @@ fn authorize_automation_root(
 }
 
 fn extract_tracker_comment(checkpoint: &RunCheckpoint) -> Result<String, String> {
+    extract_tracker_effect_output(checkpoint, "tracker_comment", "body")
+}
+
+fn extract_tracker_transition(checkpoint: &RunCheckpoint) -> Result<String, String> {
+    extract_tracker_effect_output(checkpoint, "tracker_transition", "state")
+}
+
+fn extract_tracker_pull_request(checkpoint: &RunCheckpoint) -> Result<String, String> {
+    extract_tracker_effect_output(checkpoint, "tracker_pull_request", "url")
+}
+
+fn extract_tracker_effect_output(
+    checkpoint: &RunCheckpoint,
+    output_name: &str,
+    field_name: &str,
+) -> Result<String, String> {
     let values = checkpoint
         .steps
         .values()
-        .filter_map(|step| step.outputs.get("tracker_comment"))
+        .filter_map(|step| step.outputs.get(output_name))
         .collect::<Vec<_>>();
     let [value] = values.as_slice() else {
-        return Err(
-            "completed fixture Workflow must return exactly one `tracker_comment` output".into(),
-        );
+        return Err(format!(
+            "completed fixture Workflow must return exactly one `{output_name}` output"
+        ));
     };
-    let object = value
-        .as_object()
-        .ok_or("`tracker_comment` must be an object containing only `body`")?;
+    let object = value.as_object().ok_or_else(|| {
+        format!("`{output_name}` must be an object containing only `{field_name}`")
+    })?;
     if object.len() != 1 {
-        return Err("`tracker_comment` must contain only the claim-scoped `body` field".into());
+        return Err(format!(
+            "`{output_name}` must contain only the claim-scoped `{field_name}` field"
+        ));
     }
     object
-        .get("body")
+        .get(field_name)
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .ok_or_else(|| "`tracker_comment.body` must be a string".into())
+        .ok_or_else(|| format!("`{output_name}.{field_name}` must be a string"))
 }
 
 fn execute_fixture_tracker_comment(
     repository: &Path,
     request: &AutomationTrackerCommentRequest,
+) -> AutomationEffectExecution {
+    append_fixture_tracker_effect(
+        repository,
+        "comments.jsonl",
+        &request.idempotency_key,
+        "comment",
+        json!({
+            "idempotencyKey": request.idempotency_key,
+            "effectId": request.effect_id,
+            "claimId": request.claim_id,
+            "projectSlug": request.tracker_project_slug,
+            "issueId": request.issue_id,
+            "body": request.body,
+        }),
+    )
+}
+
+fn execute_fixture_tracker_transition(
+    repository: &Path,
+    request: &AutomationTrackerTransitionRequest,
+) -> AutomationEffectExecution {
+    append_fixture_tracker_effect(
+        repository,
+        "transitions.jsonl",
+        &request.idempotency_key,
+        "transition",
+        json!({
+            "idempotencyKey": request.idempotency_key,
+            "effectId": request.effect_id,
+            "claimId": request.claim_id,
+            "projectSlug": request.tracker_project_slug,
+            "issueId": request.issue_id,
+            "expectedState": request.expected_state,
+            "targetState": request.target_state,
+        }),
+    )
+}
+
+fn execute_fixture_tracker_pull_request(
+    repository: &Path,
+    request: &AutomationTrackerPullRequestLinkRequest,
+) -> AutomationEffectExecution {
+    append_fixture_tracker_effect(
+        repository,
+        "pull-requests.jsonl",
+        &request.idempotency_key,
+        "pull-request",
+        json!({
+            "idempotencyKey": request.idempotency_key,
+            "effectId": request.effect_id,
+            "claimId": request.claim_id,
+            "projectSlug": request.tracker_project_slug,
+            "issueId": request.issue_id,
+            "pullRequestUrl": request.pull_request_url,
+        }),
+    )
+}
+
+fn append_fixture_tracker_effect(
+    repository: &Path,
+    file_name: &str,
+    idempotency_key: &str,
+    receipt_kind: &str,
+    value: Value,
 ) -> AutomationEffectExecution {
     let root = repository.join(".codex/orchestra/fixture-tracker");
     if let Err(error) = std::fs::create_dir_all(&root) {
@@ -2249,7 +2678,7 @@ fn execute_fixture_tracker_comment(
     let mut file = match std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(root.join("comments.jsonl"))
+        .open(root.join(file_name))
     {
         Ok(file) => file,
         Err(error) => {
@@ -2258,14 +2687,7 @@ fn execute_fixture_tracker_comment(
             };
         }
     };
-    let line = match serde_json::to_vec(&json!({
-        "idempotencyKey": request.idempotency_key,
-        "effectId": request.effect_id,
-        "claimId": request.claim_id,
-        "projectSlug": request.tracker_project_slug,
-        "issueId": request.issue_id,
-        "body": request.body,
-    })) {
+    let line = match serde_json::to_vec(&value) {
         Ok(line) => line,
         Err(error) => {
             return AutomationEffectExecution::Failed {
@@ -2284,7 +2706,7 @@ fn execute_fixture_tracker_comment(
         };
     }
     AutomationEffectExecution::Committed {
-        provider_receipt: format!("fixture-comment:{}", request.idempotency_key),
+        provider_receipt: format!("fixture-{receipt_kind}:{idempotency_key}"),
     }
 }
 
@@ -2844,6 +3266,28 @@ fn reject_existing_root_run(repository: &Path, parent_thread_id: &str) -> Result
 mod tests {
     use super::*;
 
+    fn linear_mutation_profile(project_id: &str) -> AutomationProfile {
+        serde_json::from_value(json!({
+            "tracker": {
+                "kind": "linear",
+                "endpoint": "https://api.linear.app/graphql",
+                "projectSlug": project_id,
+                "requiredLabels": [],
+                "activeStates": ["Todo", "In Progress"],
+                "terminalStates": ["Done", "Cancelled"],
+                "credential": {"kind": "environment", "reference": "LINEAR_API_KEY", "digest": "explicit-live-test"}
+            },
+            "polling": {"intervalMs": 30000},
+            "workspace": {"root": ".codex/orchestra/worktrees"},
+            "hooks": {"afterCreate": null, "beforeRun": null, "afterRun": null, "beforeRemove": null, "timeoutMs": 60000},
+            "agent": {"maxConcurrentAgents": 1, "maxTurns": 1, "maxRetryBackoffMs": 300000, "maxConcurrentAgentsByState": {}},
+            "codex": {"approvalPolicy": "on-request", "threadSandbox": "workspace-write", "turnSandboxPolicy": null, "turnTimeoutMs": 3600000, "readTimeoutMs": 5000, "stallTimeoutMs": 300000},
+            "orchestra": {"workflowPath": "issue.workflow.ts", "workflowSha256": "explicit-live-test", "workflowName": "issue", "effects": ["tracker.transition", "tracker.link_pull_request"]},
+            "promptTemplate": "Explicit live mutation test"
+        }))
+        .unwrap()
+    }
+
     #[test]
     fn persistent_worktree_reuse_requires_the_exact_recorded_base() {
         let exact = CommandOutcome {
@@ -2904,11 +3348,104 @@ mod tests {
         assert!(linear_project_issues_query().starts_with("query "));
         assert!(!linear_project_issues_query().contains("mutation"));
         assert!(!linear_issue_query().contains("mutation"));
+        assert!(linear_mutation_context_query().starts_with("query "));
+        assert!(linear_transition_mutation().starts_with("mutation "));
+        assert!(linear_transition_mutation().contains("issueUpdate"));
+        assert!(linear_pull_request_mutation().starts_with("mutation "));
+        assert!(linear_pull_request_mutation().contains("attachmentCreate"));
     }
 
     #[test]
-    fn tracker_comment_output_is_exactly_one_claim_scoped_body() {
-        fn checkpoint(output: Value) -> RunCheckpoint {
+    fn refreshed_linear_state_prevents_conflicts_and_terminal_races() {
+        let profile = linear_mutation_profile("project-41");
+        let request = AutomationTrackerTransitionRequest {
+            effect_id: "effect-41".into(),
+            idempotency_key: "idem-41".into(),
+            claim_id: "claim-41".into(),
+            tracker_project_slug: "project-41".into(),
+            issue_id: "issue-41".into(),
+            expected_state: "Todo".into(),
+            target_state: "Done".into(),
+        };
+        let context = |state: &str| {
+            json!({
+                "data": {"issue": {
+                    "state": {"name": state},
+                    "team": {"states": {"nodes": [
+                        {"id": "state-todo", "name": "Todo"},
+                        {"id": "state-done", "name": "Done"}
+                    ]}}
+                }}
+            })
+        };
+
+        assert_eq!(
+            linear_transition_decision(&profile, &request, &context("Todo")),
+            Ok(LinearTransitionDecision::Apply {
+                state_id: "state-done".into()
+            })
+        );
+        assert_eq!(
+            linear_transition_decision(&profile, &request, &context("Done")),
+            Ok(LinearTransitionDecision::AlreadyApplied)
+        );
+        assert!(
+            linear_transition_decision(&profile, &request, &context("Cancelled"))
+                .unwrap_err()
+                .contains("terminal")
+        );
+        assert!(
+            linear_transition_decision(&profile, &request, &context("In Progress"))
+                .unwrap_err()
+                .contains("changed from")
+        );
+    }
+
+    #[test]
+    fn refreshed_linear_issue_must_remain_in_the_configured_project() {
+        assert!(
+            validate_linear_mutation_scope(&json!({
+                "data": {
+                    "issue": {"project": {"id": "project-41"}},
+                    "project": {"id": "project-41"}
+                }
+            }))
+            .is_ok()
+        );
+        assert!(
+            validate_linear_mutation_scope(&json!({
+                "data": {
+                    "issue": {"project": {"id": "another-project"}},
+                    "project": {"id": "project-41"}
+                }
+            }))
+            .unwrap_err()
+            .contains("outside")
+        );
+    }
+
+    #[test]
+    fn existing_linear_pull_request_attachments_are_compared_canonically() {
+        let context = json!({
+            "data": {"issue": {"attachments": {"nodes": [
+                {"id": "attachment-41", "url": "https://github.com/edgefloor/codex-orchestra/pull/00043/?view=files#top"}
+            ]}}}
+        });
+        assert!(linear_pull_request_already_linked(
+            &context,
+            "https://github.com/edgefloor/codex-orchestra/pull/43"
+        ));
+        assert!(!linear_pull_request_already_linked(
+            &context,
+            "https://github.com/edgefloor/codex-orchestra/pull/44"
+        ));
+    }
+
+    #[test]
+    fn tracker_effect_outputs_are_exactly_one_claim_scoped_value() {
+        fn checkpoint(output_name: &str, output: Value) -> RunCheckpoint {
+            let mut outputs = serde_json::Map::new();
+            outputs.insert(output_name.into(), output);
             serde_json::from_value(json!({
                 "schema_version": 1,
                 "run_id": "workflow-34",
@@ -2922,7 +3459,7 @@ mod tests {
                         "status": "completed",
                         "attempts": 1,
                         "rounds": 1,
-                        "outputs": { "tracker_comment": output }
+                        "outputs": outputs
                     }
                 },
                 "next_action": "complete"
@@ -2931,20 +3468,46 @@ mod tests {
         }
 
         assert_eq!(
-            extract_tracker_comment(&checkpoint(json!({"body": "Implemented and verified."})))
-                .unwrap(),
+            extract_tracker_comment(&checkpoint(
+                "tracker_comment",
+                json!({"body": "Implemented and verified."})
+            ))
+            .unwrap(),
             "Implemented and verified."
         );
-        assert!(extract_tracker_comment(&checkpoint(json!("not an object"))).is_err());
+        assert_eq!(
+            extract_tracker_transition(&checkpoint("tracker_transition", json!({"state": "Done"})))
+                .unwrap(),
+            "Done"
+        );
+        assert_eq!(
+            extract_tracker_pull_request(&checkpoint(
+                "tracker_pull_request",
+                json!({"url": "https://github.com/edgefloor/codex-orchestra/pull/43"})
+            ))
+            .unwrap(),
+            "https://github.com/edgefloor/codex-orchestra/pull/43"
+        );
         assert!(
-            extract_tracker_comment(&checkpoint(json!({
-                "body": "attempted cross-target comment",
-                "issueId": "another-issue"
-            })))
+            extract_tracker_comment(&checkpoint("tracker_comment", json!("not an object")))
+                .is_err()
+        );
+        assert!(
+            extract_tracker_transition(&checkpoint(
+                "tracker_transition",
+                json!({"state": "Done", "issueId": "another-issue"})
+            ))
+            .is_err()
+        );
+        assert!(
+            extract_tracker_pull_request(&checkpoint(
+                "tracker_pull_request",
+                json!({"url": "https://github.com/o/r/pull/1", "claimId": "another-claim"})
+            ))
             .is_err()
         );
 
-        let mut duplicate = checkpoint(json!({"body": "first"}));
+        let mut duplicate = checkpoint("tracker_comment", json!({"body": "first"}));
         duplicate.steps.insert(
             "second".into(),
             serde_json::from_value(json!({
@@ -2987,6 +3550,130 @@ mod tests {
         assert_eq!(record["issueId"], "issue-34");
         assert_eq!(record["idempotencyKey"], "idem-34");
         assert_eq!(record["body"], "Implemented and verified.");
+    }
+
+    #[test]
+    fn fixture_transition_and_pull_request_link_return_durable_provider_receipts() {
+        let repository = tempfile::tempdir().unwrap();
+        let transition = AutomationTrackerTransitionRequest {
+            effect_id: "effect-transition-41".into(),
+            idempotency_key: "idem-transition-41".into(),
+            claim_id: "claim-41".into(),
+            tracker_project_slug: "orchestra".into(),
+            issue_id: "issue-41".into(),
+            expected_state: "Todo".into(),
+            target_state: "Done".into(),
+        };
+        let pull_request = AutomationTrackerPullRequestLinkRequest {
+            effect_id: "effect-pr-41".into(),
+            idempotency_key: "idem-pr-41".into(),
+            claim_id: "claim-41".into(),
+            tracker_project_slug: "orchestra".into(),
+            issue_id: "issue-41".into(),
+            pull_request_url: "https://github.com/edgefloor/codex-orchestra/pull/43".into(),
+        };
+
+        assert_eq!(
+            execute_fixture_tracker_transition(repository.path(), &transition),
+            AutomationEffectExecution::Committed {
+                provider_receipt: "fixture-transition:idem-transition-41".into()
+            }
+        );
+        assert_eq!(
+            execute_fixture_tracker_pull_request(repository.path(), &pull_request),
+            AutomationEffectExecution::Committed {
+                provider_receipt: "fixture-pull-request:idem-pr-41".into()
+            }
+        );
+
+        let transition_record: Value = serde_json::from_str(
+            std::fs::read_to_string(
+                repository
+                    .path()
+                    .join(".codex/orchestra/fixture-tracker/transitions.jsonl"),
+            )
+            .unwrap()
+            .trim(),
+        )
+        .unwrap();
+        assert_eq!(transition_record["claimId"], "claim-41");
+        assert_eq!(transition_record["projectSlug"], "orchestra");
+        assert_eq!(transition_record["issueId"], "issue-41");
+        assert_eq!(transition_record["expectedState"], "Todo");
+        assert_eq!(transition_record["targetState"], "Done");
+
+        let pull_request_record: Value = serde_json::from_str(
+            std::fs::read_to_string(
+                repository
+                    .path()
+                    .join(".codex/orchestra/fixture-tracker/pull-requests.jsonl"),
+            )
+            .unwrap()
+            .trim(),
+        )
+        .unwrap();
+        assert_eq!(pull_request_record["claimId"], "claim-41");
+        assert_eq!(pull_request_record["projectSlug"], "orchestra");
+        assert_eq!(pull_request_record["issueId"], "issue-41");
+        assert_eq!(
+            pull_request_record["pullRequestUrl"],
+            "https://github.com/edgefloor/codex-orchestra/pull/43"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "mutates a user-selected live Linear Issue; run only with the explicit environment gate"]
+    async fn live_linear_transition_and_pull_request_link_are_explicit_opt_in() {
+        assert_eq!(
+            std::env::var("ORCHESTRA_LINEAR_MUTATION_TEST").as_deref(),
+            Ok("1"),
+            "set ORCHESTRA_LINEAR_MUTATION_TEST=1 to acknowledge live Linear mutations"
+        );
+        let required = |name: &str| {
+            std::env::var(name).unwrap_or_else(|_| panic!("missing required `{name}`"))
+        };
+        let credential = required("LINEAR_API_KEY");
+        let issue_id = required("ORCHESTRA_LINEAR_ISSUE_ID");
+        let target_state = required("ORCHESTRA_LINEAR_TARGET_STATE");
+        let pull_request_url = required("ORCHESTRA_LINEAR_PULL_REQUEST_URL");
+        let profile = linear_mutation_profile(&required("ORCHESTRA_LINEAR_PROJECT_ID"));
+
+        let transition = execute_live_linear_transition(
+            &profile,
+            &credential,
+            &AutomationTrackerTransitionRequest {
+                effect_id: "live-transition".into(),
+                idempotency_key: "live-transition".into(),
+                claim_id: "explicit-live-test".into(),
+                tracker_project_slug: profile.tracker.project_slug.clone(),
+                issue_id: issue_id.clone(),
+                expected_state: required("ORCHESTRA_LINEAR_EXPECTED_STATE"),
+                target_state,
+            },
+        )
+        .await;
+        assert!(matches!(
+            transition,
+            AutomationEffectExecution::Committed { .. }
+        ));
+
+        let linked = execute_live_linear_pull_request_link(
+            &profile,
+            &credential,
+            &AutomationTrackerPullRequestLinkRequest {
+                effect_id: "live-pull-request".into(),
+                idempotency_key: "live-pull-request".into(),
+                claim_id: "explicit-live-test".into(),
+                tracker_project_slug: profile.tracker.project_slug.clone(),
+                issue_id,
+                pull_request_url,
+            },
+        )
+        .await;
+        assert!(matches!(
+            linked,
+            AutomationEffectExecution::Committed { .. }
+        ));
     }
 
     #[test]

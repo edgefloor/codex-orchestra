@@ -38,7 +38,9 @@ pub use automation_run::{
     AutomationQueueProjectionItem, AutomationQueueStatus, AutomationReconciliationStatus,
     AutomationRetryKind, AutomationRetrySchedule, AutomationRootCheckpoint, AutomationRootStatus,
     AutomationRunError, AutomationRunStart, AutomationRunStore, AutomationTrackerCommentRequest,
+    AutomationTrackerPullRequestLinkRequest, AutomationTrackerTransitionRequest,
     automation_claim_liveness, automation_queue_counts, automation_queue_page,
+    normalize_pull_request_url,
 };
 pub use compiler::{CompileError, compile_workflow};
 pub use compiler_artifact::{

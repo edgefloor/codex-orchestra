@@ -2091,10 +2091,10 @@ index fafdbfa6..a0bf1fee 100644
              WS_METHODS.serverRefreshProviders,
 diff --git a/apps/web/src/components/chat/AutomationProfileDialog.logic.test.ts b/apps/web/src/components/chat/AutomationProfileDialog.logic.test.ts
 new file mode 100644
-index 00000000..76317e02
+index 00000000..ed31a55b
 --- /dev/null
 +++ b/apps/web/src/components/chat/AutomationProfileDialog.logic.test.ts
-@@ -0,0 +1,209 @@
+@@ -0,0 +1,253 @@
 +import { ThreadId } from "@t3tools/contracts";
 +import { describe, expect, it } from "vite-plus/test";
 +
@@ -2206,6 +2206,29 @@ index 00000000..76317e02
 +                bodyPreview: { text: "Implemented and verified.", truncated: false },
 +                providerReceipt: "fixture-comment:idem-34",
 +              },
++              {
++                effectId: "effect-transition-41",
++                idempotencyKey: "idem-transition-41",
++                kind: "tracker.transition",
++                status: "committed",
++                gatePolicy: "auto_accept",
++                requestSha256: "transition-sha",
++                bodyPreview: { text: "Done", truncated: false },
++                providerReceipt: "fixture-transition:idem-transition-41",
++              },
++              {
++                effectId: "effect-pr-41",
++                idempotencyKey: "idem-pr-41",
++                kind: "tracker.link_pull_request",
++                status: "committed",
++                gatePolicy: "auto_accept",
++                requestSha256: "pull-request-sha",
++                bodyPreview: {
++                  text: "https://github.com/edgefloor/codex-orchestra/pull/43",
++                  truncated: false,
++                },
++                providerReceipt: "fixture-pull-request:idem-pr-41",
++              },
 +            ],
 +            hookReceipts: [
 +              {
@@ -2257,6 +2280,27 @@ index 00000000..76317e02
 +            gatePolicy: "auto_accept",
 +            bodyPreview: { text: "Implemented and verified.", truncated: false },
 +            providerReceipt: "fixture-comment:idem-34",
++            failure: undefined,
++          },
++          {
++            effectId: "effect-transition-41",
++            kind: "tracker.transition",
++            status: "committed",
++            gatePolicy: "auto_accept",
++            bodyPreview: { text: "Done", truncated: false },
++            providerReceipt: "fixture-transition:idem-transition-41",
++            failure: undefined,
++          },
++          {
++            effectId: "effect-pr-41",
++            kind: "tracker.link_pull_request",
++            status: "committed",
++            gatePolicy: "auto_accept",
++            bodyPreview: {
++              text: "https://github.com/edgefloor/codex-orchestra/pull/43",
++              truncated: false,
++            },
++            providerReceipt: "fixture-pull-request:idem-pr-41",
 +            failure: undefined,
 +          },
 +        ],

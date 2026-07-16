@@ -311,10 +311,37 @@ pub struct AutomationTrackerCommentRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AutomationTrackerTransitionRequest {
+    pub effect_id: String,
+    pub idempotency_key: String,
+    pub claim_id: String,
+    pub tracker_project_slug: String,
+    pub issue_id: String,
+    pub expected_state: String,
+    pub target_state: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AutomationTrackerPullRequestLinkRequest {
+    pub effect_id: String,
+    pub idempotency_key: String,
+    pub claim_id: String,
+    pub tracker_project_slug: String,
+    pub issue_id: String,
+    pub pull_request_url: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AutomationEffectExecution {
     Committed { provider_receipt: String },
     Failed { message: String },
     Ambiguous { message: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreparedAutomationEffect {
+    receipt: AutomationEffectReceipt,
+    execute: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -390,10 +417,14 @@ pub enum AutomationRunError {
     ReconciliationNotStarted,
     #[error("Automation reconciliation is incomplete: {0}")]
     ReconciliationBlocked(String),
-    #[error("tracker.comment is not authorized by the effective Automation profile")]
+    #[error("Tracker effect is not authorized by the effective Automation profile")]
     MissingEffectAuthority,
     #[error("tracker.comment body must contain 1..=4096 bytes")]
     InvalidComment,
+    #[error("tracker.transition target must be a configured tracker state")]
+    InvalidTransition,
+    #[error("tracker.link_pull_request requires a canonical HTTPS GitHub pull-request URL")]
+    InvalidPullRequestLink,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1353,6 +1384,44 @@ impl AutomationRunStore {
         Ok(())
     }
 
+    pub fn prepare_tracker_comment(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        profile: &AutomationProfile,
+        body: &str,
+        gate_policy: AutomationGatePolicy,
+    ) -> Result<
+        (
+            AutomationEffectReceipt,
+            Option<AutomationTrackerCommentRequest>,
+        ),
+        AutomationRunError,
+    > {
+        let body = body.trim();
+        if body.is_empty() || body.len() > 4096 {
+            return Err(AutomationRunError::InvalidComment);
+        }
+        let prepared = self.prepare_tracker_effect(
+            checkpoint,
+            claim_id,
+            profile,
+            AutomationEffect::TrackerComment,
+            body,
+            gate_policy,
+            None,
+        )?;
+        let request = prepared.execute.then(|| AutomationTrackerCommentRequest {
+            effect_id: prepared.receipt.effect_id.clone(),
+            idempotency_key: prepared.receipt.idempotency_key.clone(),
+            claim_id: claim_id.into(),
+            tracker_project_slug: prepared.receipt.tracker_project_slug.clone(),
+            issue_id: prepared.receipt.issue_id.clone(),
+            body: body.into(),
+        });
+        Ok((prepared.receipt, request))
+    }
+
     pub fn resolve_tracker_comment<F>(
         &self,
         checkpoint: &mut AutomationRootCheckpoint,
@@ -1365,26 +1434,219 @@ impl AutomationRunStore {
     where
         F: FnOnce(&AutomationTrackerCommentRequest) -> AutomationEffectExecution,
     {
-        if !profile
-            .orchestra
-            .effects
-            .contains(&AutomationEffect::TrackerComment)
-        {
-            return Err(AutomationRunError::MissingEffectAuthority);
+        let (receipt, request) =
+            self.prepare_tracker_comment(checkpoint, claim_id, profile, body, gate_policy)?;
+        let Some(request) = request else {
+            return Ok(receipt);
+        };
+        let execution = execute(&request);
+        self.complete_tracker_effect(checkpoint, claim_id, &request.idempotency_key, execution)
+    }
+
+    pub fn complete_tracker_transition(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        request: &AutomationTrackerTransitionRequest,
+        execution: AutomationEffectExecution,
+    ) -> Result<AutomationEffectReceipt, AutomationRunError> {
+        let receipt = self.complete_tracker_effect(
+            checkpoint,
+            claim_id,
+            &request.idempotency_key,
+            execution,
+        )?;
+        if receipt.status == AutomationEffectStatus::Committed {
+            let claim = checkpoint
+                .claims
+                .get_mut(claim_id)
+                .ok_or_else(|| AutomationRunError::MissingClaim(claim_id.into()))?;
+            if claim.tracker_state != request.target_state {
+                claim.tracker_state.clone_from(&request.target_state);
+                self.save(checkpoint)?;
+            }
         }
-        let body = body.trim();
-        if body.is_empty() || body.len() > 4096 {
-            return Err(AutomationRunError::InvalidComment);
+        Ok(receipt)
+    }
+
+    pub fn prepare_tracker_transition(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        profile: &AutomationProfile,
+        refreshed_state: &str,
+        target_state: &str,
+        gate_policy: AutomationGatePolicy,
+    ) -> Result<
+        (
+            AutomationEffectReceipt,
+            Option<AutomationTrackerTransitionRequest>,
+        ),
+        AutomationRunError,
+    > {
+        let refreshed_state = refreshed_state.trim();
+        let target_state = target_state.trim();
+        let configured_target = profile
+            .tracker
+            .active_states
+            .iter()
+            .chain(profile.tracker.terminal_states.iter())
+            .find(|state| state.eq_ignore_ascii_case(target_state))
+            .cloned()
+            .ok_or(AutomationRunError::InvalidTransition)?;
+        let claim = checkpoint
+            .claims
+            .get_mut(claim_id)
+            .ok_or_else(|| AutomationRunError::MissingClaim(claim_id.into()))?;
+        claim.tracker_state = refreshed_state.into();
+        let already_applied = refreshed_state.eq_ignore_ascii_case(&configured_target);
+        if !already_applied
+            && profile
+                .tracker
+                .terminal_states
+                .iter()
+                .any(|state| state.eq_ignore_ascii_case(refreshed_state))
+        {
+            return Err(AutomationRunError::InactiveClaim(claim_id.into()));
+        }
+        let prepared = self.prepare_tracker_effect(
+            checkpoint,
+            claim_id,
+            profile,
+            AutomationEffect::TrackerTransition,
+            &configured_target,
+            gate_policy,
+            already_applied.then(|| format!("already-applied:{configured_target}")),
+        )?;
+        let request = prepared
+            .execute
+            .then(|| AutomationTrackerTransitionRequest {
+                effect_id: prepared.receipt.effect_id.clone(),
+                idempotency_key: prepared.receipt.idempotency_key.clone(),
+                claim_id: claim_id.into(),
+                tracker_project_slug: prepared.receipt.tracker_project_slug.clone(),
+                issue_id: prepared.receipt.issue_id.clone(),
+                expected_state: refreshed_state.into(),
+                target_state: configured_target,
+            });
+        Ok((prepared.receipt, request))
+    }
+
+    pub fn resolve_tracker_transition<F>(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        profile: &AutomationProfile,
+        refreshed_state: &str,
+        target_state: &str,
+        gate_policy: AutomationGatePolicy,
+        execute: F,
+    ) -> Result<AutomationEffectReceipt, AutomationRunError>
+    where
+        F: FnOnce(&AutomationTrackerTransitionRequest) -> AutomationEffectExecution,
+    {
+        let (receipt, request) = self.prepare_tracker_transition(
+            checkpoint,
+            claim_id,
+            profile,
+            refreshed_state,
+            target_state,
+            gate_policy,
+        )?;
+        let Some(request) = request else {
+            return Ok(receipt);
+        };
+        let execution = execute(&request);
+        self.complete_tracker_transition(checkpoint, claim_id, &request, execution)
+    }
+
+    pub fn prepare_tracker_pull_request_link(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        profile: &AutomationProfile,
+        pull_request_url: &str,
+        gate_policy: AutomationGatePolicy,
+    ) -> Result<
+        (
+            AutomationEffectReceipt,
+            Option<AutomationTrackerPullRequestLinkRequest>,
+        ),
+        AutomationRunError,
+    > {
+        let normalized = normalize_pull_request_url(pull_request_url)
+            .ok_or(AutomationRunError::InvalidPullRequestLink)?;
+        let prepared = self.prepare_tracker_effect(
+            checkpoint,
+            claim_id,
+            profile,
+            AutomationEffect::TrackerLinkPullRequest,
+            &normalized,
+            gate_policy,
+            None,
+        )?;
+        let request = prepared
+            .execute
+            .then(|| AutomationTrackerPullRequestLinkRequest {
+                effect_id: prepared.receipt.effect_id.clone(),
+                idempotency_key: prepared.receipt.idempotency_key.clone(),
+                claim_id: claim_id.into(),
+                tracker_project_slug: prepared.receipt.tracker_project_slug.clone(),
+                issue_id: prepared.receipt.issue_id.clone(),
+                pull_request_url: normalized,
+            });
+        Ok((prepared.receipt, request))
+    }
+
+    pub fn resolve_tracker_pull_request_link<F>(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        profile: &AutomationProfile,
+        pull_request_url: &str,
+        gate_policy: AutomationGatePolicy,
+        execute: F,
+    ) -> Result<AutomationEffectReceipt, AutomationRunError>
+    where
+        F: FnOnce(&AutomationTrackerPullRequestLinkRequest) -> AutomationEffectExecution,
+    {
+        let (receipt, request) = self.prepare_tracker_pull_request_link(
+            checkpoint,
+            claim_id,
+            profile,
+            pull_request_url,
+            gate_policy,
+        )?;
+        let Some(request) = request else {
+            return Ok(receipt);
+        };
+        let execution = execute(&request);
+        self.complete_tracker_effect(checkpoint, claim_id, &request.idempotency_key, execution)
+    }
+
+    fn prepare_tracker_effect(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        profile: &AutomationProfile,
+        kind: AutomationEffect,
+        request_value: &str,
+        gate_policy: AutomationGatePolicy,
+        already_applied_receipt: Option<String>,
+    ) -> Result<PreparedAutomationEffect, AutomationRunError> {
+        if !profile.orchestra.effects.contains(&kind) {
+            return Err(AutomationRunError::MissingEffectAuthority);
         }
         let claim = checkpoint
             .claims
             .get_mut(claim_id)
             .ok_or_else(|| AutomationRunError::MissingClaim(claim_id.into()))?;
-        let request_sha256 = sha256(body.as_bytes());
+        let request_sha256 = sha256(request_value.as_bytes());
+        let kind_name = automation_effect_name(kind);
         let idempotency_key = sha256(
             format!(
-                "{}\0{}\0tracker.comment\0{}",
-                checkpoint.profile_digest, claim_id, request_sha256
+                "{}\0{}\0{}\0{}",
+                claim.profile_digest, claim_id, kind_name, request_sha256
             )
             .as_bytes(),
         );
@@ -1399,9 +1661,15 @@ impl AutomationRunStore {
                     Some("execution was interrupted before a durable provider receipt".into());
                 let receipt = claim.effects[index].clone();
                 self.save(checkpoint)?;
-                return Ok(receipt);
+                return Ok(PreparedAutomationEffect {
+                    receipt,
+                    execute: false,
+                });
             }
-            return Ok(claim.effects[index].clone());
+            return Ok(PreparedAutomationEffect {
+                receipt: claim.effects[index].clone(),
+                execute: false,
+            });
         }
         if !matches!(
             claim.status,
@@ -1410,59 +1678,69 @@ impl AutomationRunStore {
             return Err(AutomationRunError::InactiveClaim(claim_id.into()));
         }
         let effect_id = format!("effect-{}", &idempotency_key[..16]);
-        let mut receipt = AutomationEffectReceipt {
+        let receipt = AutomationEffectReceipt {
             effect_id: effect_id.clone(),
             idempotency_key: idempotency_key.clone(),
-            kind: AutomationEffect::TrackerComment,
+            kind,
             claim_id: claim_id.into(),
             tracker_project_slug: checkpoint.tracker_project_slug.clone(),
             issue_id: claim.issue_id.clone(),
             request_sha256,
-            body_preview: bounded_preview(body, 240),
+            body_preview: bounded_preview(request_value, 240),
             gate_policy,
-            status: match gate_policy {
-                AutomationGatePolicy::AutoAccept => AutomationEffectStatus::Executing,
-                AutomationGatePolicy::AutoReject => AutomationEffectStatus::Rejected,
-                AutomationGatePolicy::AskHuman => AutomationEffectStatus::WaitingGate,
-            },
-            provider_receipt: None,
+            status: already_applied_receipt.as_ref().map_or_else(
+                || match gate_policy {
+                    AutomationGatePolicy::AutoAccept => AutomationEffectStatus::Executing,
+                    AutomationGatePolicy::AutoReject => AutomationEffectStatus::Rejected,
+                    AutomationGatePolicy::AskHuman => AutomationEffectStatus::WaitingGate,
+                },
+                |_| AutomationEffectStatus::Committed,
+            ),
+            provider_receipt: already_applied_receipt,
             failure: None,
         };
         claim.effects.push(receipt.clone());
         self.save(checkpoint)?;
-        if gate_policy != AutomationGatePolicy::AutoAccept {
-            return Ok(receipt);
-        }
+        Ok(PreparedAutomationEffect {
+            execute: receipt.status == AutomationEffectStatus::Executing,
+            receipt,
+        })
+    }
 
-        let request = AutomationTrackerCommentRequest {
-            effect_id,
-            idempotency_key,
-            claim_id: claim_id.into(),
-            tracker_project_slug: checkpoint.tracker_project_slug.clone(),
-            issue_id: checkpoint.claims[claim_id].issue_id.clone(),
-            body: body.into(),
-        };
-        match execute(&request) {
+    pub fn complete_tracker_effect(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        idempotency_key: &str,
+        execution: AutomationEffectExecution,
+    ) -> Result<AutomationEffectReceipt, AutomationRunError> {
+        let claim = checkpoint
+            .claims
+            .get_mut(claim_id)
+            .ok_or_else(|| AutomationRunError::MissingClaim(claim_id.into()))?;
+        let receipt = claim
+            .effects
+            .iter_mut()
+            .find(|receipt| receipt.idempotency_key == idempotency_key)
+            .ok_or_else(|| AutomationRunError::MissingClaim(claim_id.into()))?;
+        if receipt.status != AutomationEffectStatus::Executing {
+            return Ok(receipt.clone());
+        }
+        match execution {
             AutomationEffectExecution::Committed { provider_receipt } => {
                 receipt.status = AutomationEffectStatus::Committed;
-                receipt.provider_receipt = Some(provider_receipt);
+                receipt.provider_receipt = Some(bounded_preview(&provider_receipt, 512));
             }
             AutomationEffectExecution::Failed { message } => {
                 receipt.status = AutomationEffectStatus::Failed;
-                receipt.failure = Some(message);
+                receipt.failure = Some(bounded_preview(&message, 512));
             }
             AutomationEffectExecution::Ambiguous { message } => {
                 receipt.status = AutomationEffectStatus::Ambiguous;
-                receipt.failure = Some(message);
+                receipt.failure = Some(bounded_preview(&message, 512));
             }
         }
-        let claim = checkpoint.claims.get_mut(claim_id).expect("claim exists");
-        let stored = claim
-            .effects
-            .iter_mut()
-            .find(|stored| stored.idempotency_key == receipt.idempotency_key)
-            .expect("prepared receipt exists");
-        *stored = receipt.clone();
+        let receipt = receipt.clone();
         self.save(checkpoint)?;
         Ok(receipt)
     }
@@ -1612,6 +1890,40 @@ fn automation_run_id(profile_digest: &str) -> String {
         .unwrap_or_default()
         .as_millis();
     format!("automation-{millis}-{}", &profile_digest[..12])
+}
+
+fn automation_effect_name(kind: AutomationEffect) -> &'static str {
+    match kind {
+        AutomationEffect::TrackerComment => "tracker.comment",
+        AutomationEffect::TrackerTransition => "tracker.transition",
+        AutomationEffect::TrackerLinkPullRequest => "tracker.link_pull_request",
+    }
+}
+
+pub fn normalize_pull_request_url(value: &str) -> Option<String> {
+    let without_suffix = value.trim().split(['?', '#']).next()?.trim_end_matches('/');
+    let path = without_suffix.strip_prefix("https://github.com/")?;
+    let segments = path.split('/').collect::<Vec<_>>();
+    let [owner, repository, pull, number] = segments.as_slice() else {
+        return None;
+    };
+    if *pull != "pull" {
+        return None;
+    }
+    let safe_segment = |segment: &str| {
+        !segment.is_empty()
+            && segment.len() <= 100
+            && segment
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    };
+    let number = number.parse::<u64>().ok().filter(|number| *number > 0)?;
+    if !safe_segment(owner) || !safe_segment(repository) {
+        return None;
+    }
+    Some(format!(
+        "https://github.com/{owner}/{repository}/pull/{number}"
+    ))
 }
 
 fn safe_segment(value: &str) -> String {
@@ -2588,6 +2900,137 @@ mod tests {
             )
             .unwrap();
         assert_eq!(paused.status, AutomationEffectStatus::WaitingGate);
+    }
+
+    #[test]
+    fn transition_and_pull_request_effects_are_scoped_normalized_and_idempotent() {
+        let repository = tempdir().unwrap();
+        let workspace = tempdir().unwrap();
+        let mut profile = profile(workspace.path());
+        profile.orchestra.effects = vec![
+            AutomationEffect::TrackerTransition,
+            AutomationEffect::TrackerLinkPullRequest,
+        ];
+        let digest = crate::canonical_sha256(&serde_json::to_value(&profile).unwrap()).unwrap();
+        let (store, mut root) = AutomationRunStore::start(AutomationRunStart {
+            repository: repository.path(),
+            owner_thread_id: "task-effects",
+            source_revision: "abc123",
+            profile: &profile,
+            profile_digest: &digest,
+        })
+        .unwrap();
+        let claim_id = store.claim_fixture(&mut root, &issue(), 1).unwrap();
+
+        let already_applied = store
+            .resolve_tracker_transition(
+                &mut root,
+                &claim_id,
+                &profile,
+                "Todo",
+                "Todo",
+                AutomationGatePolicy::AutoAccept,
+                |_| panic!("an already-applied transition must not execute"),
+            )
+            .unwrap();
+        assert_eq!(already_applied.status, AutomationEffectStatus::Committed);
+        assert_eq!(
+            already_applied.provider_receipt.as_deref(),
+            Some("already-applied:Todo")
+        );
+
+        assert!(matches!(
+            store.resolve_tracker_transition(
+                &mut root,
+                &claim_id,
+                &profile,
+                "Todo",
+                "Unknown",
+                AutomationGatePolicy::AutoAccept,
+                |_| unreachable!(),
+            ),
+            Err(AutomationRunError::InvalidTransition)
+        ));
+        let transitioned = store
+            .resolve_tracker_transition(
+                &mut root,
+                &claim_id,
+                &profile,
+                "Todo",
+                "done",
+                AutomationGatePolicy::AutoAccept,
+                |request| {
+                    assert_eq!(request.issue_id, "issue-33");
+                    assert_eq!(request.claim_id, claim_id);
+                    assert_eq!(request.tracker_project_slug, "orchestra");
+                    assert_eq!(request.expected_state, "Todo");
+                    assert_eq!(request.target_state, "Done");
+                    AutomationEffectExecution::Committed {
+                        provider_receipt: "linear-transition-1".into(),
+                    }
+                },
+            )
+            .unwrap();
+        assert_eq!(transitioned.status, AutomationEffectStatus::Committed);
+        assert_eq!(transitioned.kind, AutomationEffect::TrackerTransition);
+        assert_eq!(root.claims[&claim_id].tracker_state, "Done");
+        let duplicate = store
+            .resolve_tracker_transition(
+                &mut root,
+                &claim_id,
+                &profile,
+                "Todo",
+                "Done",
+                AutomationGatePolicy::AutoAccept,
+                |_| panic!("idempotent transition must not execute twice"),
+            )
+            .unwrap();
+        assert_eq!(duplicate, transitioned);
+        assert!(matches!(
+            store.resolve_tracker_transition(
+                &mut root,
+                &claim_id,
+                &profile,
+                "Done",
+                "Todo",
+                AutomationGatePolicy::AutoAccept,
+                |_| unreachable!(),
+            ),
+            Err(AutomationRunError::InactiveClaim(_))
+        ));
+
+        let linked = store
+            .resolve_tracker_pull_request_link(
+                &mut root,
+                &claim_id,
+                &profile,
+                " https://github.com/edgefloor/codex-orchestra/pull/00043/?utm=x#discussion ",
+                AutomationGatePolicy::AutoAccept,
+                |request| {
+                    assert_eq!(request.issue_id, "issue-33");
+                    assert_eq!(
+                        request.pull_request_url,
+                        "https://github.com/edgefloor/codex-orchestra/pull/43"
+                    );
+                    AutomationEffectExecution::Committed {
+                        provider_receipt: "linear-link-1".into(),
+                    }
+                },
+            )
+            .unwrap();
+        assert_eq!(linked.status, AutomationEffectStatus::Committed);
+        assert_eq!(linked.kind, AutomationEffect::TrackerLinkPullRequest);
+        assert!(matches!(
+            store.resolve_tracker_pull_request_link(
+                &mut root,
+                &claim_id,
+                &profile,
+                "https://example.com/pull/43",
+                AutomationGatePolicy::AutoAccept,
+                |_| unreachable!(),
+            ),
+            Err(AutomationRunError::InvalidPullRequestLink)
+        ));
     }
 
     #[test]
