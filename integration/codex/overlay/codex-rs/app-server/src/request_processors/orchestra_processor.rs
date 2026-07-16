@@ -612,6 +612,61 @@ fn project_automation_run(
                         failure: receipt.failure.map(automation_bounded_text),
                     })
                     .collect(),
+                hook_receipts: claim
+                    .hook_receipts
+                    .into_iter()
+                    .map(|receipt| protocol::AutomationHookReceiptProjection {
+                        kind: match receipt.kind {
+                            core::AutomationHookKind::AfterCreate => {
+                                protocol::AutomationHookKind::AfterCreate
+                            }
+                            core::AutomationHookKind::BeforeRun => {
+                                protocol::AutomationHookKind::BeforeRun
+                            }
+                            core::AutomationHookKind::AfterRun => {
+                                protocol::AutomationHookKind::AfterRun
+                            }
+                            core::AutomationHookKind::BeforeRemove => {
+                                protocol::AutomationHookKind::BeforeRemove
+                            }
+                        },
+                        invocation: receipt.invocation,
+                        command_sha256: receipt.command_sha256,
+                        status: match receipt.status {
+                            core::AutomationHookStatus::Succeeded => {
+                                protocol::AutomationHookStatus::Succeeded
+                            }
+                            core::AutomationHookStatus::Failed => {
+                                protocol::AutomationHookStatus::Failed
+                            }
+                            core::AutomationHookStatus::Skipped => {
+                                protocol::AutomationHookStatus::Skipped
+                            }
+                        },
+                        exit_code: receipt.exit_code,
+                        stdout_preview: automation_bounded_text(receipt.stdout_preview),
+                        stderr_preview: automation_bounded_text(receipt.stderr_preview),
+                        failure: receipt.failure.map(automation_bounded_text),
+                    })
+                    .collect(),
+                cleanup: protocol::AutomationCleanupProjection {
+                    status: match claim.cleanup.status {
+                        core::AutomationCleanupStatus::Retained => {
+                            protocol::AutomationCleanupStatus::Retained
+                        }
+                        core::AutomationCleanupStatus::Eligible => {
+                            protocol::AutomationCleanupStatus::Eligible
+                        }
+                        core::AutomationCleanupStatus::RetryPending => {
+                            protocol::AutomationCleanupStatus::RetryPending
+                        }
+                        core::AutomationCleanupStatus::Removed => {
+                            protocol::AutomationCleanupStatus::Removed
+                        }
+                    },
+                    attempts: claim.cleanup.attempts,
+                    last_failure: claim.cleanup.last_failure.map(automation_bounded_text),
+                },
                 next_action: automation_bounded_text(claim.next_action),
             })
             .collect(),

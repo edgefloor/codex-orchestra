@@ -209,7 +209,59 @@ pub struct AutomationIssueClaim {
     pub workflow_status: Option<RunStatus>,
     #[serde(default)]
     pub effects: Vec<AutomationEffectReceipt>,
+    #[serde(default)]
+    pub hook_receipts: Vec<AutomationHookReceipt>,
+    #[serde(default)]
+    pub cleanup: AutomationCleanupState,
     pub next_action: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationHookKind {
+    AfterCreate,
+    BeforeRun,
+    AfterRun,
+    BeforeRemove,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationHookStatus {
+    Succeeded,
+    Failed,
+    Skipped,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationHookReceipt {
+    pub kind: AutomationHookKind,
+    pub invocation: u32,
+    pub command_sha256: Option<String>,
+    pub status: AutomationHookStatus,
+    pub exit_code: Option<i32>,
+    pub stdout_preview: String,
+    pub stderr_preview: String,
+    pub failure: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationCleanupStatus {
+    #[default]
+    Retained,
+    Eligible,
+    RetryPending,
+    Removed,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationCleanupState {
+    pub status: AutomationCleanupStatus,
+    pub attempts: u32,
+    pub last_failure: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -624,8 +676,11 @@ impl AutomationRunStore {
             &sha256(format!("{}\0{attempt}", issue.id).as_bytes())[..16]
         );
         let workspace_root = canonical_or_lexical(&checkpoint.workspace_root)?;
-        let worktree =
-            workspace_root.join(format!("{}-a{attempt}", safe_segment(&issue.identifier)));
+        let issue_hash = &sha256(issue.id.as_bytes())[..12];
+        let worktree = workspace_root.join(format!(
+            "{}-{issue_hash}-a{attempt}",
+            safe_segment(&issue.identifier)
+        ));
         if !worktree.starts_with(&workspace_root) || worktree == workspace_root {
             return Err(AutomationRunError::UnsafeWorkspace);
         }
@@ -655,6 +710,8 @@ impl AutomationRunStore {
                 workflow_run_id: None,
                 workflow_status: None,
                 effects: Vec::new(),
+                hook_receipts: Vec::new(),
+                cleanup: AutomationCleanupState::default(),
                 next_action: "create persistent issue worktree and native Issue task".into(),
             },
         );
@@ -872,6 +929,111 @@ impl AutomationRunStore {
             .get_mut(claim_id)
             .ok_or_else(|| AutomationRunError::MissingClaim(claim_id.into()))?;
         update(claim);
+        self.save(checkpoint)
+    }
+
+    pub fn record_hook_receipt(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        kind: AutomationHookKind,
+        command: Option<&str>,
+        outcome: Result<&crate::CommandOutcome, &str>,
+    ) -> Result<AutomationHookReceipt, AutomationRunError> {
+        let claim = checkpoint
+            .claims
+            .get_mut(claim_id)
+            .ok_or_else(|| AutomationRunError::MissingClaim(claim_id.into()))?;
+        let invocation = claim
+            .hook_receipts
+            .iter()
+            .filter(|receipt| receipt.kind == kind)
+            .map(|receipt| receipt.invocation)
+            .max()
+            .unwrap_or_default()
+            .saturating_add(1);
+        let receipt = match (command, outcome) {
+            (None, _) => AutomationHookReceipt {
+                kind,
+                invocation,
+                command_sha256: None,
+                status: AutomationHookStatus::Skipped,
+                exit_code: None,
+                stdout_preview: String::new(),
+                stderr_preview: String::new(),
+                failure: None,
+            },
+            (Some(command), Ok(outcome)) => AutomationHookReceipt {
+                kind,
+                invocation,
+                command_sha256: Some(sha256(command.as_bytes())),
+                status: if outcome.exit_code == 0 {
+                    AutomationHookStatus::Succeeded
+                } else {
+                    AutomationHookStatus::Failed
+                },
+                exit_code: Some(outcome.exit_code),
+                stdout_preview: bounded_preview(&outcome.stdout, 512),
+                stderr_preview: bounded_preview(&outcome.stderr, 512),
+                failure: (outcome.exit_code != 0).then(|| {
+                    bounded_preview(
+                        if outcome.stderr.trim().is_empty() {
+                            "hook command returned a non-zero exit code"
+                        } else {
+                            &outcome.stderr
+                        },
+                        512,
+                    )
+                }),
+            },
+            (Some(command), Err(error)) => AutomationHookReceipt {
+                kind,
+                invocation,
+                command_sha256: Some(sha256(command.as_bytes())),
+                status: AutomationHookStatus::Failed,
+                exit_code: None,
+                stdout_preview: String::new(),
+                stderr_preview: String::new(),
+                failure: Some(bounded_preview(error, 512)),
+            },
+        };
+        claim.hook_receipts.push(receipt.clone());
+        if claim.hook_receipts.len() > 32 {
+            claim.hook_receipts.remove(0);
+        }
+        self.save(checkpoint)?;
+        Ok(receipt)
+    }
+
+    pub fn record_cleanup_attempt(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        result: Result<(), &str>,
+    ) -> Result<(), AutomationRunError> {
+        let claim = checkpoint
+            .claims
+            .get_mut(claim_id)
+            .ok_or_else(|| AutomationRunError::MissingClaim(claim_id.into()))?;
+        if !matches!(
+            claim.cleanup.status,
+            AutomationCleanupStatus::Eligible | AutomationCleanupStatus::RetryPending
+        ) {
+            return Err(AutomationRunError::InactiveClaim(claim_id.into()));
+        }
+        claim.cleanup.attempts = claim.cleanup.attempts.saturating_add(1);
+        match result {
+            Ok(()) => {
+                claim.cleanup.status = AutomationCleanupStatus::Removed;
+                claim.cleanup.last_failure = None;
+                claim.next_action = "terminal Issue resources removed; evidence retained".into();
+            }
+            Err(error) => {
+                claim.cleanup.status = AutomationCleanupStatus::RetryPending;
+                claim.cleanup.last_failure = Some(bounded_preview(error, 512));
+                claim.next_action = "retry terminal Issue worktree cleanup".into();
+            }
+        }
         self.save(checkpoint)
     }
 
@@ -1128,6 +1290,8 @@ impl AutomationRunStore {
                 }
                 claim.status = AutomationClaimStatus::Cancelled;
                 claim.workflow_status = observation.workflow_status.clone();
+                claim.cleanup.status = AutomationCleanupStatus::Eligible;
+                claim.cleanup.last_failure = None;
                 claim.next_action =
                     "externally terminal; retained resources are cleanup eligible".into();
                 continue;
@@ -1461,7 +1625,13 @@ fn safe_segment(value: &str) -> String {
             }
         })
         .collect::<String>();
-    segment.trim_matches('-').to_owned()
+    let segment = segment.trim_matches('-');
+    let bounded = segment.chars().take(48).collect::<String>();
+    if bounded.is_empty() {
+        "issue".into()
+    } else {
+        bounded
+    }
 }
 
 fn claim_is_active(status: AutomationClaimStatus) -> bool {
@@ -1714,11 +1884,15 @@ fn bounded_preview(value: &str, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value.into();
     }
-    let mut end = max_bytes;
+    let ellipsis = "…";
+    if max_bytes < ellipsis.len() {
+        return String::new();
+    }
+    let mut end = max_bytes - ellipsis.len();
     while !value.is_char_boundary(end) {
         end -= 1;
     }
-    format!("{}…", &value[..end])
+    format!("{}{}", &value[..end], ellipsis)
 }
 
 fn canonical_or_lexical(path: &Path) -> Result<PathBuf, std::io::Error> {
@@ -1902,6 +2076,14 @@ mod tests {
                 .worktree
                 .starts_with(workspace.path().canonicalize().unwrap())
         );
+        assert!(
+            checkpoint.claims[&claim_id]
+                .worktree
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("orc-33-")
+        );
 
         let (reopened, reopened_checkpoint) = AutomationRunStore::start(AutomationRunStart {
             repository: repository.path(),
@@ -1943,6 +2125,125 @@ mod tests {
             result,
             Err(AutomationRunError::LeaseConflict { .. })
         ));
+    }
+
+    #[test]
+    fn claim_worktree_names_are_contained_bounded_and_collision_safe() {
+        let repository = tempdir().unwrap();
+        let workspace = tempdir().unwrap();
+        let mut profile = profile(workspace.path());
+        profile.agent.max_concurrent_agents = 2;
+        let digest = crate::canonical_sha256(&serde_json::to_value(&profile).unwrap()).unwrap();
+        let (store, mut root) = AutomationRunStore::start(AutomationRunStart {
+            repository: repository.path(),
+            owner_thread_id: "task-worktree-names",
+            source_revision: "abc123",
+            profile: &profile,
+            profile_digest: &digest,
+        })
+        .unwrap();
+        let mut first = issue();
+        first.id = "issue-collision-one".into();
+        first.identifier =
+            "../../SAME !!! very-long-identifier-that-must-not-escape-or-grow-forever".into();
+        let mut second = first.clone();
+        second.id = "issue-collision-two".into();
+        second.identifier =
+            "SAME---very-long-identifier-that-must-not-escape-or-grow-forever".into();
+
+        let first_claim = store.claim_fixture(&mut root, &first, 1).unwrap();
+        let second_claim = store.claim_fixture(&mut root, &second, 1).unwrap();
+        let first_path = &root.claims[&first_claim].worktree;
+        let second_path = &root.claims[&second_claim].worktree;
+        let canonical_root = workspace.path().canonicalize().unwrap();
+        assert!(first_path.starts_with(&canonical_root));
+        assert!(second_path.starts_with(&canonical_root));
+        assert_ne!(first_path, second_path);
+        assert!(first_path.file_name().unwrap().to_string_lossy().len() <= 65);
+        assert!(second_path.file_name().unwrap().to_string_lossy().len() <= 65);
+    }
+
+    #[test]
+    fn hook_receipts_are_bounded_and_cleanup_retries_remain_inspectable() {
+        let repository = tempdir().unwrap();
+        let workspace = tempdir().unwrap();
+        let profile = profile(workspace.path());
+        let digest = crate::canonical_sha256(&serde_json::to_value(&profile).unwrap()).unwrap();
+        let (store, mut root) = AutomationRunStore::start(AutomationRunStart {
+            repository: repository.path(),
+            owner_thread_id: "task-hooks",
+            source_revision: "abc123",
+            profile: &profile,
+            profile_digest: &digest,
+        })
+        .unwrap();
+        let claim_id = store.claim_fixture(&mut root, &issue(), 1).unwrap();
+        let output = crate::CommandOutcome {
+            exit_code: 7,
+            stdout: "o".repeat(2_000),
+            stderr: "e".repeat(2_000),
+        };
+        let receipt = store
+            .record_hook_receipt(
+                &mut root,
+                &claim_id,
+                AutomationHookKind::BeforeRun,
+                Some("false"),
+                Ok(&output),
+            )
+            .unwrap();
+        assert_eq!(receipt.status, AutomationHookStatus::Failed);
+        assert_eq!(receipt.exit_code, Some(7));
+        assert!(receipt.stdout_preview.len() <= 512);
+        assert!(receipt.stderr_preview.len() <= 512);
+        assert_eq!(receipt.command_sha256, Some(sha256(b"false")));
+        for _ in 0..33 {
+            store
+                .record_hook_receipt(
+                    &mut root,
+                    &claim_id,
+                    AutomationHookKind::BeforeRun,
+                    Some("false"),
+                    Ok(&output),
+                )
+                .unwrap();
+        }
+        assert_eq!(root.claims[&claim_id].hook_receipts.len(), 32);
+        assert_eq!(
+            root.claims[&claim_id]
+                .hook_receipts
+                .last()
+                .unwrap()
+                .invocation,
+            34
+        );
+
+        root.claims.get_mut(&claim_id).unwrap().cleanup.status = AutomationCleanupStatus::Eligible;
+        store.save(&mut root).unwrap();
+        store
+            .record_cleanup_attempt(&mut root, &claim_id, Err(&"x".repeat(2_000)))
+            .unwrap();
+        assert_eq!(
+            root.claims[&claim_id].cleanup.status,
+            AutomationCleanupStatus::RetryPending
+        );
+        assert!(
+            root.claims[&claim_id]
+                .cleanup
+                .last_failure
+                .as_ref()
+                .unwrap()
+                .len()
+                <= 512
+        );
+        store
+            .record_cleanup_attempt(&mut root, &claim_id, Ok(()))
+            .unwrap();
+        assert_eq!(root.claims[&claim_id].cleanup.attempts, 2);
+        assert_eq!(
+            root.claims[&claim_id].cleanup.status,
+            AutomationCleanupStatus::Removed
+        );
     }
 
     #[test]
@@ -2544,6 +2845,10 @@ mod tests {
         assert_eq!(
             root.claims[&claim_id].status,
             AutomationClaimStatus::Cancelled
+        );
+        assert_eq!(
+            root.claims[&claim_id].cleanup.status,
+            AutomationCleanupStatus::Eligible
         );
         assert!(
             root.claims[&claim_id]

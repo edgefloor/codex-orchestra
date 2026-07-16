@@ -261,7 +261,65 @@ pub struct AutomationIssueClaimProjection {
     #[ts(optional)]
     pub workflow_status: Option<OrchestraRunStatus>,
     pub effects: Vec<AutomationEffectReceiptProjection>,
+    pub hook_receipts: Vec<AutomationHookReceiptProjection>,
+    pub cleanup: AutomationCleanupProjection,
     pub next_action: OrchestraBoundedText,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct AutomationHookReceiptProjection {
+    pub kind: AutomationHookKind,
+    pub invocation: u32,
+    #[ts(optional)]
+    pub command_sha256: Option<String>,
+    pub status: AutomationHookStatus,
+    #[ts(optional)]
+    pub exit_code: Option<i32>,
+    pub stdout_preview: OrchestraBoundedText,
+    pub stderr_preview: OrchestraBoundedText,
+    #[ts(optional)]
+    pub failure: Option<OrchestraBoundedText>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct AutomationCleanupProjection {
+    pub status: AutomationCleanupStatus,
+    pub attempts: u32,
+    #[ts(optional)]
+    pub last_failure: Option<OrchestraBoundedText>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "v2/")]
+pub enum AutomationHookKind {
+    AfterCreate,
+    BeforeRun,
+    AfterRun,
+    BeforeRemove,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "v2/")]
+pub enum AutomationHookStatus {
+    Succeeded,
+    Failed,
+    Skipped,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "v2/")]
+pub enum AutomationCleanupStatus {
+    Retained,
+    Eligible,
+    RetryPending,
+    Removed,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

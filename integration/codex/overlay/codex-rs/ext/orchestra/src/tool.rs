@@ -11,7 +11,8 @@ use codex_extension_api::{
 use codex_http_client::{HttpClient, build_reqwest_client_with_custom_ca};
 use codex_orchestra_core::{
     AgentHandle, AgentOutcome, AgentStatus, AutomationClaimLiveness, AutomationClaimReconciliation,
-    AutomationClaimStatus, AutomationEffectExecution, AutomationEffectStatus, AutomationGatePolicy,
+    AutomationClaimStatus, AutomationCleanupStatus, AutomationEffectExecution,
+    AutomationEffectStatus, AutomationGatePolicy, AutomationHookKind, AutomationHookStatus,
     AutomationIssue, AutomationProfile, AutomationQueueCategory, AutomationQueuePage,
     AutomationRetryKind, AutomationRootCheckpoint, AutomationRootStatus, AutomationRunStart,
     AutomationRunStore, AutomationSecretKind, AutomationTrackerCommentRequest,
@@ -408,6 +409,22 @@ impl NativeHost for CodexHost {
         repository: &Path,
         path: &Path,
     ) -> Result<(), String> {
+        if !path.exists() {
+            let outcome = self
+                .run_command(
+                    parent_thread_id,
+                    repository,
+                    &["git".into(), "worktree".into(), "prune".into()],
+                    Some(repository),
+                    30_000,
+                )
+                .await?;
+            return if outcome.exit_code == 0 {
+                Ok(())
+            } else {
+                Err(outcome.stderr)
+            };
+        }
         let outcome = self
             .run_command(
                 parent_thread_id,
@@ -441,9 +458,40 @@ impl NativeHost for CodexHost {
             return Err("Automation worktrees require a committed source revision".into());
         }
         if path.exists() {
+            let canonical = path.canonicalize().map_err(|error| error.to_string())?;
+            let canonical_parent = path
+                .parent()
+                .ok_or("Automation worktree is missing its configured root")?
+                .canonicalize()
+                .map_err(|error| error.to_string())?;
+            if canonical == canonical_parent || !canonical.starts_with(&canonical_parent) {
+                return Err(format!(
+                    "Automation worktree escapes its configured root: {}",
+                    path.display()
+                ));
+            }
+            let outcome = self
+                .run_command(
+                    parent_thread_id,
+                    repository,
+                    &[
+                        "git".into(),
+                        "worktree".into(),
+                        "list".into(),
+                        "--porcelain".into(),
+                        "-z".into(),
+                    ],
+                    Some(repository),
+                    30_000,
+                )
+                .await?;
+            if persistent_worktree_matches_recorded_base(&outcome, &canonical, source_revision) {
+                return Ok(canonical);
+            }
             return Err(format!(
-                "Automation worktree already exists at {}",
-                path.display()
+                "stale Automation worktree at {} does not match recorded base {}",
+                path.display(),
+                source_revision
             ));
         }
         let parent = path
@@ -489,6 +537,33 @@ fn native_handle(handle: &AgentHandle) -> Result<OrchestraAgentHandle, String> {
         task_path: AgentPath::try_from(handle.task_path.as_str())
             .map_err(|error| error.to_string())?,
     })
+}
+
+fn persistent_worktree_matches_recorded_base(
+    outcome: &CommandOutcome,
+    expected_path: &Path,
+    source_revision: &str,
+) -> bool {
+    if outcome.exit_code != 0 {
+        return false;
+    }
+    let expected_path = expected_path.to_string_lossy();
+    let mut worktree = None;
+    let mut head = None;
+    for field in outcome.stdout.split('\0') {
+        if field.is_empty() {
+            if worktree == Some(expected_path.as_ref()) && head == Some(source_revision) {
+                return true;
+            }
+            worktree = None;
+            head = None;
+        } else if let Some(value) = field.strip_prefix("worktree ") {
+            worktree = Some(value);
+        } else if let Some(value) = field.strip_prefix("HEAD ") {
+            head = Some(value);
+        }
+    }
+    worktree == Some(expected_path.as_ref()) && head == Some(source_revision)
 }
 fn map_status(status: CodexAgentStatus) -> AgentStatus {
     match status {
@@ -770,6 +845,108 @@ impl OrchestraService {
         })
     }
 
+    async fn run_automation_hook(
+        &self,
+        parent_thread_id: &str,
+        repository: &Path,
+        store: &AutomationRunStore,
+        root: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        kind: AutomationHookKind,
+        command: Option<&str>,
+        timeout_ms: u64,
+    ) -> Result<bool, String> {
+        let Some(command) = command else {
+            store
+                .record_hook_receipt(root, claim_id, kind, None, Err("hook is not configured"))
+                .map_err(|error| error.to_string())?;
+            return Ok(true);
+        };
+        let worktree = root.claims[claim_id].worktree.clone();
+        let argv = vec!["/bin/sh".into(), "-lc".into(), command.into()];
+        match self
+            .host
+            .run_command(
+                parent_thread_id,
+                repository,
+                &argv,
+                Some(&worktree),
+                timeout_ms,
+            )
+            .await
+        {
+            Ok(outcome) => {
+                let receipt = store
+                    .record_hook_receipt(root, claim_id, kind, Some(command), Ok(&outcome))
+                    .map_err(|error| error.to_string())?;
+                Ok(receipt.status == AutomationHookStatus::Succeeded)
+            }
+            Err(error) => {
+                store
+                    .record_hook_receipt(root, claim_id, kind, Some(command), Err(&error))
+                    .map_err(|storage| storage.to_string())?;
+                Ok(false)
+            }
+        }
+    }
+
+    async fn cleanup_eligible_automation_claims(
+        &self,
+        parent_thread_id: &str,
+        repository: &Path,
+        store: &AutomationRunStore,
+        root: &mut AutomationRootCheckpoint,
+    ) -> Result<(), String> {
+        let eligible = root
+            .claims
+            .values()
+            .filter(|claim| {
+                matches!(
+                    claim.cleanup.status,
+                    AutomationCleanupStatus::Eligible | AutomationCleanupStatus::RetryPending
+                )
+            })
+            .map(|claim| claim.claim_id.clone())
+            .collect::<Vec<_>>();
+        for claim_id in eligible {
+            let claim = root.claims[&claim_id].clone();
+            let profile = store
+                .load_profile_revision(&claim.profile_digest)
+                .map_err(|error| error.to_string())?;
+            let hook_succeeded = self
+                .run_automation_hook(
+                    parent_thread_id,
+                    repository,
+                    store,
+                    root,
+                    &claim_id,
+                    AutomationHookKind::BeforeRemove,
+                    profile.hooks.before_remove.as_deref(),
+                    profile.hooks.timeout_ms,
+                )
+                .await?;
+            if !hook_succeeded {
+                store
+                    .record_cleanup_attempt(root, &claim_id, Err("before_remove hook failed"))
+                    .map_err(|error| error.to_string())?;
+                continue;
+            }
+            match self
+                .host
+                .remove_worktree(parent_thread_id, repository, &claim.worktree)
+                .await
+            {
+                Ok(()) => store
+                    .record_cleanup_attempt(root, &claim_id, Ok(()))
+                    .map_err(|error| error.to_string())?,
+                Err(error) => store
+                    .record_cleanup_attempt(root, &claim_id, Err(&error))
+                    .map_err(|storage| storage.to_string())?,
+            }
+        }
+        Ok(())
+    }
+
     pub async fn run_automation_fixture(
         &self,
         parent_thread_id: &str,
@@ -942,9 +1119,39 @@ impl OrchestraService {
             store
                 .update_claim(&mut root, &claim_id, |claim| {
                     claim.worktree = worktree.clone();
-                    claim.next_action = "initialize native Issue task".into();
+                    claim.next_action = "run Issue worktree setup hook".into();
                 })
                 .map_err(|error| error.to_string())?;
+
+            let setup_succeeded = self
+                .run_automation_hook(
+                    parent_thread_id,
+                    &repository,
+                    &store,
+                    &mut root,
+                    &claim_id,
+                    AutomationHookKind::AfterCreate,
+                    execution_profile.hooks.after_create.as_deref(),
+                    execution_profile.hooks.timeout_ms,
+                )
+                .await?;
+            if !setup_succeeded {
+                fail_automation_claim(&store, &mut root, &claim_id, "after_create hook failed")?;
+                store
+                    .update_claim(&mut root, &claim_id, |claim| {
+                        claim.cleanup.status = AutomationCleanupStatus::Eligible;
+                        claim.next_action = "remove worktree after setup hook failure".into();
+                    })
+                    .map_err(|error| error.to_string())?;
+                self.cleanup_eligible_automation_claims(
+                    parent_thread_id,
+                    &repository,
+                    &store,
+                    &mut root,
+                )
+                .await?;
+                return Err("after_create hook failed".into());
+            }
 
             let manager = self.manager.upgrade().ok_or("thread manager dropped")?;
             let thread_id =
@@ -1043,6 +1250,32 @@ impl OrchestraService {
             return Ok(root);
         }
         let plan = compile_workflow(&workflow_source).map_err(|error| error.to_string())?;
+        let pre_run_succeeded = self
+            .run_automation_hook(
+                parent_thread_id,
+                &repository,
+                &store,
+                &mut root,
+                &claim_id,
+                AutomationHookKind::BeforeRun,
+                execution_profile.hooks.before_run.as_deref(),
+                execution_profile.hooks.timeout_ms,
+            )
+            .await?;
+        if !pre_run_succeeded {
+            store
+                .schedule_claim_retry(
+                    &mut root,
+                    &claim_id,
+                    &execution_profile,
+                    unix_epoch_millis(),
+                    "before_run hook failed",
+                )
+                .map_err(|error| error.to_string())?;
+            root.next_action = format!("claim `{claim_id}` is waiting for hook retry");
+            store.save(&mut root).map_err(|error| error.to_string())?;
+            return Ok(root);
+        }
         let normalized_inputs = json!({
             "issue": fixture_issue,
             "task_prompt": execution_task_prompt,
@@ -1085,13 +1318,30 @@ impl OrchestraService {
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(error) => {
+                let post_run_succeeded = self
+                    .run_automation_hook(
+                        parent_thread_id,
+                        &repository,
+                        &store,
+                        &mut root,
+                        &claim_id,
+                        AutomationHookKind::AfterRun,
+                        execution_profile.hooks.after_run.as_deref(),
+                        execution_profile.hooks.timeout_ms,
+                    )
+                    .await?;
+                let reason = if post_run_succeeded {
+                    error.to_string()
+                } else {
+                    format!("{error}; after_run hook failed")
+                };
                 store
                     .schedule_claim_retry(
                         &mut root,
                         &claim_id,
                         &execution_profile,
                         unix_epoch_millis(),
-                        &error.to_string(),
+                        &reason,
                     )
                     .map_err(|storage| storage.to_string())?;
                 root.next_action = format!("claim `{claim_id}` is waiting for retry");
@@ -1108,6 +1358,38 @@ impl OrchestraService {
             OrchestraLifecycleKind::Invoked,
         )
         .await?;
+        let post_run_succeeded = self
+            .run_automation_hook(
+                parent_thread_id,
+                &repository,
+                &store,
+                &mut root,
+                &claim_id,
+                AutomationHookKind::AfterRun,
+                execution_profile.hooks.after_run.as_deref(),
+                execution_profile.hooks.timeout_ms,
+            )
+            .await?;
+        if !post_run_succeeded {
+            store
+                .update_claim(&mut root, &claim_id, |claim| {
+                    claim.workflow_run_id = Some(workflow.run_id.clone());
+                    claim.workflow_status = Some(workflow.status.clone());
+                })
+                .map_err(|error| error.to_string())?;
+            store
+                .schedule_claim_retry(
+                    &mut root,
+                    &claim_id,
+                    &execution_profile,
+                    unix_epoch_millis(),
+                    "after_run hook failed",
+                )
+                .map_err(|error| error.to_string())?;
+            root.next_action = format!("claim `{claim_id}` is waiting for hook retry");
+            store.save(&mut root).map_err(|error| error.to_string())?;
+            return Ok(root);
+        }
         let effect_status = if matches!(&outcome, RunOutcome::Completed(_))
             && execution_profile
                 .orchestra
@@ -1492,6 +1774,8 @@ impl OrchestraService {
             }
             return store.load().map_err(|error| error.to_string());
         }
+        self.cleanup_eligible_automation_claims(parent_thread_id, &repository, &store, &mut root)
+            .await?;
         if !resume {
             return Ok(root);
         }
@@ -2559,6 +2843,40 @@ fn reject_existing_root_run(repository: &Path, parent_thread_id: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn persistent_worktree_reuse_requires_the_exact_recorded_base() {
+        let exact = CommandOutcome {
+            exit_code: 0,
+            stdout: "worktree /workspace/orc-40\0HEAD abc123\0detached\0\0".into(),
+            stderr: String::new(),
+        };
+        let expected_path = Path::new("/workspace/orc-40");
+        assert!(persistent_worktree_matches_recorded_base(
+            &exact,
+            expected_path,
+            "abc123"
+        ));
+        assert!(!persistent_worktree_matches_recorded_base(
+            &exact,
+            expected_path,
+            "def456"
+        ));
+        assert!(!persistent_worktree_matches_recorded_base(
+            &exact,
+            Path::new("/workspace/unrelated"),
+            "abc123"
+        ));
+        assert!(!persistent_worktree_matches_recorded_base(
+            &CommandOutcome {
+                exit_code: 128,
+                stdout: "worktree /workspace/orc-40\0HEAD abc123\0\0".into(),
+                stderr: "not a worktree".into(),
+            },
+            expected_path,
+            "abc123"
+        ));
+    }
 
     #[test]
     fn automation_profile_path_stays_task_scoped_and_preserves_missing_diagnostics() {
