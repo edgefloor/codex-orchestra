@@ -10,19 +10,19 @@ use codex_extension_api::{
 };
 use codex_http_client::{HttpClient, build_reqwest_client_with_custom_ca};
 use codex_orchestra_core::{
-    AgentHandle, AgentOutcome, AgentStatus, AutomationClaimReconciliation, AutomationClaimStatus,
-    AutomationEffectExecution, AutomationEffectStatus, AutomationGatePolicy, AutomationIssue,
-    AutomationProfile, AutomationQueueCategory, AutomationQueuePage, AutomationRootCheckpoint,
-    AutomationRootStatus, AutomationRunStart, AutomationRunStore, AutomationSecretKind,
-    AutomationTrackerCommentRequest,
+    AgentHandle, AgentOutcome, AgentStatus, AutomationClaimLiveness, AutomationClaimReconciliation,
+    AutomationClaimStatus, AutomationEffectExecution, AutomationEffectStatus, AutomationGatePolicy,
+    AutomationIssue, AutomationProfile, AutomationQueueCategory, AutomationQueuePage,
+    AutomationRetryKind, AutomationRootCheckpoint, AutomationRootStatus, AutomationRunStart,
+    AutomationRunStore, AutomationSecretKind, AutomationTrackerCommentRequest,
     AutomationValidationRequest, AutomationValidationResult, CommandOutcome,
     ExecutionHistoryRecord, ExecutionHistorySource, ExecutionPlan, ExecutionQueryBudget,
     ExecutionQueryLimits, ExecutionQueryResult, ExecutionQueryService, ExecutionSelector,
     ForkTurns, HistoryCursor, HistoryReadRequest, InheritedCodexPolicy, NativeHost,
     OrchestraRuntime, ResolvedSkill, RunCheckpoint, RunDigest, RunOutcome, RunStatus,
     SkillIdentity, SkillRequirement, SkillSourceKind, SkillToolDependency, SpawnRequest,
-    WorktreePolicy, compile_workflow, normalize_linear_issue, normalize_linear_issue_page,
-    repository_revision, validate_automation_profile,
+    WorktreePolicy, automation_claim_liveness, compile_workflow, normalize_linear_issue,
+    normalize_linear_issue_page, repository_revision, validate_automation_profile,
 };
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AgentStatus as CodexAgentStatus;
@@ -44,7 +44,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AutomationLinearReadKind {
@@ -798,8 +798,6 @@ impl OrchestraService {
             .preview
             .and_then(|preview| preview.rendered_prompt)
             .ok_or("valid Automation profile is missing its rendered task prompt")?;
-        validate_fixture_eligibility(&profile, &fixture_issue)?;
-
         let repository = self.repository(parent_thread_id).await?;
         let source_revision =
             repository_revision(&repository).map_err(|error| error.to_string())?;
@@ -812,6 +810,38 @@ impl OrchestraService {
         })
         .map_err(|error| error.to_string())?;
         self.automation_shutdown.track(&repository, &root.run_id);
+        let tracker_terminal = profile
+            .tracker
+            .terminal_states
+            .iter()
+            .any(|state| state.eq_ignore_ascii_case(&fixture_issue.state));
+        if tracker_terminal {
+            if let Some(claim_id) = root
+                .claims
+                .values()
+                .find(|claim| claim.issue_id == fixture_issue.id)
+                .map(|claim| claim.claim_id.clone())
+            {
+                store
+                    .update_claim(&mut root, &claim_id, |claim| {
+                        claim.tracker_state = fixture_issue.state.clone();
+                        claim.status = AutomationClaimStatus::Cancelled;
+                        claim.retry = None;
+                        claim.next_action =
+                            "tracker issue became terminal; stop future invocations".into();
+                    })
+                    .map_err(|error| error.to_string())?;
+                root.next_action = root.claims[&claim_id].next_action.clone();
+                store.save(&mut root).map_err(|error| error.to_string())?;
+                return Ok(root);
+            }
+            store.cancel(&mut root).map_err(|error| error.to_string())?;
+            return Err(format!(
+                "fixture issue `{}` is already terminal and cannot start an Automation claim",
+                fixture_issue.identifier
+            ));
+        }
+        validate_fixture_eligibility(&profile, &fixture_issue)?;
         let coordination = store
             .coordinate_fixture(
                 &mut root,
@@ -820,102 +850,127 @@ impl OrchestraService {
                 attempt,
             )
             .map_err(|error| error.to_string())?;
-        let claim_id = coordination
-            .dispatched_claim_ids
-            .into_iter()
-            .next()
-            .ok_or("fixture issue is not dispatchable under current Automation capacity")?;
-        let requested_worktree = root.claims[&claim_id].worktree.clone();
-        let worktree = match self
-            .host
-            .create_persistent_worktree(
-                parent_thread_id,
-                &repository,
-                &requested_worktree,
-                &source_revision,
-            )
-            .await
-        {
-            Ok(path) => path,
-            Err(error) => {
-                fail_automation_claim(&store, &mut root, &claim_id, &error)?;
-                return Err(error);
-            }
-        };
-        store
-            .update_claim(&mut root, &claim_id, |claim| {
-                claim.worktree = worktree.clone();
-                claim.next_action = "initialize native Issue task".into();
-            })
-            .map_err(|error| error.to_string())?;
+        let (claim_id, is_new_claim, dispatch_reason) =
+            if let Some(claim_id) = coordination.dispatched_claim_ids.into_iter().next() {
+                (claim_id, true, "initial")
+            } else {
+                let claim_id = root
+                    .claims
+                    .values()
+                    .find(|claim| claim.issue_id == fixture_issue.id)
+                    .map(|claim| claim.claim_id.clone())
+                    .ok_or("fixture issue is not dispatchable under current Automation capacity")?;
+                let scheduled = store
+                    .dispatch_due_claim_work(&mut root, &claim_id, true, unix_epoch_millis())
+                    .map_err(|error| error.to_string())?;
+                let reason = match scheduled.kind {
+                    AutomationRetryKind::Retry => "retry",
+                    AutomationRetryKind::Continuation => "continuation",
+                };
+                (claim_id, false, reason)
+            };
 
-        let manager = self.manager.upgrade().ok_or("thread manager dropped")?;
-        let thread_id =
-            ThreadId::from_string(parent_thread_id).map_err(|error| error.to_string())?;
-        let thread = manager
-            .get_thread(thread_id)
-            .await
-            .map_err(|error| error.to_string())?;
-        let config = thread.config_snapshot().await;
-        let issue_json =
-            serde_json::to_string_pretty(&fixture_issue).map_err(|error| error.to_string())?;
-        let bootstrap_prompt = format!(
-            "You are the persistent Issue task for `{}`. The native Orchestra runtime will execute the selected typed Workflow under this task after this initialization turn. Retain the issue context below and return exactly {{\"ready\":true}}.\n\n{}\n\nIssue snapshot:\n{}",
-            fixture_issue.identifier, task_prompt, issue_json
-        );
-        let issue_handle = match self
-            .host
-            .spawn(SpawnRequest {
-                parent_thread_id: parent_thread_id.into(),
-                task_name: format!("automation_{}", safe_task_name(&fixture_issue.identifier)),
-                prompt: bootstrap_prompt,
-                skill_context: String::new(),
-                cwd: worktree.clone(),
-                model: config.model.clone(),
-                reasoning_effort: config
-                    .reasoning_effort
-                    .clone()
-                    .map(|value| serde_json::to_value(value).unwrap_or(Value::Null))
-                    .and_then(|value| value.as_str().map(str::to_owned)),
-                service_tier: config.service_tier.clone(),
-                fork_turns: ForkTurns::None,
-                allow_delegation: true,
-                minimum_descendant_depth: 1,
-            })
-            .await
-        {
-            Ok(handle) => handle,
-            Err(error) => {
+        let (worktree, issue_handle) = if is_new_claim {
+            let requested_worktree = root.claims[&claim_id].worktree.clone();
+            let worktree = match self
+                .host
+                .create_persistent_worktree(
+                    parent_thread_id,
+                    &repository,
+                    &requested_worktree,
+                    &source_revision,
+                )
+                .await
+            {
+                Ok(path) => path,
+                Err(error) => {
+                    fail_automation_claim(&store, &mut root, &claim_id, &error)?;
+                    return Err(error);
+                }
+            };
+            store
+                .update_claim(&mut root, &claim_id, |claim| {
+                    claim.worktree = worktree.clone();
+                    claim.next_action = "initialize native Issue task".into();
+                })
+                .map_err(|error| error.to_string())?;
+
+            let manager = self.manager.upgrade().ok_or("thread manager dropped")?;
+            let thread_id =
+                ThreadId::from_string(parent_thread_id).map_err(|error| error.to_string())?;
+            let thread = manager
+                .get_thread(thread_id)
+                .await
+                .map_err(|error| error.to_string())?;
+            let config = thread.config_snapshot().await;
+            let issue_json =
+                serde_json::to_string_pretty(&fixture_issue).map_err(|error| error.to_string())?;
+            let bootstrap_prompt = format!(
+                "You are the persistent Issue task for `{}`. The native Orchestra runtime will execute the selected typed Workflow under this task after this initialization turn. Retain the issue context below and return exactly {{\"ready\":true}}.\n\n{}\n\nIssue snapshot:\n{}",
+                fixture_issue.identifier, task_prompt, issue_json
+            );
+            let issue_handle = match self
+                .host
+                .spawn(SpawnRequest {
+                    parent_thread_id: parent_thread_id.into(),
+                    task_name: format!("automation_{}", safe_task_name(&fixture_issue.identifier)),
+                    prompt: bootstrap_prompt,
+                    skill_context: String::new(),
+                    cwd: worktree.clone(),
+                    model: config.model.clone(),
+                    reasoning_effort: config
+                        .reasoning_effort
+                        .clone()
+                        .map(|value| serde_json::to_value(value).unwrap_or(Value::Null))
+                        .and_then(|value| value.as_str().map(str::to_owned)),
+                    service_tier: config.service_tier.clone(),
+                    fork_turns: ForkTurns::None,
+                    allow_delegation: true,
+                    minimum_descendant_depth: 1,
+                })
+                .await
+            {
+                Ok(handle) => handle,
+                Err(error) => {
+                    fail_automation_claim(&store, &mut root, &claim_id, &error)?;
+                    return Err(error);
+                }
+            };
+            store
+                .update_claim(&mut root, &claim_id, |claim| {
+                    claim.issue_task = Some(issue_handle.clone());
+                    claim.next_action = "wait for Issue task initialization".into();
+                })
+                .map_err(|error| error.to_string())?;
+            let initialized = self.host.wait(&issue_handle).await?;
+            if !matches!(initialized.status, AgentStatus::Completed) {
+                let error = format!(
+                    "Issue task initialization did not complete: {:?}",
+                    initialized.status
+                );
                 fail_automation_claim(&store, &mut root, &claim_id, &error)?;
+                let _ = self.host.cancel(&issue_handle).await;
                 return Err(error);
             }
+            if initialized
+                .final_response
+                .as_deref()
+                .and_then(|response| serde_json::from_str::<Value>(response).ok())
+                != Some(json!({"ready": true}))
+            {
+                let error = "Issue task initialization returned an invalid readiness result";
+                fail_automation_claim(&store, &mut root, &claim_id, error)?;
+                return Err(error.into());
+            }
+            (worktree, issue_handle)
+        } else {
+            let claim = &root.claims[&claim_id];
+            let issue_handle = claim
+                .issue_task
+                .clone()
+                .ok_or("retained Automation claim is missing its native Issue task")?;
+            (claim.worktree.clone(), issue_handle)
         };
-        store
-            .update_claim(&mut root, &claim_id, |claim| {
-                claim.issue_task = Some(issue_handle.clone());
-                claim.next_action = "wait for Issue task initialization".into();
-            })
-            .map_err(|error| error.to_string())?;
-        let initialized = self.host.wait(&issue_handle).await?;
-        if !matches!(initialized.status, AgentStatus::Completed) {
-            let error = format!(
-                "Issue task initialization did not complete: {:?}",
-                initialized.status
-            );
-            fail_automation_claim(&store, &mut root, &claim_id, &error)?;
-            let _ = self.host.cancel(&issue_handle).await;
-            return Err(error);
-        }
-        if initialized
-            .final_response
-            .as_deref()
-            .and_then(|response| serde_json::from_str::<Value>(response).ok())
-            != Some(json!({"ready": true}))
-        {
-            let error = "Issue task initialization returned an invalid readiness result";
-            fail_automation_claim(&store, &mut root, &claim_id, error)?;
-            return Err(error.into());
-        }
 
         let workflow_source = std::fs::read_to_string(&profile.orchestra.workflow_path)
             .map_err(|error| error.to_string())?;
@@ -926,8 +981,8 @@ impl OrchestraService {
             "automation": {
                 "profileDigest": profile_digest,
                 "claimId": claim_id,
-                "attempt": attempt,
-                "reason": "initial",
+                "attempt": root.claims[&claim_id].workflow_invocations.saturating_add(1),
+                "reason": dispatch_reason,
             },
         });
         store
@@ -962,9 +1017,20 @@ impl OrchestraService {
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(error) => {
-                fail_automation_claim(&store, &mut root, &claim_id, &error.to_string())?;
-                let _ = self.host.cancel(&issue_handle).await;
-                return Err(error.to_string());
+                store
+                    .schedule_claim_retry(
+                        &mut root,
+                        &claim_id,
+                        &profile,
+                        unix_epoch_millis(),
+                        &error.to_string(),
+                    )
+                    .map_err(|storage| storage.to_string())?;
+                root.next_action = format!("claim `{claim_id}` is waiting for retry");
+                store
+                    .save(&mut root)
+                    .map_err(|storage| storage.to_string())?;
+                return Ok(root);
             }
         };
         let workflow = outcome_checkpoint(&outcome);
@@ -997,39 +1063,79 @@ impl OrchestraService {
         } else {
             None
         };
-        let claim_status = match (&outcome, effect_status) {
-            (_, Some(AutomationEffectStatus::WaitingGate)) => AutomationClaimStatus::Suspended,
-            (_, Some(AutomationEffectStatus::Rejected | AutomationEffectStatus::Failed)) => {
-                AutomationClaimStatus::Failed
-            }
-            (_, Some(AutomationEffectStatus::Ambiguous | AutomationEffectStatus::Executing)) => {
-                AutomationClaimStatus::Suspended
-            }
-            (RunOutcome::Completed(_), _) => AutomationClaimStatus::Completed,
-            (RunOutcome::Paused(_), _) => AutomationClaimStatus::Suspended,
-            (RunOutcome::Failed(_), _) => AutomationClaimStatus::Failed,
-            (RunOutcome::Cancelled(_), _) => AutomationClaimStatus::Cancelled,
-        };
         store
             .update_claim(&mut root, &claim_id, |claim| {
-                claim.status = claim_status;
                 claim.workflow_run_id = Some(workflow.run_id.clone());
                 claim.workflow_status = Some(workflow.status.clone());
-                claim.next_action = match claim_status {
-                    AutomationClaimStatus::Completed => "claim complete".into(),
-                    AutomationClaimStatus::Suspended => "resume Workflow from checkpoint".into(),
-                    AutomationClaimStatus::Cancelled => "claim cancelled".into(),
-                    AutomationClaimStatus::Failed => {
-                        "inspect Issue task and Workflow evidence".into()
-                    }
-                    _ => unreachable!(),
-                };
             })
             .map_err(|error| error.to_string())?;
-        root.next_action = format!(
-            "claim `{claim_id}` is {}; Automation remains resident",
-            automation_claim_status_name(claim_status)
-        );
+        match (&outcome, effect_status) {
+            (_, Some(AutomationEffectStatus::WaitingGate)) => {
+                store
+                    .update_claim(&mut root, &claim_id, |claim| {
+                        claim.status = AutomationClaimStatus::Suspended;
+                        claim.next_action = "wait for the native Tracker effect gate".into();
+                    })
+                    .map_err(|error| error.to_string())?;
+            }
+            (_, Some(AutomationEffectStatus::Rejected)) => {
+                fail_automation_claim(
+                    &store,
+                    &mut root,
+                    &claim_id,
+                    "Tracker effect was rejected by policy",
+                )?;
+            }
+            (_, Some(AutomationEffectStatus::Failed)) | (RunOutcome::Failed(_), _) => {
+                store
+                    .schedule_claim_retry(
+                        &mut root,
+                        &claim_id,
+                        &profile,
+                        unix_epoch_millis(),
+                        "Workflow or Tracker effect failed",
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            (_, Some(AutomationEffectStatus::Ambiguous | AutomationEffectStatus::Executing)) => {
+                store
+                    .update_claim(&mut root, &claim_id, |claim| {
+                        claim.status = AutomationClaimStatus::Suspended;
+                        claim.next_action =
+                            "reconcile ambiguous Tracker effect before retry".into();
+                    })
+                    .map_err(|error| error.to_string())?;
+            }
+            (RunOutcome::Completed(_), _) => {
+                store
+                    .record_completed_invocation(
+                        &mut root,
+                        &claim_id,
+                        &profile,
+                        true,
+                        unix_epoch_millis(),
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            (RunOutcome::Paused(_), _) => {
+                store
+                    .update_claim(&mut root, &claim_id, |claim| {
+                        claim.status = AutomationClaimStatus::Suspended;
+                        claim.next_action = "resume Workflow from checkpoint".into();
+                    })
+                    .map_err(|error| error.to_string())?;
+            }
+            (RunOutcome::Cancelled(_), _) => {
+                store
+                    .update_claim(&mut root, &claim_id, |claim| {
+                        claim.status = AutomationClaimStatus::Cancelled;
+                        claim.retry = None;
+                        claim.next_action = "claim cancelled".into();
+                    })
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        root.next_action = root.claims[&claim_id].next_action.clone();
         store.save(&mut root).map_err(|error| error.to_string())?;
         Ok(root)
     }
@@ -1079,9 +1185,11 @@ impl OrchestraService {
         let repository = self.repository(parent_thread_id).await?;
         let store =
             AutomationRunStore::open(&repository, run_id).map_err(|error| error.to_string())?;
-        let root = store.load().map_err(|error| error.to_string())?;
+        let mut root = store.load().map_err(|error| error.to_string())?;
         authorize_automation_root(&root, parent_thread_id)?;
         self.automation_shutdown.track(&repository, run_id);
+        let profile = store.load_profile().map_err(|error| error.to_string())?;
+        project_claim_liveness(&mut root, &profile, unix_epoch_millis());
         Ok(root)
     }
 
@@ -1309,10 +1417,12 @@ impl OrchestraService {
         let repository = self.repository(parent_thread_id).await?;
         let store =
             AutomationRunStore::open(&repository, run_id).map_err(|error| error.to_string())?;
-        let root = store.load().map_err(|error| error.to_string())?;
+        let mut root = store.load().map_err(|error| error.to_string())?;
         if root.owner_thread_id != parent_thread_id {
             return Err("Automation Root Run does not belong to the requested task".into());
         }
+        let profile = store.load_profile().map_err(|error| error.to_string())?;
+        project_claim_liveness(&mut root, &profile, unix_epoch_millis());
         Ok(store.queue_page(
             &root,
             category,
@@ -1803,14 +1913,25 @@ fn safe_task_name(identifier: &str) -> String {
         .collect()
 }
 
-fn automation_claim_status_name(status: AutomationClaimStatus) -> &'static str {
-    match status {
-        AutomationClaimStatus::Claimed => "claimed",
-        AutomationClaimStatus::Running => "running",
-        AutomationClaimStatus::Completed => "completed",
-        AutomationClaimStatus::Suspended => "suspended",
-        AutomationClaimStatus::Cancelled => "cancelled",
-        AutomationClaimStatus::Failed => "failed",
+fn unix_epoch_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
+fn project_claim_liveness(
+    root: &mut AutomationRootCheckpoint,
+    profile: &AutomationProfile,
+    now_ms: u64,
+) {
+    for claim in root.claims.values_mut() {
+        if automation_claim_liveness(claim, profile, now_ms) == AutomationClaimLiveness::Stalled {
+            claim.next_action =
+                "claim stalled; inspect the retained Issue task and Child Run".into();
+        }
     }
 }
 

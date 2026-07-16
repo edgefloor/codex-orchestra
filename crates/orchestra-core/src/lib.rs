@@ -29,13 +29,14 @@ pub use automation::{
     validate_automation_profile,
 };
 pub use automation_run::{
-    AutomationClaimReconciliation, AutomationClaimStatus, AutomationCoordinationResult,
-    AutomationEffectExecution, AutomationEffectReceipt, AutomationEffectStatus,
-    AutomationGatePolicy, AutomationIssueClaim, AutomationQueueCategory, AutomationQueueCounts,
-    AutomationQueueItem, AutomationQueuePage, AutomationQueueProjectionItem, AutomationQueueStatus,
-    AutomationReconciliationStatus, AutomationRootCheckpoint, AutomationRootStatus,
-    AutomationRunError, AutomationRunStart, AutomationRunStore, AutomationTrackerCommentRequest,
-    automation_queue_counts, automation_queue_page,
+    AutomationClaimLiveness, AutomationClaimReconciliation, AutomationClaimStatus,
+    AutomationCoordinationResult, AutomationEffectExecution, AutomationEffectReceipt,
+    AutomationEffectStatus, AutomationGatePolicy, AutomationIssueClaim, AutomationQueueCategory,
+    AutomationQueueCounts, AutomationQueueItem, AutomationQueuePage, AutomationQueueProjectionItem,
+    AutomationQueueStatus, AutomationReconciliationStatus, AutomationRetryKind,
+    AutomationRetrySchedule, AutomationRootCheckpoint, AutomationRootStatus, AutomationRunError,
+    AutomationRunStart, AutomationRunStore, AutomationTrackerCommentRequest,
+    automation_claim_liveness, automation_queue_counts, automation_queue_page,
 };
 pub use compiler::{CompileError, compile_workflow};
 pub use compiler_artifact::{

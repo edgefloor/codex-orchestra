@@ -41,6 +41,34 @@ pub enum AutomationClaimStatus {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationRetryKind {
+    Retry,
+    Continuation,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationRetrySchedule {
+    pub kind: AutomationRetryKind,
+    pub attempt: u32,
+    pub delay_ms: u64,
+    pub ready_at_ms: u64,
+    pub reset_turn_window: bool,
+    pub reason: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AutomationClaimLiveness {
+    Active,
+    WaitingGate,
+    WaitingRetry,
+    Stalled,
+    Handoff,
+    Terminal,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AutomationQueueStatus {
@@ -124,6 +152,18 @@ pub struct AutomationIssueClaim {
     #[serde(default)]
     pub priority: Option<i64>,
     pub attempt: u32,
+    #[serde(default)]
+    pub workflow_invocations: u32,
+    #[serde(default)]
+    pub turns_in_window: u32,
+    #[serde(default)]
+    pub continuation_count: u32,
+    #[serde(default)]
+    pub retry_attempt: u32,
+    #[serde(default)]
+    pub last_progress_at_ms: Option<u64>,
+    #[serde(default)]
+    pub retry: Option<AutomationRetrySchedule>,
     pub status: AutomationClaimStatus,
     pub worktree: PathBuf,
     pub source_revision: String,
@@ -240,6 +280,8 @@ pub enum AutomationRunError {
     MissingClaim(String),
     #[error("Automation claim `{0}` is not active")]
     InactiveClaim(String),
+    #[error("Automation claim `{0}` has no retry ready for dispatch")]
+    RetryNotReady(String),
     #[error(
         "Automation lease is stale (expected epoch {expected_epoch} revision {expected_revision}, found epoch {actual_epoch} revision {actual_revision})"
     )]
@@ -431,6 +473,12 @@ impl AutomationRunStore {
                 tracker_state: issue.state.clone(),
                 priority: issue.priority,
                 attempt,
+                workflow_invocations: 0,
+                turns_in_window: 0,
+                continuation_count: 0,
+                retry_attempt: 0,
+                last_progress_at_ms: None,
+                retry: None,
                 status: AutomationClaimStatus::Claimed,
                 worktree,
                 source_revision: checkpoint.source_revision.clone(),
@@ -624,6 +672,136 @@ impl AutomationRunStore {
         self.save(checkpoint)
     }
 
+    pub fn record_claim_progress(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        now_ms: u64,
+    ) -> Result<(), AutomationRunError> {
+        let claim = active_claim_mut(checkpoint, claim_id)?;
+        claim.last_progress_at_ms = Some(now_ms);
+        claim.retry = None;
+        claim.status = AutomationClaimStatus::Running;
+        claim.next_action = "Workflow progress recorded in the native Issue task".into();
+        self.save(checkpoint)
+    }
+
+    pub fn schedule_claim_retry(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        profile: &AutomationProfile,
+        now_ms: u64,
+        reason: &str,
+    ) -> Result<AutomationRetrySchedule, AutomationRunError> {
+        let claim = active_claim_mut(checkpoint, claim_id)?;
+        claim.retry_attempt = claim.retry_attempt.saturating_add(1);
+        let delay_ms = retry_delay_ms(
+            profile.polling.interval_ms,
+            profile.agent.max_retry_backoff_ms,
+            claim.retry_attempt,
+        );
+        let schedule = AutomationRetrySchedule {
+            kind: AutomationRetryKind::Retry,
+            attempt: claim.retry_attempt,
+            delay_ms,
+            ready_at_ms: now_ms.saturating_add(delay_ms),
+            reset_turn_window: false,
+            reason: bounded_preview(reason, 240),
+        };
+        claim.retry = Some(schedule.clone());
+        claim.next_action = format!(
+            "retry attempt {} in {}ms: {}",
+            schedule.attempt, schedule.delay_ms, schedule.reason
+        );
+        self.save(checkpoint)?;
+        Ok(schedule)
+    }
+
+    pub fn record_completed_invocation(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        profile: &AutomationProfile,
+        tracker_issue_active: bool,
+        now_ms: u64,
+    ) -> Result<Option<AutomationRetrySchedule>, AutomationRunError> {
+        let claim = active_claim_mut(checkpoint, claim_id)?;
+        claim.workflow_invocations = claim.workflow_invocations.saturating_add(1);
+        claim.turns_in_window = claim.turns_in_window.saturating_add(1);
+        claim.retry_attempt = 0;
+        claim.last_progress_at_ms = Some(now_ms);
+        if !tracker_issue_active {
+            claim.retry = None;
+            claim.status = AutomationClaimStatus::Completed;
+            claim.next_action = "claim complete; tracker issue is no longer active".into();
+            self.save(checkpoint)?;
+            return Ok(None);
+        }
+
+        let reset_turn_window = claim.turns_in_window >= profile.agent.max_turns;
+        let delay_ms = profile
+            .polling
+            .interval_ms
+            .min(profile.agent.max_retry_backoff_ms);
+        let schedule = AutomationRetrySchedule {
+            kind: AutomationRetryKind::Continuation,
+            attempt: claim.continuation_count.saturating_add(1),
+            delay_ms,
+            ready_at_ms: now_ms.saturating_add(delay_ms),
+            reset_turn_window,
+            reason: if reset_turn_window {
+                "Workflow turn window exhausted while the tracker issue remains active".into()
+            } else {
+                "tracker issue remains active after a completed Workflow invocation".into()
+            },
+        };
+        claim.retry = Some(schedule.clone());
+        claim.status = AutomationClaimStatus::Running;
+        claim.next_action = if reset_turn_window {
+            format!(
+                "continuation retry in {}ms after max_turns",
+                schedule.delay_ms
+            )
+        } else {
+            format!("continue claim in {}ms", schedule.delay_ms)
+        };
+        self.save(checkpoint)?;
+        Ok(Some(schedule))
+    }
+
+    pub fn dispatch_due_claim_work(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        tracker_issue_active: bool,
+        now_ms: u64,
+    ) -> Result<AutomationRetrySchedule, AutomationRunError> {
+        let claim = active_claim_mut(checkpoint, claim_id)?;
+        if !tracker_issue_active {
+            claim.retry = None;
+            claim.status = AutomationClaimStatus::Cancelled;
+            claim.next_action = "tracker issue became terminal; stop future invocations".into();
+            self.save(checkpoint)?;
+            return Err(AutomationRunError::InactiveClaim(claim_id.into()));
+        }
+        let schedule = claim
+            .retry
+            .clone()
+            .filter(|retry| retry.ready_at_ms <= now_ms)
+            .ok_or_else(|| AutomationRunError::RetryNotReady(claim_id.into()))?;
+        if schedule.reset_turn_window {
+            claim.turns_in_window = 0;
+            claim.continuation_count = claim.continuation_count.saturating_add(1);
+        }
+        claim.retry = None;
+        claim.status = AutomationClaimStatus::Running;
+        claim.last_progress_at_ms = Some(now_ms);
+        claim.next_action = "invoke the selected typed Workflow in the retained Issue task".into();
+        self.save(checkpoint)?;
+        Ok(schedule)
+    }
+
     /// Fence all work before descendants are interrupted. Advancing the lease
     /// epoch makes every previously loaded checkpoint and in-flight provider
     /// callback unable to commit.
@@ -795,11 +973,9 @@ impl AutomationRunStore {
         checkpoint.next_action =
             "Automation cancelled; retain checkpoints and worktrees for inspection".into();
         for claim in checkpoint.claims.values_mut() {
-            if matches!(
-                claim.status,
-                AutomationClaimStatus::Claimed | AutomationClaimStatus::Running
-            ) {
+            if claim_is_active(claim.status) {
                 claim.status = AutomationClaimStatus::Cancelled;
+                claim.retry = None;
                 claim.next_action = "inspect or explicitly remove retained worktree".into();
             }
         }
@@ -1036,6 +1212,59 @@ fn claim_is_active(status: AutomationClaimStatus) -> bool {
             | AutomationClaimStatus::Running
             | AutomationClaimStatus::Suspended
     )
+}
+
+fn active_claim_mut<'a>(
+    checkpoint: &'a mut AutomationRootCheckpoint,
+    claim_id: &str,
+) -> Result<&'a mut AutomationIssueClaim, AutomationRunError> {
+    let claim = checkpoint
+        .claims
+        .get_mut(claim_id)
+        .ok_or_else(|| AutomationRunError::MissingClaim(claim_id.into()))?;
+    if !claim_is_active(claim.status) {
+        return Err(AutomationRunError::InactiveClaim(claim_id.into()));
+    }
+    Ok(claim)
+}
+
+fn retry_delay_ms(base_ms: u64, cap_ms: u64, attempt: u32) -> u64 {
+    let exponent = attempt.saturating_sub(1).min(63);
+    base_ms.saturating_mul(1_u64 << exponent).min(cap_ms)
+}
+
+pub fn automation_claim_liveness(
+    claim: &AutomationIssueClaim,
+    profile: &AutomationProfile,
+    now_ms: u64,
+) -> AutomationClaimLiveness {
+    if matches!(
+        claim.status,
+        AutomationClaimStatus::Completed
+            | AutomationClaimStatus::Cancelled
+            | AutomationClaimStatus::Failed
+    ) {
+        return AutomationClaimLiveness::Terminal;
+    }
+    if claim
+        .effects
+        .iter()
+        .any(|effect| effect.status == AutomationEffectStatus::WaitingGate)
+    {
+        return AutomationClaimLiveness::WaitingGate;
+    }
+    if claim.retry.is_some() {
+        return AutomationClaimLiveness::WaitingRetry;
+    }
+    if claim.status == AutomationClaimStatus::Suspended {
+        return AutomationClaimLiveness::Handoff;
+    }
+    if claim.last_progress_at_ms.is_some_and(|last_progress| {
+        now_ms.saturating_sub(last_progress) >= profile.codex.stall_timeout_ms
+    }) {
+        return AutomationClaimLiveness::Stalled;
+    }
+    AutomationClaimLiveness::Active
 }
 
 fn is_active_state(profile: &AutomationProfile, state: &str) -> bool {
@@ -2054,5 +2283,188 @@ mod tests {
                 .next_action
                 .contains("cleanup eligible")
         );
+    }
+
+    #[test]
+    fn retry_schedule_is_deterministic_capped_and_recovered_from_checkpoint() {
+        let repository = tempdir().unwrap();
+        let workspace = tempdir().unwrap();
+        let mut profile = profile(workspace.path());
+        profile.polling.interval_ms = 1_000;
+        profile.agent.max_retry_backoff_ms = 4_000;
+        let digest = crate::canonical_sha256(&serde_json::to_value(&profile).unwrap()).unwrap();
+        let (store, mut root) = AutomationRunStore::start(AutomationRunStart {
+            repository: repository.path(),
+            owner_thread_id: "task-retry",
+            source_revision: "abc123",
+            profile: &profile,
+            profile_digest: &digest,
+        })
+        .unwrap();
+        let claim_id = store.claim_fixture(&mut root, &issue(), 1).unwrap();
+        let identity = root.claims[&claim_id].clone();
+
+        let first = store
+            .schedule_claim_retry(
+                &mut root,
+                &claim_id,
+                &profile,
+                10_000,
+                "provider unavailable",
+            )
+            .unwrap();
+        assert_eq!(first.delay_ms, 1_000);
+        assert_eq!(first.ready_at_ms, 11_000);
+        assert!(matches!(
+            store.dispatch_due_claim_work(&mut root, &claim_id, true, 10_999),
+            Err(AutomationRunError::RetryNotReady(_))
+        ));
+
+        let recovered = store.load().unwrap();
+        assert_eq!(recovered.claims[&claim_id].retry, Some(first.clone()));
+        store
+            .dispatch_due_claim_work(&mut root, &claim_id, true, 11_000)
+            .unwrap();
+        for (attempt, expected_delay) in [(2, 2_000), (3, 4_000), (4, 4_000)] {
+            let scheduled = store
+                .schedule_claim_retry(
+                    &mut root,
+                    &claim_id,
+                    &profile,
+                    20_000 + u64::from(attempt),
+                    "transient failure",
+                )
+                .unwrap();
+            assert_eq!(scheduled.attempt, attempt);
+            assert_eq!(scheduled.delay_ms, expected_delay);
+            store
+                .dispatch_due_claim_work(&mut root, &claim_id, true, scheduled.ready_at_ms)
+                .unwrap();
+        }
+        let claim = &root.claims[&claim_id];
+        assert_eq!(claim.claim_id, identity.claim_id);
+        assert_eq!(claim.issue_task, identity.issue_task);
+        assert_eq!(claim.worktree, identity.worktree);
+    }
+
+    #[test]
+    fn max_turns_yields_to_continuation_without_replacing_claim_resources() {
+        let repository = tempdir().unwrap();
+        let workspace = tempdir().unwrap();
+        let mut profile = profile(workspace.path());
+        profile.agent.max_turns = 2;
+        profile.polling.interval_ms = 500;
+        let digest = crate::canonical_sha256(&serde_json::to_value(&profile).unwrap()).unwrap();
+        let (store, mut root) = AutomationRunStore::start(AutomationRunStart {
+            repository: repository.path(),
+            owner_thread_id: "task-continuation",
+            source_revision: "abc123",
+            profile: &profile,
+            profile_digest: &digest,
+        })
+        .unwrap();
+        let claim_id = store.claim_fixture(&mut root, &issue(), 1).unwrap();
+        let retained_worktree = root.claims[&claim_id].worktree.clone();
+
+        let first = store
+            .record_completed_invocation(&mut root, &claim_id, &profile, true, 1_000)
+            .unwrap()
+            .unwrap();
+        assert!(!first.reset_turn_window);
+        store
+            .dispatch_due_claim_work(&mut root, &claim_id, true, first.ready_at_ms)
+            .unwrap();
+        let exhausted = store
+            .record_completed_invocation(&mut root, &claim_id, &profile, true, 2_000)
+            .unwrap()
+            .unwrap();
+        assert!(exhausted.reset_turn_window);
+        assert!(root.claims[&claim_id].next_action.contains("max_turns"));
+
+        store
+            .dispatch_due_claim_work(&mut root, &claim_id, true, exhausted.ready_at_ms)
+            .unwrap();
+        let claim = &root.claims[&claim_id];
+        assert_eq!(claim.workflow_invocations, 2);
+        assert_eq!(claim.turns_in_window, 0);
+        assert_eq!(claim.continuation_count, 1);
+        assert_eq!(claim.worktree, retained_worktree);
+        assert_eq!(claim.claim_id, claim_id);
+
+        let terminal = store
+            .record_completed_invocation(&mut root, &claim_id, &profile, false, 3_000)
+            .unwrap();
+        assert_eq!(terminal, None);
+        assert_eq!(
+            root.claims[&claim_id].status,
+            AutomationClaimStatus::Completed
+        );
+        assert!(root.claims[&claim_id].retry.is_none());
+    }
+
+    #[test]
+    fn liveness_distinguishes_progress_gate_retry_stall_and_cancellation() {
+        let repository = tempdir().unwrap();
+        let workspace = tempdir().unwrap();
+        let mut profile = profile(workspace.path());
+        profile.codex.stall_timeout_ms = 1_000;
+        let digest = crate::canonical_sha256(&serde_json::to_value(&profile).unwrap()).unwrap();
+        let (store, mut root) = AutomationRunStore::start(AutomationRunStart {
+            repository: repository.path(),
+            owner_thread_id: "task-liveness",
+            source_revision: "abc123",
+            profile: &profile,
+            profile_digest: &digest,
+        })
+        .unwrap();
+        let claim_id = store.claim_fixture(&mut root, &issue(), 1).unwrap();
+        store
+            .record_claim_progress(&mut root, &claim_id, 1_000)
+            .unwrap();
+        assert_eq!(
+            automation_claim_liveness(&root.claims[&claim_id], &profile, 1_999),
+            AutomationClaimLiveness::Active
+        );
+        assert_eq!(
+            automation_claim_liveness(&root.claims[&claim_id], &profile, 2_000),
+            AutomationClaimLiveness::Stalled
+        );
+
+        store
+            .resolve_tracker_comment(
+                &mut root,
+                &claim_id,
+                &profile,
+                "Waiting for approval.",
+                AutomationGatePolicy::AskHuman,
+                |_| unreachable!(),
+            )
+            .unwrap();
+        assert_eq!(
+            automation_claim_liveness(&root.claims[&claim_id], &profile, 20_000),
+            AutomationClaimLiveness::WaitingGate
+        );
+        root.claims.get_mut(&claim_id).unwrap().effects.clear();
+        store
+            .schedule_claim_retry(&mut root, &claim_id, &profile, 2_000, "retry")
+            .unwrap();
+        assert_eq!(
+            automation_claim_liveness(&root.claims[&claim_id], &profile, 20_000),
+            AutomationClaimLiveness::WaitingRetry
+        );
+        assert!(matches!(
+            store.dispatch_due_claim_work(&mut root, &claim_id, false, 20_000),
+            Err(AutomationRunError::InactiveClaim(_))
+        ));
+        assert!(root.claims[&claim_id].retry.is_none());
+        store.cancel(&mut root).unwrap();
+        assert_eq!(
+            automation_claim_liveness(&root.claims[&claim_id], &profile, 20_000),
+            AutomationClaimLiveness::Terminal
+        );
+        assert!(matches!(
+            store.dispatch_due_claim_work(&mut root, &claim_id, true, u64::MAX),
+            Err(AutomationRunError::InactiveClaim(_))
+        ));
     }
 }
