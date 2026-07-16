@@ -1,3 +1,133 @@
+diff --git a/apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts b/apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts
+index ce464565..632f69c7 100644
+--- a/apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts
++++ b/apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts
+@@ -1060,6 +1060,61 @@ describe("ProviderCommandReactor", () => {
+     expect(harness.stopSession.mock.calls.length).toBe(0);
+   });
+ 
++  it("recovers an exited provider through its native resume cursor before the next turn", async () => {
++    const harness = await createHarness();
++    const now = "2026-01-01T00:00:00.000Z";
++
++    await Effect.runPromise(
++      harness.engine.dispatch({
++        type: "thread.turn.start",
++        commandId: CommandId.make("cmd-turn-start-before-provider-crash"),
++        threadId: ThreadId.make("thread-1"),
++        message: {
++          messageId: asMessageId("user-message-before-provider-crash"),
++          role: "user",
++          text: "first",
++          attachments: [],
++        },
++        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
++        runtimeMode: "approval-required",
++        createdAt: now,
++      }),
++    );
++
++    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
++    const crashed = harness.runtimeSessions[0];
++    expect(crashed).toBeDefined();
++    if (!crashed) return;
++    harness.runtimeSessions[0] = {
++      ...crashed,
++      status: "error",
++      lastError: "simulated provider crash",
++    };
++
++    await Effect.runPromise(
++      harness.engine.dispatch({
++        type: "thread.turn.start",
++        commandId: CommandId.make("cmd-turn-start-after-provider-crash"),
++        threadId: ThreadId.make("thread-1"),
++        message: {
++          messageId: asMessageId("user-message-after-provider-crash"),
++          role: "user",
++          text: "continue",
++          attachments: [],
++        },
++        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
++        runtimeMode: "approval-required",
++        createdAt: now,
++      }),
++    );
++
++    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
++    expect(harness.startSession).toHaveBeenCalledTimes(2);
++    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
++      resumeCursor: { opaque: "resume-1" },
++    });
++  });
++
+   it("restarts an existing Codex thread on a compatible requested instance", async () => {
+     const harness = await createHarness();
+     const now = "2026-01-01T00:00:00.000Z";
+diff --git a/apps/server/src/orchestration/Layers/ProviderCommandReactor.ts b/apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
+index 9c7a7c94..ab026ca8 100644
+--- a/apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
++++ b/apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
+@@ -80,6 +80,10 @@ function mapProviderSessionStatusToOrchestrationStatus(
+   }
+ }
+ 
++function isUsableProviderSession(session: ProviderSession | undefined): boolean {
++  return session !== undefined && session.status !== "error" && session.status !== "closed";
++}
++
+ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
+   event.commandId !== null ? `command:${event.commandId}` : `event:${event.eventId}`;
+ 
+@@ -370,7 +374,10 @@ const make = Effect.gen(function* () {
+ 
+     const activeSession = yield* resolveActiveSession(threadId);
+     const activeThreadSession =
+-      thread.session !== null && thread.session.status !== "stopped" && activeSession
++      thread.session !== null &&
++      thread.session.status !== "stopped" &&
++      activeSession !== undefined &&
++      isUsableProviderSession(activeSession)
+         ? thread.session
+         : null;
+     if (
+@@ -512,7 +519,11 @@ const make = Effect.gen(function* () {
+       });
+ 
+     const existingSessionThreadId =
+-      thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
++      thread.session &&
++      thread.session.status !== "stopped" &&
++      isUsableProviderSession(activeSession)
++        ? thread.id
++        : null;
+     if (existingSessionThreadId) {
+       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
+       const cwdChanged = effectiveCwd !== activeSession?.cwd;
+@@ -578,7 +589,22 @@ const make = Effect.gen(function* () {
+       return restartedSession.threadId;
+     }
+ 
+-    const startedSession = yield* startProviderSession(undefined);
++    const recoveryResumeCursor =
++      activeSession !== undefined && !isUsableProviderSession(activeSession)
++        ? activeSession.resumeCursor
++        : undefined;
++    if (activeSession !== undefined && !isUsableProviderSession(activeSession)) {
++      yield* Effect.logInfo("provider command reactor recovering exited provider session", {
++        threadId,
++        provider: activeSession.provider,
++        providerInstanceId: activeSession.providerInstanceId,
++        previousStatus: activeSession.status,
++        hasResumeCursor: recoveryResumeCursor !== undefined,
++      });
++    }
++    const startedSession = yield* startProviderSession(
++      recoveryResumeCursor !== undefined ? { resumeCursor: recoveryResumeCursor } : undefined,
++    );
+     yield* bindSessionToThread(startedSession);
+     return startedSession.threadId;
+   });
 diff --git a/apps/server/src/provider/Drivers/CodexDriver.ts b/apps/server/src/provider/Drivers/CodexDriver.ts
 index ffcc94ca..d9b04369 100644
 --- a/apps/server/src/provider/Drivers/CodexDriver.ts
@@ -10,7 +140,7 @@ index ffcc94ca..d9b04369 100644
 +  Schema.Struct({ manifestSha256: Schema.NonEmptyString }),
 +);
 +const decodeOrchestraReleaseIdentity = Schema.decodeEffect(OrchestraReleaseIdentity);
-
+ 
  const DRIVER_KIND = ProviderDriverKind.make("codex");
  const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 @@ -119,7 +123,46 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
@@ -75,7 +205,7 @@ index ffcc94ca..d9b04369 100644
 +        ...(expectedProductManifestSha256 ? { expectedProductManifestSha256 } : {}),
        });
        const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);
-
+ 
 diff --git a/apps/server/src/provider/Layers/CodexAdapter.test.ts b/apps/server/src/provider/Layers/CodexAdapter.test.ts
 index 515a7c6f..b60cc64f 100644
 --- a/apps/server/src/provider/Layers/CodexAdapter.test.ts
@@ -92,7 +222,7 @@ index 515a7c6f..b60cc64f 100644
 @@ -103,6 +105,11 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
        }),
    );
-
+ 
 +  public readonly queryOrchestraImpl = vi.fn(
 +    (_input: Omit<OrchestraQueryInput, "threadId">): Promise<OrchestraQueryResult> =>
 +      Promise.resolve({ selector: "steps", result: { items: [] } }),
@@ -104,7 +234,7 @@ index 515a7c6f..b60cc64f 100644
 @@ -141,6 +148,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
      return Effect.promise(() => this.rollbackThreadImpl(numTurns));
    }
-
+ 
 +  queryOrchestra(input: Omit<OrchestraQueryInput, "threadId">) {
 +    return Effect.promise(() => this.queryOrchestraImpl(input));
 +  }
@@ -114,7 +244,7 @@ index 515a7c6f..b60cc64f 100644
    }
 @@ -448,6 +459,92 @@ function startLifecycleRuntime() {
  }
-
+ 
  lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
 +  it.effect("routes bounded Orchestra queries through the active Codex task", () =>
 +    Effect.gen(function* () {
@@ -230,16 +360,16 @@ index 270126e9..46d66f62 100644
  );
  const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 +const isOrchestraReplayEvent = Schema.is(OrchestraReplayEvent);
-
+ 
  const PROVIDER = ProviderDriverKind.make("codex");
-
+ 
 @@ -82,6 +85,7 @@ export interface CodexAdapterLiveOptions {
    >;
    readonly nativeEventLogPath?: string;
    readonly nativeEventLogger?: EventNdjsonLogger;
 +  readonly expectedProductManifestSha256?: string;
  }
-
+ 
  interface CodexAdapterSessionContext {
 @@ -490,6 +494,25 @@ function mapToRuntimeEvents(
    event: ProviderEvent,
@@ -280,7 +410,7 @@ index 270126e9..46d66f62 100644
 @@ -1613,6 +1639,175 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
      );
    };
-
+ 
 +  const queryOrchestra: NonNullable<CodexAdapterShape["queryOrchestra"]> = Effect.fn(
 +    "queryOrchestra",
 +  )(function* (threadId, input) {
@@ -471,10 +601,10 @@ index 270126e9..46d66f62 100644
      respondToUserInput,
      stopSession,
 diff --git a/apps/server/src/provider/Layers/CodexSessionRuntime.test.ts b/apps/server/src/provider/Layers/CodexSessionRuntime.test.ts
-index 8aeacd87..a1aa525e 100644
+index 8aeacd87..9dcbbcba 100644
 --- a/apps/server/src/provider/Layers/CodexSessionRuntime.test.ts
 +++ b/apps/server/src/provider/Layers/CodexSessionRuntime.test.ts
-@@ -14,9 +14,11 @@ import {
+@@ -14,9 +14,12 @@ import {
  } from "../CodexDeveloperInstructions.ts";
  import {
    buildTurnStartParams,
@@ -482,14 +612,15 @@ index 8aeacd87..a1aa525e 100644
    hasConfiguredMcpServer,
    isRecoverableThreadResumeError,
    openCodexThread,
++  redactCodexDiagnostic,
 +  validateOrchestraProductCompatibility,
  } from "./CodexSessionRuntime.ts";
  const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
-
-@@ -37,6 +39,80 @@ describe("CodexSessionRuntimeIdentifierGenerationError", () => {
+ 
+@@ -37,6 +40,132 @@ describe("CodexSessionRuntimeIdentifierGenerationError", () => {
    });
  });
-
+ 
 +describe("Orchestra Product compatibility", () => {
 +  it("accepts only the exact manifest with the required native capabilities", () => {
 +    NodeAssert.equal(
@@ -562,13 +693,65 @@ index 8aeacd87..a1aa525e 100644
 +      NodeAssert.equal(decoded.orchestra?.latest.projection.steps[0]?.error, null);
 +    }),
 +  );
++
++  it.effect("rejects replay tails beyond the native task-local bound", () =>
++    Effect.gen(function* () {
++      const event = {
++        schemaVersion: 1,
++        eventId: "run-1:1",
++        runId: "run-1",
++        sequence: 1,
++        revision: 1,
++        kind: "invoked",
++        projection: {
++          schemaVersion: 1,
++          runId: "run-1",
++          workflowSha256: "sha256",
++          parentThreadId: "provider-thread",
++          sourceRevision: "revision",
++          status: "running",
++          promotion: "pending",
++          steps: [],
++          nextAction: "continue",
++        },
++      };
++      const error = yield* decodeOrchestraThreadReadEnvelope({
++        orchestra: {
++          latest: event,
++          events: Array.from({ length: 65 }, (_, index) => ({
++            ...event,
++            eventId: `run-1:${index + 1}`,
++            sequence: index + 1,
++            revision: index + 1,
++          })),
++          replayTruncated: false,
++        },
++      }).pipe(Effect.flip);
++
++      NodeAssert.ok(Schema.isSchemaError(error));
++    }),
++  );
++});
++
++describe("Codex diagnostics", () => {
++  it("redacts credential-shaped values and bounds support output", () => {
++    const secret = "diagnostic-secret-sentinel";
++    const diagnostic = redactCodexDiagnostic(
++      `Authorization: Bearer ${secret} api_key=${secret} ${"x".repeat(8_192)}`,
++    );
++
++    NodeAssert.doesNotMatch(diagnostic, new RegExp(secret));
++    NodeAssert.match(diagnostic, /\[REDACTED\]/);
++    NodeAssert.ok(diagnostic.length <= 4_096);
++    NodeAssert.ok(diagnostic.endsWith("…"));
++  });
 +});
 +
  function makeThreadOpenResponse(
    threadId: string,
  ): CodexRpc.ClientRequestResponsesByMethod["thread/start"] {
 diff --git a/apps/server/src/provider/Layers/CodexSessionRuntime.ts b/apps/server/src/provider/Layers/CodexSessionRuntime.ts
-index 99ac498f..739f5008 100644
+index 99ac498f..a22dafcd 100644
 --- a/apps/server/src/provider/Layers/CodexSessionRuntime.ts
 +++ b/apps/server/src/provider/Layers/CodexSessionRuntime.ts
 @@ -1,4 +1,20 @@
@@ -592,7 +775,7 @@ index 99ac498f..739f5008 100644
    ApprovalRequestId,
    DEFAULT_MODEL,
    EventId,
-@@ -42,6 +58,25 @@ import {
+@@ -42,6 +58,26 @@ import {
    CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
  } from "../CodexDeveloperInstructions.ts";
  const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
@@ -604,8 +787,9 @@ index 99ac498f..739f5008 100644
 +const OrchestraThreadReadEnvelope = Schema.Struct({
 +  orchestra: Schema.optional(OrchestraTaskReplay),
 +});
-+export const decodeOrchestraThreadReadEnvelope =
-+  Schema.decodeUnknownEffect(OrchestraThreadReadEnvelope);
++export const decodeOrchestraThreadReadEnvelope = Schema.decodeUnknownEffect(
++  OrchestraThreadReadEnvelope,
++);
 +const OrchestraProductHandshake = Schema.Struct({
 +  orchestraProduct: Schema.NullOr(
 +    Schema.Struct({
@@ -615,18 +799,26 @@ index 99ac498f..739f5008 100644
 +  ),
 +});
 +const decodeOrchestraProductHandshake = Schema.decodeUnknownEffect(OrchestraProductHandshake);
-
+ 
  const PROVIDER = ProviderDriverKind.make("codex");
-
-@@ -107,6 +142,7 @@ export interface CodexSessionRuntimeOptions {
+ 
+@@ -54,6 +90,7 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
+   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
+ ];
+ const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
++const MAX_CODEX_DIAGNOSTIC_CHARS = 4_096;
+ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
+   "not found",
+   "missing thread",
+@@ -107,6 +144,7 @@ export interface CodexSessionRuntimeOptions {
    readonly serviceTier?: CodexServiceTier | undefined;
    readonly resumeCursor?: CodexResumeCursor;
    readonly appServerArgs?: ReadonlyArray<string>;
 +  readonly expectedProductManifestSha256?: string;
  }
-
+ 
  export interface CodexSessionRuntimeSendTurnInput {
-@@ -142,6 +178,36 @@ export interface CodexSessionRuntimeShape {
+@@ -142,6 +180,36 @@ export interface CodexSessionRuntimeShape {
    readonly rollbackThread: (
      numTurns: number,
    ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
@@ -663,7 +855,7 @@ index 99ac498f..739f5008 100644
    readonly respondToRequest: (
      requestId: ApprovalRequestId,
      decision: ProviderApprovalDecision,
-@@ -159,7 +225,48 @@ export type CodexSessionRuntimeError =
+@@ -159,7 +227,48 @@ export type CodexSessionRuntimeError =
    | CodexSessionRuntimePendingApprovalNotFoundError
    | CodexSessionRuntimePendingUserInputNotFoundError
    | CodexSessionRuntimeInvalidUserInputAnswersError
@@ -710,22 +902,51 @@ index 99ac498f..739f5008 100644
 +      : "The selected Codex binary does not expose the Orchestra Product manifest.",
 +  });
 +}
-
+ 
  export class CodexSessionRuntimePendingApprovalNotFoundError extends Schema.TaggedErrorClass<CodexSessionRuntimePendingApprovalNotFoundError>()(
    "CodexSessionRuntimePendingApprovalNotFoundError",
-@@ -708,6 +815,8 @@ export const makeCodexSessionRuntime = (
+@@ -398,6 +507,19 @@ export function buildTurnStartParams(input: {
+   );
+ }
+ 
++export function redactCodexDiagnostic(rawDiagnostic: string): string {
++  const redacted = rawDiagnostic
++    .replace(/(bearer\s+)[a-z0-9._~+/=-]+/giu, "$1[REDACTED]")
++    .replace(
++      /((?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|password|secret)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu,
++      "$1[REDACTED]",
++    );
++  if (redacted.length <= MAX_CODEX_DIAGNOSTIC_CHARS) {
++    return redacted;
++  }
++  return `${redacted.slice(0, MAX_CODEX_DIAGNOSTIC_CHARS - 1)}…`;
++}
++
+ function classifyCodexStderrLine(rawLine: string): { readonly message: string } | null {
+   const line = rawLine.replaceAll(ANSI_ESCAPE_REGEX, "").trim();
+   if (!line) {
+@@ -415,7 +537,7 @@ function classifyCodexStderrLine(rawLine: string): { readonly message: string }
+     }
+   }
+ 
+-  return { message: line };
++  return { message: redactCodexDiagnostic(line) };
+ }
+ 
+ export function isRecoverableThreadResumeError(error: unknown): boolean {
+@@ -708,6 +830,8 @@ export const makeCodexSessionRuntime = (
      const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
      const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
      const collabReceiverTurnsRef = yield* Ref.make(new Map<string, TurnId>());
 +    const seenOrchestraEventsRef = yield* Ref.make(new Set<string>());
 +    const settledTurnIdsRef = yield* Ref.make(new Set<string>());
      const closedRef = yield* Ref.make(false);
-
+ 
      // `~` is not shell-expanded when env vars are set via
-@@ -800,6 +909,91 @@ export const makeCodexSessionRuntime = (
+@@ -800,6 +924,91 @@ export const makeCodexSessionRuntime = (
          message,
        });
-
+ 
 +    const readOrchestraReplay = (providerThreadId: string) =>
 +      Effect.gen(function* () {
 +        const raw = yield* client.raw.request("thread/read", {
@@ -814,8 +1035,8 @@ index 99ac498f..739f5008 100644
      const settlePendingApprovals = (decision: ProviderApprovalDecision) =>
        Ref.get(pendingApprovalsRef).pipe(
          Effect.flatMap((pendingApprovals) =>
-@@ -826,6 +1020,14 @@ export const makeCodexSessionRuntime = (
-
+@@ -826,6 +1035,14 @@ export const makeCodexSessionRuntime = (
+ 
      const handleRawNotification = (notification: CodexServerNotification) =>
        Effect.gen(function* () {
 +        if (notification.method === "turn/completed") {
@@ -829,7 +1050,7 @@ index 99ac498f..739f5008 100644
          const payload = notification.params;
          const route = readRouteFields(notification);
          const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
-@@ -927,11 +1129,58 @@ export const makeCodexSessionRuntime = (
+@@ -927,11 +1144,56 @@ export const makeCodexSessionRuntime = (
              status: payload.turn.status === "failed" ? "error" : "ready",
              activeTurnId: undefined,
              ...(lastError ? { lastError } : {}),
@@ -838,7 +1059,7 @@ index 99ac498f..739f5008 100644
          }),
        ),
      );
-
+ 
 +    // The pinned Orchestra Product currently reports the native thread's
 +    // authoritative idle transition without a separate turn/completed frame.
 +    // Settle that Product turn at the existing Codex provider seam so T3Code's
@@ -875,9 +1096,7 @@ index 99ac498f..739f5008 100644
 +                id: activeTurnId,
 +                items: [],
 +                status: failed ? "failed" : "completed",
-+                ...(failed
-+                  ? { error: { message: session.lastError ?? "Codex turn failed" } }
-+                  : {}),
++                ...(failed ? { error: { message: session.lastError ?? "Codex turn failed" } } : {}),
 +              },
 +            } satisfies EffectCodexSchema.V2TurnCompletedNotification,
 +          });
@@ -889,8 +1108,63 @@ index 99ac498f..739f5008 100644
      yield* client.handleServerNotification("error", (payload) =>
        currentSessionProviderThreadId.pipe(
          Effect.flatMap((providerThreadId) => {
-@@ -1199,7 +1448,26 @@ export const makeCodexSessionRuntime = (
-
+@@ -1170,36 +1432,58 @@ export const makeCodexSessionRuntime = (
+       Effect.forkIn(runtimeScope),
+     );
+ 
++    const recordChildExit = (exitCode: number | undefined, failure?: unknown) =>
++      Ref.get(closedRef).pipe(
++        Effect.flatMap((closed) => {
++          if (closed) {
++            return Effect.void;
++          }
++          const failed = failure !== undefined || exitCode !== 0;
++          const message = failure
++            ? `Codex App Server terminated unexpectedly: ${redactCodexDiagnostic(
++                failure instanceof Error ? failure.message : String(failure),
++              )}`
++            : exitCode === 0
++              ? "Codex App Server exited."
++              : `Codex App Server exited with code ${exitCode}.`;
++          return updateSession(sessionRef, {
++            status: failed ? "error" : "closed",
++            activeTurnId: undefined,
++            ...(failed ? { lastError: message } : {}),
++          }).pipe(Effect.andThen(emitSessionEvent("session/exited", message)));
++        }),
++      );
++
+     yield* child.exitCode.pipe(
+-      Effect.flatMap((exitCode) =>
+-        Ref.get(closedRef).pipe(
+-          Effect.flatMap((closed) => {
+-            if (closed) {
+-              return Effect.void;
+-            }
+-            const nextStatus = exitCode === 0 ? "closed" : "error";
+-            return updateSession(sessionRef, {
+-              status: nextStatus,
+-              activeTurnId: undefined,
+-            }).pipe(
+-              Effect.andThen(
+-                emitSessionEvent(
+-                  "session/exited",
+-                  exitCode === 0
+-                    ? "Codex App Server exited."
+-                    : `Codex App Server exited with code ${exitCode}.`,
+-                ),
+-              ),
+-            );
+-          }),
+-        ),
+-      ),
++      Effect.matchEffect({
++        onFailure: (failure) => recordChildExit(undefined, failure),
++        onSuccess: (exitCode) => recordChildExit(exitCode),
++      }),
+       Effect.forkIn(runtimeScope),
+     );
+ 
      const start = Effect.fn("CodexSessionRuntime.start")(function* () {
        yield* emitSessionEvent("session/connecting", "Starting Codex App Server session.");
 -      yield* client.request("initialize", buildCodexInitializeParams());
@@ -915,9 +1189,9 @@ index 99ac498f..739f5008 100644
 +        yield* client.request("initialize", buildCodexInitializeParams());
 +      }
        yield* client.notify("initialized", undefined);
-
+ 
        const requestedModel = normalizeCodexModelSlug(options.model);
-@@ -1224,6 +1492,7 @@ export const makeCodexSessionRuntime = (
+@@ -1224,6 +1508,7 @@ export const makeCodexSessionRuntime = (
          updatedAt: yield* nowIso,
        } satisfies ProviderSession;
        yield* Ref.set(sessionRef, session);
@@ -925,7 +1199,7 @@ index 99ac498f..739f5008 100644
        yield* emitSessionEvent("session/ready", "Codex App Server session ready.");
        return session;
      });
-@@ -1346,6 +1615,177 @@ export const makeCodexSessionRuntime = (
+@@ -1346,6 +1631,177 @@ export const makeCodexSessionRuntime = (
            });
            return parseThreadSnapshot(response);
          }),
@@ -1125,7 +1399,7 @@ index 2eaaeb8c..0b8465dd 100644
 @@ -1008,6 +1016,234 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
      );
    });
-
+ 
 +  const validateAutomationProfile = Effect.fn("validateAutomationProfile")(function* (
 +    rawInput: AutomationValidateInput,
 +  ) {
@@ -1401,7 +1675,7 @@ index 01eeae7b..ca0d9719 100644
 @@ -114,6 +127,48 @@ export interface ProviderAdapterShape<TError> {
      numTurns: number,
    ) => Effect.Effect<ProviderThreadSnapshot, TError>;
-
+ 
 +  /** Codex-native extension point. Other provider adapters leave this absent. */
 +  readonly validateAutomationProfile?: (
 +    threadId: ThreadId,
@@ -1474,7 +1748,7 @@ index 4d4cb4fa..5cc4aba7 100644
 @@ -105,6 +118,37 @@ export interface ProviderServiceShape {
      readonly numTurns: number;
    }) => Effect.Effect<void, ProviderServiceError>;
-
+ 
 +  readonly validateAutomationProfile?: (
 +    input: AutomationValidateInput,
 +  ) => Effect.Effect<AutomationValidateResult, ProviderServiceError>;
@@ -2776,7 +3050,7 @@ index ef3ec863..59e5900a 100644
  import { usePrimaryEnvironmentId } from "../../state/environments";
  import { cn } from "~/lib/utils";
 +import { AutomationProfileDialog } from "./AutomationProfileDialog";
-
+ 
  interface ChatHeaderProps {
    activeThreadEnvironmentId: EnvironmentId;
 @@ -100,6 +101,13 @@ export const ChatHeader = memo(function ChatHeader({
@@ -3006,7 +3280,7 @@ index 0f12e672..007a2d02 100644
 @@ -756,6 +756,42 @@ describe("deriveWorkLogEntries", () => {
      expect(entries[0]?.label).toBe("Searching for API endpoints");
    });
-
+ 
 +  it("retains bounded Orchestra lifecycle data for its native timeline row", () => {
 +    const orchestra = {
 +      schemaVersion: 1,
@@ -3487,13 +3761,20 @@ index 43270efd..bbe562dd 100644
  export * from "./rpc.ts";
 diff --git a/packages/contracts/src/orchestra.ts b/packages/contracts/src/orchestra.ts
 new file mode 100644
-index 00000000..c90008dd
+index 00000000..7c405cb6
 --- /dev/null
 +++ b/packages/contracts/src/orchestra.ts
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,152 @@
 +import * as Schema from "effect/Schema";
 +
 +import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
++
++export const ORCHESTRA_REPLAY_MAX_EVENTS = 64;
++export const ORCHESTRA_PROJECTION_TEXT_MAX_CHARS = 4_097;
++
++const OrchestraProjectionText = Schema.String.check(
++  Schema.isMaxLength(ORCHESTRA_PROJECTION_TEXT_MAX_CHARS),
++);
 +
 +export const OrchestraRunStatus = Schema.Literals([
 +  "pending",
@@ -3520,7 +3801,7 @@ index 00000000..c90008dd
 +  truncated: Schema.Boolean,
 +});
 +
-+const NullableOptionalString = Schema.optional(Schema.NullOr(Schema.String));
++const NullableOptionalString = Schema.optional(Schema.NullOr(OrchestraProjectionText));
 +
 +export const OrchestraRunProjection = Schema.Struct({
 +  schemaVersion: NonNegativeInt,
@@ -3541,7 +3822,7 @@ index 00000000..c90008dd
 +      error: NullableOptionalString,
 +    }),
 +  ),
-+  nextAction: Schema.String,
++  nextAction: OrchestraProjectionText,
 +});
 +
 +export const OrchestraLifecycleKind = Schema.Literals([
@@ -3564,7 +3845,7 @@ index 00000000..c90008dd
 +
 +export const OrchestraTaskReplay = Schema.Struct({
 +  latest: OrchestraReplayEvent,
-+  events: Schema.Array(OrchestraReplayEvent),
++  events: Schema.Array(OrchestraReplayEvent).check(Schema.isMaxLength(ORCHESTRA_REPLAY_MAX_EVENTS)),
 +  replayTruncated: Schema.Boolean,
 +});
 +export type OrchestraTaskReplay = typeof OrchestraTaskReplay.Type;
@@ -3660,13 +3941,13 @@ index 48c5d9a7..4d9cc2ad 100644
 +  AutomationValidateResult,
 +} from "./automation.ts";
 +import { OrchestraQueryError, OrchestraQueryInput, OrchestraQueryResult } from "./orchestra.ts";
-
+ 
  export const WS_METHODS = {
    // Project registry methods
 @@ -179,6 +195,18 @@ export const WS_METHODS = {
    // Review methods
    reviewGetDiffPreview: "review.getDiffPreview",
-
+ 
 +  // Codex-native Automation methods
 +  automationValidate: "automation.validate",
 +  automationRunFixture: "automation.runFixture",
@@ -3685,7 +3966,7 @@ index 48c5d9a7..4d9cc2ad 100644
 @@ -284,6 +312,66 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
  });
-
+ 
 +export const WsAutomationValidateRpc = Rpc.make(WS_METHODS.automationValidate, {
 +  payload: AutomationValidateInput,
 +  success: AutomationValidateResult,

@@ -115,7 +115,8 @@ case "$command" in
         src/session-logic.test.ts
       pnpm --dir apps/server exec vp test run \
         src/provider/Layers/CodexAdapter.test.ts \
-        src/provider/Layers/CodexSessionRuntime.test.ts
+        src/provider/Layers/CodexSessionRuntime.test.ts \
+        src/orchestration/Layers/ProviderCommandReactor.test.ts
     )
     ;;
   smoke)

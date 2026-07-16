@@ -1,24 +1,47 @@
-# Issue #28 desktop boundary hardening
+# Issue #28 retained-path recovery and hardening
 
-Status: the earlier direct renderer-to-host implementation was superseded after product review. The
-coding-harness MVP now retains pinned T3Code `ecb35f75839925dd1ac6f854efeef5c9e291d11b`.
+Status: verified in the retained pinned T3Code `ecb35f75839925dd1ac6f854efeef5c9e291d11b`
+and Product Codex path.
 
-Implemented in the accepted product path:
+## Implemented boundary
 
-- normal sandboxed T3Code renderer and local-server lifecycle retained;
-- exact product Codex CLI injected through the existing provider driver;
-- Codex/Rust remains authoritative for native task and workflow operations;
-- provider and timeline regression coverage plus graceful desktop smoke cleanup.
+- T3Code remains an adapter over Product Codex App Server; it does not own Orchestra runtime state.
+- A provider exit records `session/exited`, marks the session unusable, and clears its active turn.
+- The next normal task action starts Product Codex with the previous native resume cursor. No
+  detached Orchestra Run or alternate recovery control plane is introduced.
+- Replay payloads are capped at 64 events. Projection text accepts the native 4096-byte body budget
+  plus its optional truncation marker; oversized and malformed payloads are rejected by the shared
+  contract.
+- Provider diagnostics are bounded and redact token, password, secret, API-key, and bearer-shaped
+  values before reaching UI-visible state.
 
-Evidence:
+## Real application evidence
 
-- 35 focused provider/runtime tests and 40 timeline tests passed;
-- desktop and web typechecks passed;
-- full pinned web/server/Electron bundles passed;
-- real Electron startup and graceful shutdown passed;
-- provider-backed native subagent completed in the normal task UI.
+In the normal Electron task UI, Product Codex PID `58972` completed a task action and was then sent
+`SIGTERM`. T3Code emitted `session/exited` for the failed protocol stream. The next user message
+started Product Codex PID `61326` with the retained native resume cursor and returned the requested
+`AFTER_CRASH_2` response. The hydrated Work Log still contained exactly one prior Orchestra
+lifecycle entry; recovery did not duplicate the projection.
 
-The old MessagePort queues and inherited-fd confirmation were prototype behavior, not evidence for
-the retained product path. Orchestra-specific confirmation isolation, lifecycle replay under a
-provider crash, and hostile-renderer authorization tests remain open and must be implemented at
-real T3Code/Codex seams rather than claimed from the discarded dashboard.
+This abrupt process termination also exercises a truncated stdout/protocol stream. Recovery occurs
+at the native App Server session boundary instead of attempting to repair partial JSON writes in
+the adapter.
+
+## Fault and authority coverage
+
+- Codex `StateRuntime` tests prove persisted replay and idempotent duplicate event revisions.
+- Automation lease epoch and revision tests reject stale provider results after pause.
+- App Server protocol tests reject client-supplied lease epochs and reconciliation outcomes.
+- The renderer has no privileged Orchestra confirmation or decision RPC. Native Codex remains the
+  authority; a direction-authenticated confirmation channel should be added with the first concrete
+  privileged UI, not exposed speculatively in this MVP.
+- No ACK/window protocol, alternate transport, scheduler, daemon, or recovery dashboard was added.
+
+## Verification
+
+- pinned patch verification passed against a clean T3Code worktree;
+- 104 web tests and 74 server/provider tests passed;
+- contracts, server, and web typechecks passed;
+- the full pinned web/server/Electron build passed before the final recovery-only adjustment;
+- the final recovery adjustment was rechecked by the clean test and typecheck suites and by the
+  real Electron crash/recovery exercise above.
