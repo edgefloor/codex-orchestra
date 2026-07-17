@@ -118,11 +118,11 @@ fn direct_fork_pins_are_explicit_and_patch_assembly_is_retired() {
     let sources = pins["sources"].as_table().unwrap();
     assert_eq!(
         sources["orchestra_codex"].as_str(),
-        Some("53718e80451bb1d4073c5c535f1c44262d6e6b1f")
+        Some("67a18b672a5204ccc26c650a85fd47dd1c574f1b")
     );
     assert_eq!(
         sources["orchestra_desktop"].as_str(),
-        Some("b3e6534f82c62e6d30fdbac0d0e7aa9aa7301750")
+        Some("0d1d1f7950340b1aeec4e788670a21687e9e930e")
     );
     for retired in [
         "integration/codex",
