@@ -28,6 +28,22 @@ Build both macOS architectures:
 scripts/product-release.sh build /tmp/orchestra-product-sources target/release-candidate
 ```
 
+For a credential-free packaged-app check, extract an unsigned rehearsal ZIP and pass the resulting
+application bundle directly to the smoke script:
+
+```sh
+ditto -x -k target/release-candidate/aarch64-apple-darwin/artifacts/Orchestra-*.zip /tmp/orchestra-app
+node scripts/orchestra-packaged-app-smoke.mjs /tmp/orchestra-app/Orchestra.app
+```
+
+The smoke uses fresh `T3CODE_HOME` and `CODEX_HOME` directories, launches the packaged executable
+twice, requires both backend readiness and main-window creation, requests normal signal-driven
+shutdown, and verifies that neither its process group nor its reported loopback listener survives.
+It launches from the isolated temporary home so a missing packaged policy cannot be hidden by a
+coordinator checkout's working directory.
+It does not prove signing, notarization, installation through a DMG, or an updater transition. Run
+its focused harness with `node --test scripts/orchestra-packaged-app-smoke.test.mjs`.
+
 Publishing candidates require the Apple certificate, notarization API inputs, team ID, and
 provisioning profile consumed by the Orchestra Desktop packager. A local rehearsal may set
 `ORCHESTRA_ALLOW_UNSIGNED=1`, but unsigned output cannot satisfy the release gate.

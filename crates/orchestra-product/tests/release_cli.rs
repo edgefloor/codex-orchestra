@@ -12,6 +12,7 @@ fn run(binary: &Path, root: &Path, arguments: &[&str]) {
         .args(arguments)
         .arg("--root")
         .arg(root)
+        .current_dir(std::env::temp_dir())
         .output()
         .unwrap();
     assert!(

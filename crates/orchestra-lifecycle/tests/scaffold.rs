@@ -28,7 +28,7 @@ fn manifest_describes_native_v2_surface_without_external_runtime() {
         manifest["version"]
             .as_str()
             .unwrap()
-            .starts_with("0.2.0+codex.1c6ed013")
+            .starts_with("0.2.0+codex.67a18b67")
     );
     assert_eq!(manifest["skills"], "./skills/");
     for forbidden in ["mcpServers", "apps", "hooks"] {
@@ -122,7 +122,7 @@ fn direct_fork_pins_are_explicit_and_patch_assembly_is_retired() {
     );
     assert_eq!(
         sources["orchestra_desktop"].as_str(),
-        Some("0d1d1f7950340b1aeec4e788670a21687e9e930e")
+        Some("0fffc9c761c68205fad948e8db66b560dbf8be79")
     );
     for retired in [
         "integration/codex",

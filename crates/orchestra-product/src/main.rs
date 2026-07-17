@@ -61,7 +61,7 @@ fn run() -> Result<(), ProductError> {
         "desktop-startup-rollback" => desktop_startup_rollback(&remaining),
         _ => {
             println!(
-                "usage:\n  orchestra-product doctor [--root PATH]\n  orchestra-product manifest --target TRIPLE --output PATH [--root PATH] [--artifact NAME=PATH]...\n  orchestra-product verify-manifest --manifest PATH\n  orchestra-product verify-artifact --manifest PATH --name NAME --artifact PATH\n  orchestra-product host-smoke --host PATH [--host-arg ARG]... --manifest PATH\n  orchestra-product release-gate --candidate PATH --evidence PATH --output PATH [--root PATH]\n  orchestra-product publication-gate --candidate PATH --record PATH --evidence PATH\n  orchestra-product update-init --codex-home PATH --state PATH --release PATH\n  orchestra-product update-transition --codex-home PATH --state PATH --action stage|activate|commit|rollback|reverse --recorded-at VALUE [--release PATH] [--manifest-sha SHA] [--allow-schema-reverse]\n  orchestra-product desktop-update-stage --codex-home PATH --state PATH --manifest PATH --app-bundle PATH --next-version VERSION --next-manifest-sha SHA --next-snapshot-schema ID --next-projection-schema ID --recorded-at VALUE\n  orchestra-product desktop-update-abort --codex-home PATH --state PATH --recorded-at VALUE\n  orchestra-product desktop-startup-begin --codex-home PATH --state PATH --manifest PATH --recorded-at VALUE\n  orchestra-product desktop-startup-commit --codex-home PATH --state PATH --recorded-at VALUE\n  orchestra-product desktop-startup-rollback --codex-home PATH --state PATH --app-bundle PATH --recorded-at VALUE"
+                "usage:\n  orchestra-product doctor [--root PATH]\n  orchestra-product manifest --target TRIPLE --output PATH [--root PATH] [--artifact NAME=PATH]...\n  orchestra-product verify-manifest --manifest PATH\n  orchestra-product verify-artifact --manifest PATH --name NAME --artifact PATH\n  orchestra-product host-smoke --host PATH [--host-arg ARG]... --manifest PATH\n  orchestra-product release-gate --candidate PATH --evidence PATH --output PATH [--root PATH]\n  orchestra-product publication-gate --candidate PATH --record PATH --evidence PATH\n  orchestra-product update-init --codex-home PATH --state PATH --release PATH\n  orchestra-product update-transition --codex-home PATH --state PATH --action stage|activate|commit|rollback|reverse --recorded-at VALUE [--release PATH] [--manifest-sha SHA] [--allow-schema-reverse]\n  orchestra-product desktop-update-stage --codex-home PATH --state PATH --manifest PATH --app-bundle PATH --next-version VERSION --next-manifest-sha SHA --next-snapshot-schema ID --next-projection-schema ID --recorded-at VALUE\n  orchestra-product desktop-update-abort --codex-home PATH --state PATH --recorded-at VALUE\n  orchestra-product desktop-startup-begin --codex-home PATH --state PATH --manifest PATH --policy-root PATH --recorded-at VALUE\n  orchestra-product desktop-startup-commit --codex-home PATH --state PATH --recorded-at VALUE\n  orchestra-product desktop-startup-rollback --codex-home PATH --state PATH --app-bundle PATH --policy-root PATH --recorded-at VALUE"
             );
             Ok(())
         }
@@ -228,9 +228,7 @@ fn desktop_startup_begin(args: &[String]) -> Result<(), ProductError> {
     let manifest: ReleaseManifest = read_json(&required_path(args, "--manifest")?)?;
     let current = ReleaseSlot::from_manifest(&manifest)?;
     let recorded_at = required_option(args, "--recorded-at")?;
-    let policy_root = option(args, "--root")
-        .map(PathBuf::from)
-        .unwrap_or(env::current_dir()?);
+    let policy_root = required_path(args, "--policy-root")?;
     let policy = read_release_policy(&policy_root)?;
     let _lease =
         acquire_maintenance_lease(&codex_home, "desktop-startup-begin", "orchestra-product")?;
@@ -292,9 +290,7 @@ fn desktop_startup_rollback(args: &[String]) -> Result<(), ProductError> {
     let state_path = required_path(args, "--state")?;
     let app_bundle = required_path(args, "--app-bundle")?;
     let recorded_at = required_option(args, "--recorded-at")?;
-    let policy_root = option(args, "--root")
-        .map(PathBuf::from)
-        .unwrap_or(env::current_dir()?);
+    let policy_root = required_path(args, "--policy-root")?;
     let policy = read_release_policy(&policy_root)?;
     let _lease =
         acquire_maintenance_lease(&codex_home, "desktop-startup-rollback", "orchestra-product")?;
