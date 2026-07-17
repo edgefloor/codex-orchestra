@@ -24,7 +24,10 @@ installs_native_execution = false
 required = [
   "evidence/ORCHESTRA-LICENSE.txt",
   "evidence/CODEX-LICENSE.txt",
-  "evidence/T3CODE-LICENSE.txt",
+  "evidence/ORCHESTRA-DESKTOP-LICENSE.txt",
+  "evidence/PRODUCT-PINS.toml",
+  "evidence/ORCHESTRA-CODEX-PROVENANCE.json",
+  "evidence/ORCHESTRA-DESKTOP-PROVENANCE.json",
   "evidence/THIRD-PARTY-NOTICES.md",
   "evidence/orchestra-cargo-metadata.json",
   "evidence/codex-cargo-metadata.json",

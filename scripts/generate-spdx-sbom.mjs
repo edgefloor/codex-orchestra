@@ -15,12 +15,12 @@ function parseArgs(argv) {
     const value = argv[index + 1];
     if (!value || !name?.startsWith("--")) fail(`missing value for ${name ?? "argument"}`);
     if (name === "--cargo") options.cargo.push(value);
-    else if (["--version", "--created", "--pnpm", "--output", "--notices"].includes(name)) {
+    else if (["--version", "--created", "--pnpm", "--pins", "--output", "--notices"].includes(name)) {
       options[name.slice(2)] = value;
     } else fail(`unknown option: ${name}`);
     index += 1;
   }
-  for (const required of ["version", "created", "pnpm", "output", "notices"]) {
+  for (const required of ["version", "created", "pnpm", "pins", "output", "notices"]) {
     if (!options[required]) fail(`--${required} is required`);
   }
   if (options.cargo.length === 0) fail("at least one --cargo LABEL=PATH input is required");
@@ -73,6 +73,38 @@ function packageEntry({ kind, name, version, source, download, license, homepage
   };
 }
 
+function pinMap(source) {
+  const result = new Map();
+  for (const line of source.split("\n")) {
+    const match = line.match(/^([a-z0-9_]+) = "([^"]*)"$/);
+    if (match) result.set(match[1], match[2]);
+  }
+  return result;
+}
+
+function sourcePackage(name, repository, revision, license) {
+  const githubPath = repository
+    .replace(/^https:\/\/github\.com\//, "")
+    .replace(/\.git$/, "");
+  return {
+    SPDXID: spdxId("source", name, revision, repository),
+    name,
+    versionInfo: revision,
+    downloadLocation: `git+${repository}@${revision}`,
+    filesAnalyzed: false,
+    licenseConcluded: "NOASSERTION",
+    licenseDeclared: license,
+    copyrightText: "NOASSERTION",
+    externalRefs: [
+      {
+        referenceCategory: "PACKAGE-MANAGER",
+        referenceType: "purl",
+        referenceLocator: `pkg:github/${githubPath}@${revision}`,
+      },
+    ],
+  };
+}
+
 const options = parseArgs(process.argv.slice(2));
 const created = new Date(options.created);
 if (Number.isNaN(created.valueOf())) fail("--created must be an ISO-8601 timestamp");
@@ -87,6 +119,8 @@ for (const input of options.cargo) {
 }
 const pnpmRaw = await readFile(options.pnpm, "utf8");
 const pnpm = JSON.parse(pnpmRaw);
+const pinsRaw = await readFile(options.pins, "utf8");
+const pins = pinMap(pinsRaw);
 const extracted = new Map();
 const dependencies = [];
 
@@ -133,7 +167,24 @@ for (const [licenseGroup, entries] of Object.entries(pnpm)) {
 
 const byIdentity = new Map();
 for (const dependency of dependencies) byIdentity.set(dependency.SPDXID, dependency);
-const packages = [...byIdentity.values()].sort((left, right) =>
+const sourcePackages = [
+  sourcePackage(
+    "orchestra-codex",
+    pins.get("orchestra_codex_repository"),
+    pins.get("orchestra_codex"),
+    "Apache-2.0",
+  ),
+  sourcePackage(
+    "orchestra-desktop",
+    pins.get("orchestra_desktop_repository"),
+    pins.get("orchestra_desktop"),
+    "MIT",
+  ),
+];
+if (sourcePackages.some((pkg) => pkg.versionInfo === undefined || pkg.downloadLocation.includes("undefined"))) {
+  fail("Product pins are missing direct fork repository or revision identities");
+}
+const packages = [...sourcePackages, ...byIdentity.values()].sort((left, right) =>
   `${left.name}@${left.versionInfo}`.localeCompare(`${right.name}@${right.versionInfo}`),
 );
 const rootPackage = {
@@ -146,7 +197,9 @@ const rootPackage = {
   licenseDeclared: "Apache-2.0",
   copyrightText: "Copyright 2026 Edgefloor",
 };
-const inputIdentity = sha(cargoInputs.map(({ label, raw }) => `${label}\0${raw}`).join("\0") + pnpmRaw);
+const inputIdentity = sha(
+  cargoInputs.map(({ label, raw }) => `${label}\0${raw}`).join("\0") + pnpmRaw + pinsRaw,
+);
 const document = {
   spdxVersion: "SPDX-2.3",
   dataLicense: "CC0-1.0",
@@ -164,6 +217,14 @@ const document = {
     relationshipType: "DEPENDS_ON",
     relatedSpdxElement: dependency.SPDXID,
   })),
+  annotations: [
+    {
+      annotationType: "OTHER",
+      annotator: "Tool: orchestra-generate-spdx-sbom-1",
+      annotationDate: created.toISOString(),
+      comment: `Fork ancestry: orchestra-codex descends from ${pins.get("codex_upstream_repository")}@${pins.get("codex_upstream")}; orchestra-desktop descends from ${pins.get("t3code_upstream_repository")}@${pins.get("t3code_upstream")}.`,
+    },
+  ],
   ...(extracted.size > 0
     ? {
         hasExtractedLicensingInfos: [...extracted.entries()].map(([licenseId, extractedText]) => ({

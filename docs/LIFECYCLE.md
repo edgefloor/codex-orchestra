@@ -4,4 +4,4 @@ Plugin configuration installation is preview-first and hash-managed. Upgrade sna
 
 The `orchestra-lifecycle` Rust binary owns project/profile installation, upgrades, rollback, uninstall, and capability diagnostics. From a source checkout, invoke it with `cargo run -p codex-orchestra-lifecycle -- <command>`.
 
-The Rust extension is built into the pinned custom Codex binary; it is not copied into the installed plugin directory. Updating Codex requires changing the full revision pin, regenerating the minimal patch against that source, and rerunning the integration build before changing the plugin version.
+The Rust extension is built into the pinned Orchestra Codex fork; it is not copied into the installed plugin directory. Updating Codex requires a reviewed commit in that fork, refreshed upstream and runtime-snapshot provenance, direct-fork Product verification, and a matching plugin version pin.

@@ -3,8 +3,22 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 destination=${1:?usage: scripts/product-source-prepare.sh DESTINATION}
-codex_revision=$(tr -d '[:space:]' < "$root/integration/codex/UPSTREAM_REVISION")
-t3code_revision=$(tr -d '[:space:]' < "$root/integration/t3code/UPSTREAM_REVISION")
+pins="$root/product/pins.toml"
+
+pin() {
+  key=$1
+  value=$(sed -n "s/^${key} = \"\([^\"]*\)\"$/\1/p" "$pins")
+  test -n "$value" || {
+    echo "missing Product source pin: $key" >&2
+    exit 2
+  }
+  printf '%s\n' "$value"
+}
+
+codex_repository=$(pin orchestra_codex_repository)
+codex_revision=$(pin orchestra_codex)
+desktop_repository=$(pin orchestra_desktop_repository)
+desktop_revision=$(pin orchestra_desktop)
 
 if test -e "$destination"; then
   echo "destination already exists: $destination" >&2
@@ -12,17 +26,11 @@ if test -e "$destination"; then
 fi
 
 mkdir -p "$destination"
-git clone --filter=blob:none https://github.com/openai/codex.git "$destination/codex"
+git clone --filter=blob:none "$codex_repository" "$destination/codex"
 git -C "$destination/codex" checkout --detach "$codex_revision"
-"$root/scripts/codex-integration.sh" "$destination/codex" apply
 
-git clone --filter=blob:none https://github.com/pingdotgg/t3code.git "$destination/t3code"
-git -C "$destination/t3code" checkout --detach "$t3code_revision"
-"$root/scripts/t3code-integration.sh" \
-  "$destination/t3code" \
-  apply \
-  "$destination/codex/codex-rs/app-server-protocol/schema/typescript"
+git clone --filter=blob:none "$desktop_repository" "$destination/desktop"
+git -C "$destination/desktop" checkout --detach "$desktop_revision"
 
-cp "$root/integration/codex/UPSTREAM_REVISION" "$destination/CODEX_REVISION"
-cp "$root/integration/t3code/UPSTREAM_REVISION" "$destination/T3CODE_REVISION"
+"$root/scripts/product-source-verify.sh" "$destination"
 echo "Prepared pinned Product sources in $destination"

@@ -6,12 +6,10 @@ crates/orchestra-lifecycle/         preview-first plugin configuration lifecycle
 crates/orchestra-product/           Product manifest, release gates, update state, and verification CLI
 evaluator/                          pinned one-request exact-Zod Product worker
 sdk/                                TypeScript authoring declarations (never executed)
-integration/codex/                  pinned revision, maintained Codex patch, and source overlay
-integration/t3code/                 pinned revision and maintained retained-desktop patch
 product/                            exact Product pins, release policy, and evidence schemas
-scripts/codex-integration.sh        deterministic apply/build verification
-scripts/t3code-integration.sh       retained desktop apply/build/test verification
-scripts/product-source-prepare.sh   prepare both exact maintained fork trees
+scripts/product-source-prepare.sh   clone both exact public hard-fork commits
+scripts/product-source-verify.sh    verify fork, upstream, runtime, and protocol identities
+scripts/orchestra-desktop.sh        standalone desktop verify/build/test/smoke helper
 scripts/product-dev-build.sh        build and verify the dogfood Product tuple
 scripts/product-release.sh          two-architecture signed release and publication gates
 scripts/characterize-pinned-skills.sh pinned native skill boundary verification

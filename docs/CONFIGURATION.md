@@ -4,4 +4,4 @@
 
 Use `cargo run -p codex-orchestra-lifecycle -- project --target <repo>` or `cargo run -p codex-orchestra-lifecycle -- profile --codex-home <home>` to preview, then add `--apply`. Existing or locally modified configuration is never overwritten silently.
 
-These templates require the Orchestra-enabled build pinned by `integration/codex/UPSTREAM_REVISION`. A stock Codex installation may load the plugin skills but will not expose `orchestra_validate`, `orchestra_run`, `orchestra_resume`, `orchestra_status`, `orchestra_cancel`, or `orchestra_query`.
+These templates require the Orchestra Codex fork revision pinned by `product/pins.toml`. A stock Codex installation may load the plugin skills but will not expose `orchestra_validate`, `orchestra_run`, `orchestra_resume`, `orchestra_status`, `orchestra_cancel`, or `orchestra_query`.

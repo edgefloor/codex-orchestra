@@ -26,17 +26,11 @@ require_tool() {
 
 verify_sources() {
   sources=$1
-  require_file "$sources/CODEX_REVISION"
-  require_file "$sources/T3CODE_REVISION"
-  test "$(tr -d '[:space:]' < "$sources/CODEX_REVISION")" = "$(tr -d '[:space:]' < "$root/integration/codex/UPSTREAM_REVISION")" \
-    || fail "prepared Codex source is not pinned"
-  test "$(tr -d '[:space:]' < "$sources/T3CODE_REVISION")" = "$(tr -d '[:space:]' < "$root/integration/t3code/UPSTREAM_REVISION")" \
-    || fail "prepared T3Code source is not pinned"
-  "$root/scripts/t3code-integration.sh" "$sources/t3code" verify
-  rg -q '"electron-updater": "6.8.3"' "$sources/t3code/apps/desktop/package.json" \
-    || fail "T3Code does not pin electron-updater 6.8.3 exactly"
-  rg -q 'specifier: 6.8.3' "$sources/t3code/pnpm-lock.yaml" \
-    || fail "T3Code lockfile does not pin electron-updater 6.8.3 exactly"
+  "$root/scripts/product-source-verify.sh" "$sources"
+  rg -q '"electron-updater": "6.8.3"' "$sources/desktop/apps/desktop/package.json" \
+    || fail "Orchestra Desktop does not pin electron-updater 6.8.3 exactly"
+  rg -q 'specifier: 6.8.3' "$sources/desktop/pnpm-lock.yaml" \
+    || fail "Orchestra Desktop lockfile does not pin electron-updater 6.8.3 exactly"
 }
 
 release_preflight() {
@@ -69,7 +63,7 @@ build_architecture() {
   version=$6
   signed=$7
   codex="$sources/codex"
-  t3code="$sources/t3code"
+  desktop="$sources/desktop"
   target_output="$output/$target"
   resources="$target_output/resources"
   artifacts="$target_output/artifacts"
@@ -102,11 +96,11 @@ build_architecture() {
     --artifact "orchestra-validate-worker=$resources/orchestra-validate-worker" \
     --artifact "plugin-baseline=$resources/plugin-baseline.json" \
     --artifact "protocol-json=$codex/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json" \
-    --artifact "desktop-main=$t3code/apps/desktop/dist-electron/main.cjs" \
-    --artifact "desktop-server=$t3code/apps/server/dist/bin.mjs" \
-    --artifact "desktop-renderer=$t3code/apps/server/dist/client/index.html"
+    --artifact "desktop-main=$desktop/apps/desktop/dist-electron/main.cjs" \
+    --artifact "desktop-server=$desktop/apps/server/dist/bin.mjs" \
+    --artifact "desktop-renderer=$desktop/apps/server/dist/client/index.html"
 
-  set -- pnpm --dir "$t3code" exec node "$t3code/scripts/build-desktop-artifact.ts" \
+  set -- pnpm --dir "$desktop" exec node "$desktop/scripts/build-desktop-artifact.ts" \
     --platform mac \
     --target dmg \
     --arch "$desktop_arch" \
@@ -147,8 +141,8 @@ build_release() {
   mkdir -p "$output"
 
   rustup target add aarch64-apple-darwin x86_64-apple-darwin
-  "$root/scripts/t3code-integration.sh" "$sources/t3code" build
-  "$root/scripts/t3code-integration.sh" "$sources/t3code" test
+  "$root/scripts/orchestra-desktop.sh" "$sources/desktop" build
+  "$root/scripts/orchestra-desktop.sh" "$sources/desktop" test
   bun install --cwd "$root/evaluator" --frozen-lockfile
 
   build_architecture "$sources" "$output" aarch64-apple-darwin arm64 bun-darwin-arm64 "$version" "$signed"
@@ -157,13 +151,16 @@ build_release() {
   mkdir -p "$output/evidence" "$output/source"
   cp "$root/LICENSE" "$output/evidence/ORCHESTRA-LICENSE.txt"
   cp "$sources/codex/LICENSE" "$output/evidence/CODEX-LICENSE.txt"
-  cp "$sources/t3code/LICENSE" "$output/evidence/T3CODE-LICENSE.txt"
+  cp "$sources/desktop/LICENSE" "$output/evidence/ORCHESTRA-DESKTOP-LICENSE.txt"
+  cp "$root/product/pins.toml" "$output/evidence/PRODUCT-PINS.toml"
+  cp "$sources/codex/orchestra-provenance.json" "$output/evidence/ORCHESTRA-CODEX-PROVENANCE.json"
+  cp "$sources/desktop/orchestra-provenance.json" "$output/evidence/ORCHESTRA-DESKTOP-PROVENANCE.json"
   cargo metadata --format-version 1 --locked > "$output/evidence/orchestra-cargo-metadata.json"
   cargo metadata \
     --manifest-path "$sources/codex/codex-rs/Cargo.toml" \
     --format-version 1 \
     --locked > "$output/evidence/codex-cargo-metadata.json"
-  (cd "$sources/t3code" && pnpm licenses list --json --prod) > "$output/evidence/pnpm-licenses.json"
+  (cd "$sources/desktop" && pnpm licenses list --json --prod) > "$output/evidence/pnpm-licenses.json"
   created=${SOURCE_DATE_EPOCH:+$(date -u -r "$SOURCE_DATE_EPOCH" '+%Y-%m-%dT%H:%M:%SZ')}
   created=${created:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}
   node "$root/scripts/generate-spdx-sbom.mjs" \
@@ -172,6 +169,7 @@ build_release() {
     --cargo "orchestra=$output/evidence/orchestra-cargo-metadata.json" \
     --cargo "codex=$output/evidence/codex-cargo-metadata.json" \
     --pnpm "$output/evidence/pnpm-licenses.json" \
+    --pins "$root/product/pins.toml" \
     --output "$output/evidence/orchestra.spdx.json" \
     --notices "$output/evidence/THIRD-PARTY-NOTICES.md"
   tar \
@@ -180,7 +178,7 @@ build_release() {
     --exclude='target' \
     -czf "$output/source/corresponding-source.tar.gz" \
     -C "$root" . \
-    -C "$sources" codex t3code
+    -C "$sources" codex desktop
   echo "Built release candidate. Complete signed distribution and gate evidence before sealing."
 }
 

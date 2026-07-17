@@ -8,7 +8,7 @@ Orchestra is a native V2 Rust runtime with an installable plugin for skills, con
 - Treat `CONTEXT.md` as the domain-language source and `docs/adr/` as the architectural decision record.
 - Keep the restricted TypeScript SDK authoring-only; workflow source must be parsed and lowered by Rust, never executed as JavaScript.
 - Keep runtime-owned snapshots, checkpoints, validated outputs, evidence, decisions, and summaries under a target repository's `.codex/orchestra/runs/`, never in plugin source or an installed cache.
-- Keep the integration patch pinned to `integration/codex/UPSTREAM_REVISION` and verify assumptions against that exact source.
+- Keep Product assembly pinned to the exact public fork and upstream-base identities in `product/pins.toml`; normal builds must never reconstruct source with patches or overlays.
 - Treat Codex and the T3Code-derived desktop as long-lived product forks: reuse upstream primitives first, extend them where product semantics belong, and keep divergence in explicit reviewed seams.
 - Use `colgrep` as the primary semantic search tool and `rg --files` for filename discovery.
 - Run the unit suite, canonical plugin validator, and lifecycle doctor after structural changes.

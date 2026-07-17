@@ -349,9 +349,41 @@ pub fn doctor(plugin: &Path) -> Result<i32, LifecycleError> {
     if plugin.join(".mcp.json").exists() || plugin.join(".app.json").exists() {
         errors.push("external runtime integration is outside the scaffold boundary".into());
     }
-    let pinned = fs::read_to_string(plugin.join("integration/codex/UPSTREAM_REVISION"))?;
-    if pinned.trim().len() != 40 {
-        errors.push("Codex integration revision is not a full commit hash".into());
+    match fs::read_to_string(plugin.join("product/pins.toml"))
+        .ok()
+        .and_then(|source| source.parse::<toml::Table>().ok())
+        .and_then(|pins| pins.get("sources").and_then(toml::Value::as_table).cloned())
+    {
+        Some(sources) => {
+            for key in ["orchestra_codex", "orchestra_desktop"] {
+                let valid = sources
+                    .get(key)
+                    .and_then(toml::Value::as_str)
+                    .is_some_and(|value| {
+                        value.len() == 40
+                            && value
+                                .bytes()
+                                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    });
+                if !valid {
+                    errors.push(format!("Product source `{key}` is not a full commit hash"));
+                }
+            }
+            for key in ["orchestra_codex_repository", "orchestra_desktop_repository"] {
+                let valid = sources
+                    .get(key)
+                    .and_then(toml::Value::as_str)
+                    .is_some_and(|value| {
+                        value.starts_with("https://github.com/") && value.ends_with(".git")
+                    });
+                if !valid {
+                    errors.push(format!(
+                        "Product source `{key}` is not a sealed GitHub repository"
+                    ));
+                }
+            }
+        }
+        None => errors.push("Product source pins are missing or invalid".into()),
     }
     if !plugin.join("Cargo.toml").is_file() {
         errors.push("Rust workspace is missing".into());

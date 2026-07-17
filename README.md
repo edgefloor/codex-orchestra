@@ -134,17 +134,19 @@ There are no interchangeable Orchestra backends today. The only production adapt
 
 ## Quick start
 
-### 1. Verify the runtime and pinned integration
+### 1. Verify the runtime and direct Product forks
 
 From this repository:
 
 ```bash
 cargo test --workspace
 cargo run -p codex-orchestra-lifecycle -- doctor
-scripts/codex-integration.sh /tmp/codex-orchestra-codex verify
+scripts/product-source-prepare.sh /tmp/orchestra-product-sources
+scripts/product-source-verify.sh /tmp/orchestra-product-sources
+scripts/characterize-pinned-skills.sh /tmp/orchestra-product-sources/codex
 ```
 
-The integration script clones the pinned Codex revision when necessary, applies the patch and Rust overlay, tests the Orchestra core and adapter, and checks `codex-app-server`. A successful run ends with the pinned revision reported as verified.
+Source preparation clones the exact public Orchestra Codex and Orchestra Desktop commits directly. Their own provenance verifiers check upstream ancestry, the canonical runtime snapshot, generated protocol bindings, and retained desktop capabilities without applying a patch or copying an overlay.
 
 To build and launch the dogfood desktop from exact source pins:
 
@@ -687,7 +689,7 @@ The core runtime is host-independent Rust. `NativeHost` is the boundary for an e
 - request approval;
 - emit activity and optionally persist outputs elsewhere.
 
-The current Codex implementation is `CodexHost` in [`integration/codex/overlay/codex-rs/ext/orchestra/src/tool.rs`](integration/codex/overlay/codex-rs/ext/orchestra/src/tool.rs). It wraps the active task's V2 `AgentControl`; it does not replace Codex scheduling with another control plane.
+The current Codex implementation is `CodexHost` in the public [`orchestra-codex`](https://github.com/edgefloor/orchestra-codex) fork. It wraps the active task's V2 `AgentControl`; it does not replace Codex scheduling with another control plane.
 
 Implementations must preserve parent-task lineage, return final agent responses, honor cancellation and command timeouts, provide absolute workspaces, and leave durable run state to `OrchestraRuntime`. See [`crates/orchestra-core/src/host.rs`](crates/orchestra-core/src/host.rs) for the trait and the fake host in the runtime tests for a minimal example.
 
@@ -701,7 +703,7 @@ supported reproduction path.
 
 ## Current limitations
 
-- Stock Codex cannot dynamically load the Rust extension; the pinned integration patch is required.
+- Stock Codex cannot dynamically load the Rust extension; use the exact Orchestra Codex fork revision sealed in `product/pins.toml`.
 - Development dogfood output remains unsigned unless Apple release credentials are supplied. The
   lockstep arm64/x86_64 build, notarization verification, full-app updater, release/publication
   gates, and rollback controller are documented in [`docs/RELEASING.md`](docs/RELEASING.md).
@@ -722,10 +724,11 @@ Run the repository checks after structural changes:
 cargo fmt --all --check
 cargo test --workspace
 cargo run -p codex-orchestra-lifecycle -- doctor
-scripts/codex-integration.sh /tmp/codex-orchestra-codex verify
+scripts/product-source-prepare.sh /tmp/orchestra-product-sources
+scripts/product-source-verify.sh /tmp/orchestra-product-sources
 ```
 
-The integration command requires either a new destination or a clean checkout at the exact pinned revision. It applies the patch, copies the current core and adapter sources, tests both Orchestra crates in the Codex workspace, and checks `codex-app-server`.
+The preparation command requires a new destination and checks out immutable commits from both public hard forks. Verification fails closed on repository, commit, tree, upstream-base, runtime-snapshot, generated-protocol, or retained-capability drift.
 
 Before changing architecture or terminology, read [`CONTEXT.md`](CONTEXT.md) and the accepted decisions in [`docs/adr/`](docs/adr/). Repository layout, self-hosting, validation, and lifecycle details live in [`docs/`](docs/).
 

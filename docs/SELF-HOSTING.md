@@ -1,6 +1,6 @@
 # Self-hosting
 
-Develop from the source checkout, never an installed cache. Build the custom Codex tree in a separate directory with `scripts/codex-integration.sh`. The script copies the current Rust core and adapter overlay into a clean checkout of the pinned upstream revision; it does not edit the plugin cache.
+Develop from source checkouts, never an installed cache. Run `scripts/product-source-prepare.sh <destination>` to clone the exact public Orchestra Codex and Orchestra Desktop revisions, then `scripts/product-source-verify.sh <destination>` to verify their upstream ancestry and cross-repository identities. Normal development never applies a patch or copies an overlay.
 
 Point a target repository at the resulting Codex binary, install or select the optional configuration with the preview-first lifecycle tool, then invoke the plugin skills. Runtime state is written only to the target repository's `.codex/orchestra/runs/`.
 

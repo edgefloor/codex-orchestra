@@ -930,8 +930,8 @@ mod tests {
                 minimum_macos: "13.0".into(),
             },
             sources: BTreeMap::from([
-                ("codex".into(), "aaaaaaaa".into()),
-                ("t3code".into(), "bbbbbbbb".into()),
+                ("orchestra_codex".into(), "a".repeat(40)),
+                ("orchestra_desktop".into(), "b".repeat(40)),
             ]),
             schemas: SchemaPins {
                 protocol: "protocol-v1".into(),

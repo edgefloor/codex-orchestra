@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-REVISION=$(tr -d '[:space:]' < "$ROOT/integration/codex/UPSTREAM_REVISION")
-CODEX_ROOT=${1:-"$ROOT/.codex/upstream-codex"}
+REVISION=$(sed -n 's/^orchestra_codex = "\([^"]*\)"$/\1/p' "$ROOT/product/pins.toml")
+CODEX_ROOT=${1:-"$ROOT/.codex/orchestra-codex"}
 
 if [[ ! -d "$CODEX_ROOT/.git" || ! -f "$CODEX_ROOT/codex-rs/Cargo.toml" ]]; then
   echo "usage: $0 <pinned-codex-checkout>" >&2
@@ -16,12 +16,7 @@ if [[ "$actual" != "$REVISION" ]]; then
   exit 2
 fi
 
-overlay="$ROOT/integration/codex/overlay/codex-rs/core/src/orchestra.rs"
-installed="$CODEX_ROOT/codex-rs/core/src/orchestra.rs"
-if ! cmp -s "$overlay" "$installed"; then
-  echo "Orchestra core overlay is not applied or is stale in $CODEX_ROOT" >&2
-  exit 2
-fi
+python3 "$CODEX_ROOT/scripts/verify-orchestra-provenance.py" --source-root "$ROOT"
 
 manifest="$CODEX_ROOT/codex-rs/Cargo.toml"
 require_source() {

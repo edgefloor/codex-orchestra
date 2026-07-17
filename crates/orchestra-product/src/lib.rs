@@ -254,10 +254,73 @@ pub fn verify_manifest_artifact(
 }
 
 pub fn verify_repository(root: &Path, pins: &ProductPins) -> Result<(), ProductError> {
-    let codex = required_source(pins, "codex")?;
-    let t3code = required_source(pins, "t3code")?;
-    verify_text(&root.join("integration/codex/UPSTREAM_REVISION"), codex)?;
-    verify_text(&root.join("integration/t3code/UPSTREAM_REVISION"), t3code)?;
+    let codex = required_revision(pins, "orchestra_codex")?;
+    required_revision(pins, "orchestra_codex_tree")?;
+    let codex_upstream = required_revision(pins, "codex_upstream")?;
+    required_revision(pins, "codex_upstream_tree")?;
+    required_revision(pins, "orchestra_core_revision")?;
+    required_revision(pins, "orchestra_core_tree")?;
+    let desktop = required_revision(pins, "orchestra_desktop")?;
+    required_revision(pins, "orchestra_desktop_tree")?;
+    let t3code_upstream = required_revision(pins, "t3code_upstream")?;
+    required_revision(pins, "t3code_upstream_tree")?;
+    required_repository(pins, "orchestra_codex_repository")?;
+    required_repository(pins, "codex_upstream_repository")?;
+    required_repository(pins, "orchestra_core_repository")?;
+    required_repository(pins, "orchestra_desktop_repository")?;
+    required_repository(pins, "t3code_upstream_repository")?;
+    required_revision(pins, "protocol_tree")?;
+    required_digest(pins, "protocol_digest")?;
+    if pins
+        .sources
+        .get("protocol_digest_algorithm")
+        .map(String::as_str)
+        != Some("sha256-relative-path-nul-file-sha256-lf-v1")
+        || pins.sources.get("protocol_file_count").map(String::as_str) != Some("696")
+    {
+        return Err(ProductError::Message(
+            "generated protocol digest algorithm or file count is invalid".into(),
+        ));
+    }
+    if codex == codex_upstream || desktop == t3code_upstream {
+        return Err(ProductError::Message(
+            "fork revisions must be distinct from their upstream base revisions".into(),
+        ));
+    }
+
+    for retired in [
+        "integration/codex",
+        "integration/t3code",
+        "scripts/codex-integration.sh",
+        "scripts/t3code-integration.sh",
+    ] {
+        if root.join(retired).exists() {
+            return Err(ProductError::Message(format!(
+                "retired patch assembly artifact still exists: {retired}"
+            )));
+        }
+    }
+    for script in [
+        "scripts/product-source-prepare.sh",
+        "scripts/product-source-verify.sh",
+        "scripts/product-dev-build.sh",
+        "scripts/product-release.sh",
+        "scripts/product-dogfood.sh",
+    ] {
+        let source = fs::read_to_string(root.join(script))?;
+        for forbidden in [
+            "git apply",
+            "codex-integration.sh",
+            "t3code-integration.sh",
+            ".patch",
+        ] {
+            if source.contains(forbidden) {
+                return Err(ProductError::Message(format!(
+                    "direct-fork Product script {script} contains retired assembly token `{forbidden}`"
+                )));
+            }
+        }
+    }
 
     let plugin: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join(".codex-plugin/plugin.json"))?)?;
@@ -283,23 +346,38 @@ pub fn verify_repository(root: &Path, pins: &ProductPins) -> Result<(), ProductE
     Ok(())
 }
 
-fn required_source<'a>(pins: &'a ProductPins, name: &str) -> Result<&'a str, ProductError> {
+fn required_revision<'a>(pins: &'a ProductPins, name: &str) -> Result<&'a str, ProductError> {
     pins.sources
         .get(name)
         .map(String::as_str)
-        .filter(|value| value.len() >= 8)
+        .filter(|value| {
+            value.len() == 40
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
         .ok_or_else(|| ProductError::Message(format!("missing or invalid source pin `{name}`")))
 }
 
-fn verify_text(path: &Path, expected: &str) -> Result<(), ProductError> {
-    let actual = fs::read_to_string(path)?.trim().to_owned();
-    if actual != expected {
-        return Err(ProductError::Message(format!(
-            "{} pins `{actual}`, expected `{expected}`",
-            path.display()
-        )));
-    }
-    Ok(())
+fn required_repository<'a>(pins: &'a ProductPins, name: &str) -> Result<&'a str, ProductError> {
+    pins.sources
+        .get(name)
+        .map(String::as_str)
+        .filter(|value| value.starts_with("https://github.com/") && value.ends_with(".git"))
+        .ok_or_else(|| ProductError::Message(format!("missing or invalid source pin `{name}`")))
+}
+
+fn required_digest<'a>(pins: &'a ProductPins, name: &str) -> Result<&'a str, ProductError> {
+    pins.sources
+        .get(name)
+        .map(String::as_str)
+        .filter(|value| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+        .ok_or_else(|| ProductError::Message(format!("missing or invalid digest pin `{name}`")))
 }
 
 fn schema_identity(identity: String) -> SchemaIdentity {
@@ -325,8 +403,26 @@ mod tests {
                 minimum_macos: "13.0".into(),
             },
             sources: BTreeMap::from([
-                ("codex".into(), "aaaaaaaa".into()),
-                ("t3code".into(), "bbbbbbbb".into()),
+                ("orchestra_codex".into(), "a".repeat(40)),
+                (
+                    "orchestra_codex_repository".into(),
+                    "https://github.com/edgefloor/orchestra-codex.git".into(),
+                ),
+                ("codex_upstream".into(), "b".repeat(40)),
+                (
+                    "codex_upstream_repository".into(),
+                    "https://github.com/openai/codex.git".into(),
+                ),
+                ("orchestra_desktop".into(), "c".repeat(40)),
+                (
+                    "orchestra_desktop_repository".into(),
+                    "https://github.com/edgefloor/orchestra-desktop.git".into(),
+                ),
+                ("t3code_upstream".into(), "d".repeat(40)),
+                (
+                    "t3code_upstream_repository".into(),
+                    "https://github.com/pingdotgg/t3code.git".into(),
+                ),
             ]),
             schemas: SchemaPins {
                 protocol: "protocol-v1".into(),

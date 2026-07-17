@@ -5,7 +5,7 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 sources=${1:?usage: scripts/product-dev-build.sh PREPARED_SOURCES [OUTPUT]}
 output=${2:-"$root/target/orchestra-product"}
 codex="$sources/codex"
-t3code="$sources/t3code"
+desktop="$sources/desktop"
 
 case "$output" in
   /*) ;;
@@ -15,12 +15,11 @@ esac
 mkdir -p "$output"
 rm -f "$output/orchestra-host"
 
-test "$(tr -d '[:space:]' < "$sources/CODEX_REVISION")" = "$(tr -d '[:space:]' < "$root/integration/codex/UPSTREAM_REVISION")"
-test "$(tr -d '[:space:]' < "$sources/T3CODE_REVISION")" = "$(tr -d '[:space:]' < "$root/integration/t3code/UPSTREAM_REVISION")"
+"$root/scripts/product-source-verify.sh" "$sources"
 
 cargo build --manifest-path "$codex/codex-rs/Cargo.toml" -p codex-cli
-"$root/scripts/t3code-integration.sh" "$t3code" build
-"$root/scripts/t3code-integration.sh" "$t3code" test
+"$root/scripts/orchestra-desktop.sh" "$desktop" build
+"$root/scripts/orchestra-desktop.sh" "$desktop" test
 cargo build --manifest-path "$root/Cargo.toml" -p codex-orchestra-product
 "$root/scripts/evaluator-build.sh" "$output/orchestra-validate-worker"
 ORCHESTRA_EVALUATOR_BIN="$output/orchestra-validate-worker" \
@@ -38,17 +37,17 @@ target=$(rustc -vV | sed -n 's/^host: //p')
   --artifact "protocol-json=$codex/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json" \
   --artifact "protocol-client-ts=$codex/codex-rs/app-server-protocol/schema/typescript/ClientRequest.ts" \
   --artifact "orchestra-validate-worker=$output/orchestra-validate-worker" \
-  --artifact "desktop-main=$t3code/apps/desktop/dist-electron/main.cjs" \
-  --artifact "desktop-preload=$t3code/apps/desktop/dist-electron/preload.cjs" \
-  --artifact "desktop-server=$t3code/apps/server/dist/bin.mjs" \
-  --artifact "desktop-renderer=$t3code/apps/server/dist/client/index.html"
+  --artifact "desktop-main=$desktop/apps/desktop/dist-electron/main.cjs" \
+  --artifact "desktop-preload=$desktop/apps/desktop/dist-electron/preload.cjs" \
+  --artifact "desktop-server=$desktop/apps/server/dist/bin.mjs" \
+  --artifact "desktop-renderer=$desktop/apps/server/dist/client/index.html"
 
 "$root/target/debug/orchestra-product" host-smoke \
   --host "$output/codex" \
   --host-arg app-server \
   --manifest "$output/release-manifest.json"
-"$root/scripts/t3code-integration.sh" \
-  "$t3code" \
+"$root/scripts/orchestra-desktop.sh" \
+  "$desktop" \
   smoke \
   "$output/release-manifest.json" \
   "$output/codex"

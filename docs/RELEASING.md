@@ -1,11 +1,11 @@
 # Product releases
 
-Orchestra releases the pinned Codex fork, evaluator, Product helper, and retained T3Code desktop as
+Orchestra releases the pinned Orchestra Codex fork, evaluator, Product helper, and Orchestra Desktop fork as
 one macOS Product. The Authoring plugin remains independently versioned; its bundled baseline is
 inactive and cannot install native execution.
 
-The release path extends T3Code's existing Electron packaging and updater. `electron-updater` is
-pinned exactly in the retained fork, differential downloads are disabled, and each architecture
+The release path extends the desktop fork's retained Electron packaging and updater. `electron-updater` is
+pinned exactly, differential downloads are disabled, and each architecture
 receives a complete application archive. This keeps one updater in the desktop instead of adding a
 parallel Sparkle control path.
 
@@ -25,7 +25,7 @@ scripts/product-release.sh build /tmp/orchestra-product-sources target/release-c
 ```
 
 Publishing candidates require the Apple certificate, notarization API inputs, team ID, and
-provisioning profile consumed by the retained T3Code packager. A local rehearsal may set
+provisioning profile consumed by the Orchestra Desktop packager. A local rehearsal may set
 `ORCHESTRA_ALLOW_UNSIGNED=1`, but unsigned output cannot satisfy the release gate.
 
 Each architecture embeds `codex`, `orchestra-validate-worker`, `orchestra-product`, the exact
@@ -77,8 +77,9 @@ projections are selected by generation.
 
 ## Source and licensing material
 
-The build emits the three top-level licenses, both Cargo dependency graphs, the production pnpm
-license inventory, generated third-party notices, an SPDX 2.3 JSON SBOM, and a
-corresponding-source archive containing the exact Product repository and prepared pinned forks.
+The build emits all top-level licenses, both fork provenance records, Product pins, both Cargo
+dependency graphs, the production pnpm license inventory, generated third-party notices, an SPDX
+2.3 JSON SBOM with immutable fork packages and upstream annotations, and a corresponding-source
+archive containing the exact Product repository and prepared pinned forks.
 Release evidence must additionally confirm LGPL replacement/relink material where applicable and
 final product rebranding before the licensing gate may pass.

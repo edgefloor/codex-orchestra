@@ -2,7 +2,7 @@
 
 ## Stage 0 — automated baseline
 
-Run the Rust workspace suite, lifecycle doctor, plugin validator, and pinned Codex integration build. Record exact revisions and exit status.
+Run the Rust workspace suite, lifecycle doctor, plugin validator, direct-fork source verification, and pinned Orchestra Codex build. Record exact fork and upstream revisions plus exit status.
 
 ## Stage 1 — fresh plugin discovery
 

@@ -1,5 +1,5 @@
 # Merge into <repository>/.codex/config.toml after reviewing conflicts.
-# Requires the Orchestra-enabled build pinned in integration/codex/UPSTREAM_REVISION.
+# Requires the Orchestra Codex fork revision pinned in product/pins.toml.
 [features]
 multi_agent = true
 

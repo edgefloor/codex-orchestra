@@ -41,8 +41,8 @@ fn run() -> Result<(), ProductError> {
             let pins = read_pins(&root)?;
             verify_repository(&root, &pins)?;
             println!(
-                "OK Product pins: Codex {}, T3Code {}",
-                pins.sources["codex"], pins.sources["t3code"]
+                "OK Product pins: Orchestra Codex {}, Orchestra Desktop {}",
+                pins.sources["orchestra_codex"], pins.sources["orchestra_desktop"]
             );
             Ok(())
         }

@@ -28,7 +28,7 @@ fn manifest_describes_native_v2_surface_without_external_runtime() {
         manifest["version"]
             .as_str()
             .unwrap()
-            .starts_with("0.2.0+codex.f90e7dee")
+            .starts_with("0.2.0+codex.64bcf75f")
     );
     assert_eq!(manifest["skills"], "./skills/");
     for forbidden in ["mcpServers", "apps", "hooks"] {
@@ -109,53 +109,29 @@ fn rust_runtime_lifecycle_and_restricted_sdk_are_present() {
 }
 
 #[test]
-fn pinned_integration_is_explicit_and_minimal() {
+fn direct_fork_pins_are_explicit_and_patch_assembly_is_retired() {
     let root = root();
+    let pins: toml::Table = fs::read_to_string(root.join("product/pins.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let sources = pins["sources"].as_table().unwrap();
     assert_eq!(
-        fs::read_to_string(root.join("integration/codex/UPSTREAM_REVISION"))
-            .unwrap()
-            .trim(),
-        "f90e7deea6a715bbd153044af6f475eefa749177"
+        sources["orchestra_codex"].as_str(),
+        Some("64bcf75f55745b8304b466bdca1231eb6c5e0620")
     );
-    let patch = fs::read_to_string(root.join("integration/codex/codex-f90e7dee.patch")).unwrap();
-    assert!(patch.contains("codex_orchestra_extension::install"));
-    assert!(patch.contains("orchestra_control"));
-    let adapter =
-        fs::read_to_string(root.join("integration/codex/overlay/codex-rs/core/src/orchestra.rs"))
-            .unwrap();
-    assert!(adapter.contains("AgentControl"));
-    assert!(adapter.contains("process_exec_tool_call"));
-    assert!(adapter.contains("resolve_skills"));
-    assert!(patch.contains("read_skill_resource"));
-    for forbidden in [
-        "reqwest",
-        "McpManager",
-        "codex exec",
-        "Command::new(\"codex\")",
+    assert_eq!(
+        sources["orchestra_desktop"].as_str(),
+        Some("7e526e83499cd905928a64b80f0a3930424bdb98")
+    );
+    for retired in [
+        "integration/codex",
+        "integration/t3code",
+        "scripts/codex-integration.sh",
+        "scripts/t3code-integration.sh",
     ] {
-        assert!(!adapter.contains(forbidden));
+        assert!(!root.join(retired).exists(), "{retired}");
     }
-}
-
-#[test]
-fn six_native_tools_are_registered() {
-    let source = fs::read_to_string(
-        root().join("integration/codex/overlay/codex-rs/ext/orchestra/src/tool.rs"),
-    )
-    .unwrap();
-    for name in [
-        "orchestra_validate",
-        "orchestra_run",
-        "orchestra_resume",
-        "orchestra_status",
-        "orchestra_cancel",
-        "orchestra_query",
-    ] {
-        assert!(source.contains(name));
-    }
-    assert!(source.contains("run_with_inputs"));
-    assert!(source.contains("resume_with_approval_and_inputs"));
-    assert!(source.contains("JsonSchema::object(BTreeMap::new(), None, Some(true.into()))"));
 }
 
 #[test]

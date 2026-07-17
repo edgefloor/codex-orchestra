@@ -63,7 +63,7 @@ existing local UI transport:
 sandboxed T3Code renderer -> retained local T3Code server -> pinned `codex app-server`
 ```
 
-The Product patch is intentionally one environment-controlled provider-binary override; it does not
+The Product integration seam is intentionally one environment-controlled provider-binary override; it does not
 replace the T3Code shell with a workflow dashboard. Rust still authorizes Orchestra operations, and
 the local server cannot manufacture a detached Run. Only task-scoped notifications have durable
 cursors; there is no global replay sequence. Slow consumers reconnect through snapshot plus
@@ -109,7 +109,7 @@ Crashes, duplicate delivery, stale hosts, expired cursors, partial writes, ambig
 malformed outputs are expected operational faults. Atomic checkpoints, stable identities, semantic
 revisions, task sequences, Execution-lease fencing, effect receipts, and fail-closed compatibility
 make them recoverable. Product artifacts and upstream changes are supply-chain inputs controlled by
-exact pins, reviewed overlays, signed Release manifests, reproducible gates, and rollback.
+exact fork and upstream pins, signed Release manifests, reproducible gates, and rollback.
 
 For the coding-harness MVP, repository workflow definitions are trusted at the same level as local
 build scripts. The exact-Zod worker is bounded operationally but is not a sandbox for malicious code.
@@ -134,10 +134,11 @@ sync follow ADR-0017. Every dependency, including the updater, is pinned exactly
 
 The disposable evaluator, host, MessagePort, Electron, and reducer harnesses were removed after their
 claims gained native Product parity. Their dated verification records remain historical evidence.
-`integration/codex/overlay/` and the pinned T3Code patch are maintained source overlays for the two
-exact upstream revisions; build scripts copy or apply them into clean source trees, but they are not
-runnable services, compatibility backends, stores, or control planes. The repository preserves no
-fixture protocol, duplicate store, Node workflow authority, detached tool, or alternate scheduler.
+The reviewed Product source lives directly in the public `orchestra-codex` and
+`orchestra-desktop` hard forks. Product preparation clones immutable fork commits and verifies their
+upstream bases plus cross-repository runtime and protocol identities. The coordinator preserves no
+patch assembly, fixture protocol, duplicate store, Node workflow authority, detached tool, or
+alternate scheduler.
 
 ## Decision reconciliation
 
