@@ -1,4 +1,6 @@
 capabilities = [
+  "automation/start",
+  "automation/steerIssue",
   "host/framedStdio",
   "host/replay",
   "host/snapshot",
@@ -13,25 +15,25 @@ version = "0.2.0-dev"
 minimum_macos = "13.0"
 
 [sources]
-orchestra_codex = "64bcf75f55745b8304b466bdca1231eb6c5e0620"
-orchestra_codex_tree = "4c5d70a7671f5b27aec0244f7baa707009318788"
+orchestra_codex = "1c6ed0131acc148772d878260c76963440057f40"
+orchestra_codex_tree = "a0195766fb0abdb58e4148d271ea801549ee6717"
 orchestra_codex_repository = "https://github.com/edgefloor/orchestra-codex.git"
 codex_upstream = "f90e7deea6a715bbd153044af6f475eefa749177"
 codex_upstream_tree = "1e83e292b90e89d993703d08f05fb8579601bda2"
 codex_upstream_repository = "https://github.com/openai/codex.git"
 orchestra_core_repository = "https://github.com/edgefloor/codex-orchestra.git"
-orchestra_core_revision = "ef9931b6eb90c1d0ec43cffc0e38efe7ed050c55"
-orchestra_core_tree = "4fbb7d56e36e1ce7ac3ea2eba0c39e4efb2d83f8"
-orchestra_desktop = "7e526e83499cd905928a64b80f0a3930424bdb98"
-orchestra_desktop_tree = "f664a25a141cfa32aca18327b87a52718fc70a33"
+orchestra_core_revision = "eaab5f864442e5f83b8158cd12596125591cbfdc"
+orchestra_core_tree = "62b3b83cb45e0ca0ba501a0497e0a65b6314d57e"
+orchestra_desktop = "abfd6f37758f4437e5d903ad4a2b5df418e28b26"
+orchestra_desktop_tree = "94efd6580c6b033fb3baa828c8ea59d45ba2c500"
 orchestra_desktop_repository = "https://github.com/edgefloor/orchestra-desktop.git"
 t3code_upstream = "ecb35f75839925dd1ac6f854efeef5c9e291d11b"
 t3code_upstream_tree = "147cfa26a60049c8b89f836b3c4fdb474906b6a7"
 t3code_upstream_repository = "https://github.com/pingdotgg/t3code.git"
-protocol_tree = "cab853f856a1543d57d7c7e12b1f904f5e3d2bfb"
+protocol_tree = "fa42435fb75be94d63b81ed2472c08ba719671a8"
 protocol_digest_algorithm = "sha256-relative-path-nul-file-sha256-lf-v1"
-protocol_digest = "5dfbb6a2a7237b699c83cc125a48e2d3a1f0f59b5ce21909ab325f5a81f10da7"
-protocol_file_count = "696"
+protocol_digest = "79cc318a85d863cc6c3b56d4a793874407a3e8cdff4a63ccc8b3671b6cf9c9e4"
+protocol_file_count = "701"
 agents = "4e1f842f63673db59018a7fa4a441c64c274caf2"
 zod = "1fb56a5c18c27102dbc92260a4007c7732a0ccca"
 zod_repository = "https://github.com/colinhacks/zod.git"

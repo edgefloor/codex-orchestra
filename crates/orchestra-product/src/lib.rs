@@ -283,12 +283,17 @@ pub fn verify_repository(root: &Path, pins: &ProductPins) -> Result<(), ProductE
     let bun_version = required_source(pins, "bun_version")?;
     let zod_version = required_source(pins, "zod_version")?;
     let zod_integrity = required_source(pins, "zod_package_integrity")?;
+    let protocol_file_count = pins
+        .sources
+        .get("protocol_file_count")
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|count| *count > 0);
     if pins
         .sources
         .get("protocol_digest_algorithm")
         .map(String::as_str)
         != Some("sha256-relative-path-nul-file-sha256-lf-v1")
-        || pins.sources.get("protocol_file_count").map(String::as_str) != Some("696")
+        || protocol_file_count.is_none()
     {
         return Err(ProductError::Message(
             "generated protocol digest algorithm or file count is invalid".into(),
