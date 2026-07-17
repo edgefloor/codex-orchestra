@@ -271,6 +271,18 @@ pub fn verify_repository(root: &Path, pins: &ProductPins) -> Result<(), ProductE
     required_repository(pins, "t3code_upstream_repository")?;
     required_revision(pins, "protocol_tree")?;
     required_digest(pins, "protocol_digest")?;
+    required_revision(pins, "bun")?;
+    required_repository(pins, "bun_repository")?;
+    required_revision(pins, "zod")?;
+    required_repository(pins, "zod_repository")?;
+    required_revision(pins, "zod_package_revision")?;
+    required_revision(pins, "zod_package_shasum")?;
+    let worker_source_digest = required_digest(pins, "evaluator_worker_source_sha256")?;
+    let lock_digest = required_digest(pins, "evaluator_lock_sha256")?;
+    let package_digest = required_digest(pins, "evaluator_package_sha256")?;
+    let bun_version = required_source(pins, "bun_version")?;
+    let zod_version = required_source(pins, "zod_version")?;
+    let zod_integrity = required_source(pins, "zod_package_integrity")?;
     if pins
         .sources
         .get("protocol_digest_algorithm")
@@ -285,6 +297,86 @@ pub fn verify_repository(root: &Path, pins: &ProductPins) -> Result<(), ProductE
     if codex == codex_upstream || desktop == t3code_upstream {
         return Err(ProductError::Message(
             "fork revisions must be distinct from their upstream base revisions".into(),
+        ));
+    }
+    if pins.evaluator.revision != format!("bun-{bun_version}-zod-{zod_version}-sealed-2")
+        || pins.evaluator.adapter_abi != "orchestra-evaluator-abi-v1"
+        || pins.evaluator.canonicalizer != "rfc8785-jcs-v1"
+        || pins.evaluator.issue_format != "orchestra-validation-issues-v1"
+    {
+        return Err(ProductError::Message(
+            "evaluator revision, ABI, canonicalizer, or issue format is not the sealed Product identity"
+                .into(),
+        ));
+    }
+    for limit in [
+        "validation_request_bytes",
+        "validation_response_bytes",
+        "validation_bundle_bytes",
+        "validation_value_bytes",
+        "validation_value_depth",
+        "validation_value_nodes",
+        "validation_collection_entries",
+        "validation_string_bytes",
+        "validation_issue_count",
+        "validation_issue_text_bytes",
+        "validation_wall_ms",
+    ] {
+        if !pins.limits.contains_key(limit) {
+            return Err(ProductError::Message(format!(
+                "sealed evaluator limit `{limit}` is missing"
+            )));
+        }
+    }
+
+    let worker_source = fs::read(root.join("evaluator/worker.ts"))?;
+    let lock_source = fs::read(root.join("evaluator/bun.lock"))?;
+    let package_source = fs::read(root.join("evaluator/package.json"))?;
+    for (name, bytes, expected) in [
+        (
+            "worker source",
+            worker_source.as_slice(),
+            worker_source_digest,
+        ),
+        ("lockfile", lock_source.as_slice(), lock_digest),
+        (
+            "package manifest",
+            package_source.as_slice(),
+            package_digest,
+        ),
+    ] {
+        if sha256(bytes) != expected {
+            return Err(ProductError::Message(format!(
+                "sealed evaluator {name} digest does not match Product provenance"
+            )));
+        }
+    }
+    let worker_source = String::from_utf8(worker_source)
+        .map_err(|_| ProductError::Message("evaluator worker source is not UTF-8".into()))?;
+    if !worker_source.contains(&format!(
+        "const EVALUATOR_REVISION = \"{}\"",
+        pins.evaluator.revision
+    )) {
+        return Err(ProductError::Message(
+            "evaluator worker does not embed its sealed Product revision".into(),
+        ));
+    }
+    let lock_source = String::from_utf8(lock_source)
+        .map_err(|_| ProductError::Message("evaluator lockfile is not UTF-8".into()))?;
+    if !lock_source.contains(&format!("zod@{zod_version}")) || !lock_source.contains(zod_integrity)
+    {
+        return Err(ProductError::Message(
+            "evaluator lockfile does not contain the sealed Zod package identity".into(),
+        ));
+    }
+    let package: serde_json::Value = serde_json::from_slice(&package_source)?;
+    if package
+        .pointer("/dependencies/zod")
+        .and_then(serde_json::Value::as_str)
+        != Some(zod_version)
+    {
+        return Err(ProductError::Message(
+            "evaluator package does not pin the sealed Zod version".into(),
         ));
     }
 
@@ -364,6 +456,14 @@ fn required_repository<'a>(pins: &'a ProductPins, name: &str) -> Result<&'a str,
         .get(name)
         .map(String::as_str)
         .filter(|value| value.starts_with("https://github.com/") && value.ends_with(".git"))
+        .ok_or_else(|| ProductError::Message(format!("missing or invalid source pin `{name}`")))
+}
+
+fn required_source<'a>(pins: &'a ProductPins, name: &str) -> Result<&'a str, ProductError> {
+    pins.sources
+        .get(name)
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| ProductError::Message(format!("missing or invalid source pin `{name}`")))
 }
 
@@ -506,5 +606,19 @@ mod tests {
         verify_manifest_artifact(&manifest, "host", &artifact).unwrap();
         fs::write(&artifact, b"substituted").unwrap();
         assert!(verify_manifest_artifact(&manifest, "host", &artifact).is_err());
+    }
+
+    #[test]
+    fn repository_verification_rejects_evaluator_material_drift() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let mut pins = read_pins(root).unwrap();
+        verify_repository(root, &pins).unwrap();
+        pins.sources
+            .insert("evaluator_worker_source_sha256".into(), "0".repeat(64));
+        let error = verify_repository(root, &pins).unwrap_err().to_string();
+        assert!(error.contains("worker source digest"));
     }
 }

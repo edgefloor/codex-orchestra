@@ -14,6 +14,13 @@ canonical execution plan, schema-only Validation bundle, guidance schemas, and a
 Validation bundle, schema ID, and canonical JSON value. It never imports or evaluates the workflow
 graph.
 
+The sealed Product toolchain is Bun 1.3.14 at release revision
+`0d9b296af33f2b851fcbf4df3e9ec89751734ba4` and Zod 4.4.3 at tag revision
+`1fb56a5c18c27102dbc92260a4007c7732a0ccca`. Product provenance separately records the published
+Zod package source revision, registry integrity and shasum, evaluator package/lock/worker-source
+digests, ABI, canonicalizer, issue format, effective limits, and each architecture-specific compiled
+worker digest. Bun and Zod remain pinned dependencies rather than Product forks.
+
 The worker has no durable state and is not a daemon, scheduler, alternate host, or execution authority.
 It ships inside the exact Product release described by ADR-0017.
 
@@ -136,3 +143,8 @@ rewritten.
 Issue #16 closes with exact revisions, deterministic golden hashes across fresh processes, accepted
 and rejected exact-Zod cases, byte-limit behavior, timeout termination, crash handling, provenance
 checks, and a keep/change/reject verdict. OS sandbox and hostile-code research are not MVP exit gates.
+
+Run `scripts/verify-evaluator-toolchain.sh --remote` to reconcile the local Bun binary, Bun and Zod
+release tags, published Zod package metadata, lockfile integrity, sealed sources, and the static
+Rust-authoring/Bun-evaluator boundary. `scripts/evaluator-build.sh` then compiles and smoke-tests the
+single admitted Bun entry point, `evaluator/worker.ts`.

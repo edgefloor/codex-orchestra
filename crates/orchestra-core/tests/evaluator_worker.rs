@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use tempfile::tempdir;
 
-const REVISION: &str = "bun-1.3.14-zod-4.4.3-mvp-1";
+const REVISION: &str = "bun-1.3.14-zod-4.4.3-sealed-2";
 
 fn worker() -> PathBuf {
     std::env::var_os("ORCHESTRA_EVALUATOR_BIN")
@@ -78,6 +78,35 @@ async fn ordinary_rejection_is_stable_sorted_and_bounded() {
     assert_eq!(issues.len(), 2);
     assert_eq!(issues[0].path[0].to_string(), "a");
     assert_eq!(issues[1].path[0].to_string(), "z");
+}
+
+#[tokio::test]
+#[ignore = "run through scripts/evaluator-test.sh with the pinned Product worker"]
+async fn issue_count_and_text_limits_are_enforced() {
+    let source = r#"({
+      output: z.object({
+        first: z.string().min(4, "first diagnostic is intentionally long"),
+        second: z.string().min(4, "second diagnostic is intentionally long")
+      })
+    })"#;
+    let limits = EvaluatorLimits {
+        issue_count: 1,
+        issue_text_bytes: 12,
+        ..EvaluatorLimits::default()
+    };
+    let outcome = Evaluator::new(worker(), REVISION, limits)
+        .validate(request(
+            source,
+            "output",
+            json!({"first": "", "second": ""}),
+        ))
+        .await
+        .unwrap();
+    let ValidationOutcome::Rejected { issues, .. } = outcome else {
+        panic!("expected bounded schema rejection")
+    };
+    assert_eq!(issues.len(), 1);
+    assert!(issues[0].message.len() <= 12);
 }
 
 #[tokio::test]

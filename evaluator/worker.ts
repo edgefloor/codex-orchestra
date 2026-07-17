@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 512;
-const EVALUATOR_REVISION = "bun-1.3.14-zod-4.4.3-mvp-1";
+const EVALUATOR_REVISION = "bun-1.3.14-zod-4.4.3-sealed-2";
 
 type Limits = {
   requestBytes: number;
@@ -223,6 +223,6 @@ async function main(): Promise<void> {
 
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${boundedText(message, MAX_DIAGNOSTIC_BYTES)}\n`);
+  process.stderr.write(`${boundedText(message, MAX_DIAGNOSTIC_BYTES - 1)}\n`);
   process.exit(70);
 });

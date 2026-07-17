@@ -34,14 +34,24 @@ protocol_digest = "5dfbb6a2a7237b699c83cc125a48e2d3a1f0f59b5ce21909ab325f5a81f10
 protocol_file_count = "696"
 agents = "4e1f842f63673db59018a7fa4a441c64c274caf2"
 zod = "1fb56a5c18c27102dbc92260a4007c7732a0ccca"
-bun = "be77b652884b16a103cfaa4af3c1102f72f2dcd3"
+zod_repository = "https://github.com/colinhacks/zod.git"
+zod_version = "4.4.3"
+zod_package_revision = "f3c9ec03ba7a28ae72d25cc295f38674bee0f559"
+zod_package_integrity = "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="
+zod_package_shasum = "b680f172885d18bbebf21a834ea25e55a1bbf356"
+bun = "0d9b296af33f2b851fcbf4df3e9ec89751734ba4"
+bun_repository = "https://github.com/oven-sh/bun.git"
+bun_version = "1.3.14"
+evaluator_worker_source_sha256 = "169c4a10c0631a33f94c4bda6307f1d552bd7cc4db1da3b907b63df4847f4287"
+evaluator_lock_sha256 = "c699079c216b7479aaf59d7856d9e7762a5b70ada858702a6034afd59bd33d1c"
+evaluator_package_sha256 = "471a1072db06bcb66aed6e8a6d215506a7fdc2169fb47295fc6154c2c83852c2"
 
 [schemas]
 protocol = "codex-app-server+orchestra-v1"
 snapshot = "orchestra-task-snapshot-v1"
 
 [evaluator]
-revision = "bun-1.3.14-zod-4.4.3-mvp-1"
+revision = "bun-1.3.14-zod-4.4.3-sealed-2"
 adapter_abi = "orchestra-evaluator-abi-v1"
 canonicalizer = "rfc8785-jcs-v1"
 issue_format = "orchestra-validation-issues-v1"

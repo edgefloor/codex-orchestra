@@ -18,6 +18,10 @@ scripts/product-source-prepare.sh /tmp/orchestra-product-sources
 scripts/product-release.sh preflight /tmp/orchestra-product-sources
 ```
 
+Preflight verifies Bun's installed version/revision, the public Bun and Zod release tags, the
+published Zod package source and integrity, and the evaluator worker/package/lock digests before any
+candidate is built.
+
 Build both macOS architectures:
 
 ```sh
@@ -30,7 +34,9 @@ provisioning profile consumed by the Orchestra Desktop packager. A local rehears
 
 Each architecture embeds `codex`, `orchestra-validate-worker`, `orchestra-product`, the exact
 Product manifest, and an inactive plugin-baseline record under the application resources. Verify
-signed archives independently:
+signed archives independently. Both build and archive verification execute the same exact-Zod,
+provenance, forbidden-capability, malformed-input, and limit smoke against the architecture-specific
+worker:
 
 ```sh
 scripts/product-release.sh verify-arch target/release-candidate aarch64-apple-darwin

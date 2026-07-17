@@ -135,6 +135,49 @@ fn direct_fork_pins_are_explicit_and_patch_assembly_is_retired() {
 }
 
 #[test]
+fn evaluator_toolchain_is_sealed_without_executing_workflow_typescript() {
+    let root = root();
+    let pins: toml::Table = fs::read_to_string(root.join("product/pins.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let sources = pins["sources"].as_table().unwrap();
+    assert_eq!(
+        sources["bun"].as_str(),
+        Some("0d9b296af33f2b851fcbf4df3e9ec89751734ba4")
+    );
+    assert_eq!(sources["bun_version"].as_str(), Some("1.3.14"));
+    assert_eq!(
+        sources["zod"].as_str(),
+        Some("1fb56a5c18c27102dbc92260a4007c7732a0ccca")
+    );
+    assert_eq!(sources["zod_version"].as_str(), Some("4.4.3"));
+    assert_eq!(
+        sources["zod_package_revision"].as_str(),
+        Some("f3c9ec03ba7a28ae72d25cc295f38674bee0f559")
+    );
+    assert_eq!(
+        pins["evaluator"]["revision"].as_str(),
+        Some("bun-1.3.14-zod-4.4.3-sealed-2")
+    );
+
+    let verifier = fs::read_to_string(root.join("scripts/verify-evaluator-toolchain.sh")).unwrap();
+    for required in [
+        "bun --revision",
+        "zod_package_integrity",
+        "evaluator_worker_source_sha256",
+        "workflow TypeScript must remain Rust-parsed authoring input",
+    ] {
+        assert!(verifier.contains(required));
+    }
+    for script in ["scripts/evaluator-build.sh", "scripts/product-release.sh"] {
+        let source = fs::read_to_string(root.join(script)).unwrap();
+        assert!(source.contains("$root/evaluator/worker.ts"));
+        assert!(!source.contains(".workflow.ts"));
+    }
+}
+
+#[test]
 fn skills_delegate_to_runtime_not_model_scheduling() {
     let mut combined = String::new();
     for entry in fs::read_dir(root().join("skills")).unwrap().flatten() {

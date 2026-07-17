@@ -39,7 +39,7 @@ release_preflight() {
   for tool in cargo rustup bun pnpm node codesign xcrun spctl lipo ditto; do
     require_tool "$tool"
   done
-  test "$(bun --version)" = "1.3.14" || fail "Bun 1.3.14 is required"
+  "$root/scripts/verify-evaluator-toolchain.sh" --remote
   cargo run --quiet -p codex-orchestra-product -- doctor --root "$root"
   echo "OK release preflight"
 }
@@ -75,6 +75,9 @@ build_architecture() {
     --compile \
     --target="$bun_target" \
     --outfile "$resources/orchestra-validate-worker"
+  evaluator_revision=$(sed -n 's/^revision = "\(.*\)"/\1/p' "$root/product/pins.toml" | head -n 1)
+  node "$root/scripts/evaluator-smoke.mjs" \
+    "$resources/orchestra-validate-worker" "$evaluator_revision"
   cp "$codex/codex-rs/target/$target/release/codex" "$resources/codex"
   cp "$root/target/$target/release/orchestra-product" "$resources/orchestra-product"
   cp "$root/product/release.toml" "$resources/release.toml"
@@ -224,6 +227,9 @@ verify_architecture() {
       --name "$name" \
       --artifact "$path"
   done
+  evaluator_revision=$(sed -n 's/^revision = "\(.*\)"/\1/p' "$root/product/pins.toml" | head -n 1)
+  node "$root/scripts/evaluator-smoke.mjs" \
+    "$bundled/orchestra-validate-worker" "$evaluator_revision"
   echo "OK signed architecture: $target"
 }
 
