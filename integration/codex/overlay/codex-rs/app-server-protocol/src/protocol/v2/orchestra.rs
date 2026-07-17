@@ -11,6 +11,7 @@ pub struct AutomationValidateParams {
     pub thread_id: String,
     pub profile_path: String,
     pub fixture_issue: AutomationIssue,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub attempt: Option<u32>,
 }
@@ -22,6 +23,7 @@ pub struct AutomationRunFixtureParams {
     pub thread_id: String,
     pub profile_path: String,
     pub fixture_issue: AutomationIssue,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub attempt: Option<u32>,
 }
@@ -33,10 +35,13 @@ pub struct AutomationLinearReadParams {
     pub thread_id: String,
     pub profile_path: String,
     pub kind: AutomationLinearReadKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub first: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub issue_identifier: Option<String>,
 }
@@ -57,6 +62,7 @@ pub struct AutomationLinearReadResponse {
     pub status: AutomationLinearReadStatus,
     pub issues: Vec<AutomationIssue>,
     pub has_next_page: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub end_cursor: Option<String>,
     pub next_action: OrchestraBoundedText,
@@ -81,6 +87,15 @@ pub struct AutomationRunParams {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export_to = "v2/")]
+pub struct AutomationCancelIssueParams {
+    pub thread_id: String,
+    pub run_id: String,
+    pub claim_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export_to = "v2/")]
 pub struct AutomationReconcileParams {
     pub thread_id: String,
     pub run_id: String,
@@ -94,19 +109,25 @@ pub struct AutomationIssue {
     pub id: String,
     pub identifier: String,
     pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub priority: Option<i64>,
     pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub branch_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub url: Option<String>,
     pub labels: Vec<String>,
     pub blocked_by: Vec<AutomationIssueBlocker>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub updated_at: Option<String>,
 }
@@ -115,10 +136,13 @@ pub struct AutomationIssue {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct AutomationIssueBlocker {
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub identifier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub state: Option<String>,
 }
@@ -128,10 +152,13 @@ pub struct AutomationIssueBlocker {
 #[ts(export_to = "v2/")]
 pub struct AutomationValidateResponse {
     pub valid: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub profile: Option<AutomationProfile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub profile_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub preview: Option<AutomationWorkflowPreview>,
     pub diagnostics: Vec<AutomationDiagnostic>,
@@ -164,6 +191,7 @@ pub struct AutomationQueueReadResponse {
     pub category: AutomationQueueCategory,
     pub total: u32,
     pub items: Vec<AutomationQueueItemProjection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub next_offset: Option<u32>,
 }
@@ -200,8 +228,10 @@ pub struct AutomationQueueItemProjection {
     pub issue_identifier: String,
     pub issue_title: OrchestraBoundedText,
     pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub priority: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub claim_id: Option<String>,
     pub category: AutomationQueueCategory,
@@ -219,8 +249,10 @@ pub struct AutomationRunProjection {
     pub profile_digest: String,
     pub profile_revision: u64,
     pub profile_revision_status: AutomationProfileRevisionStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub pending_profile_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub rejected_profile_digest: Option<String>,
     pub profile_diagnostics: Vec<OrchestraBoundedText>,
@@ -246,6 +278,7 @@ pub struct AutomationIssueClaimProjection {
     pub issue_identifier: String,
     pub issue_title: OrchestraBoundedText,
     pub tracker_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub priority: Option<i64>,
     pub attempt: u32,
@@ -254,10 +287,13 @@ pub struct AutomationIssueClaimProjection {
     pub status: AutomationClaimStatus,
     pub worktree: String,
     pub source_revision: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub issue_task: Option<OrchestraAgentReference>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub workflow_run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub workflow_status: Option<OrchestraRunStatus>,
     pub effects: Vec<AutomationEffectReceiptProjection>,
@@ -272,13 +308,16 @@ pub struct AutomationIssueClaimProjection {
 pub struct AutomationHookReceiptProjection {
     pub kind: AutomationHookKind,
     pub invocation: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub command_sha256: Option<String>,
     pub status: AutomationHookStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub exit_code: Option<i32>,
     pub stdout_preview: OrchestraBoundedText,
     pub stderr_preview: OrchestraBoundedText,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub failure: Option<OrchestraBoundedText>,
 }
@@ -289,6 +328,7 @@ pub struct AutomationHookReceiptProjection {
 pub struct AutomationCleanupProjection {
     pub status: AutomationCleanupStatus,
     pub attempts: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub last_failure: Option<OrchestraBoundedText>,
 }
@@ -333,8 +373,10 @@ pub struct AutomationEffectReceiptProjection {
     pub gate_policy: AutomationGatePolicy,
     pub request_sha256: String,
     pub body_preview: OrchestraBoundedText,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub provider_receipt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub failure: Option<OrchestraBoundedText>,
 }
@@ -446,12 +488,16 @@ pub struct AutomationWorkspaceProfile {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct AutomationHooksProfile {
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub after_create: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub before_run: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub after_run: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub before_remove: Option<String>,
     pub timeout_ms: u64,
@@ -524,8 +570,10 @@ pub struct AutomationSecretReference {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct AutomationWorkflowPreview {
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub rendered_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub workflow: Option<String>,
     pub effects: Vec<AutomationEffect>,
@@ -540,6 +588,7 @@ pub struct AutomationWorkflowInput {
     pub name: String,
     pub kind: AutomationWorkflowInputKind,
     pub required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub default: Option<Value>,
 }
@@ -660,6 +709,31 @@ mod automation_protocol_tests {
     }
 
     #[test]
+    fn automation_optional_fields_are_omitted_instead_of_serialized_as_null() {
+        let hooks = serde_json::to_value(AutomationHooksProfile {
+            after_create: None,
+            before_run: None,
+            after_run: None,
+            before_remove: None,
+            timeout_ms: 30_000,
+        })
+        .unwrap();
+        assert!(hooks.get("afterCreate").is_none());
+        assert!(hooks.get("beforeRun").is_none());
+        assert!(hooks.get("afterRun").is_none());
+        assert!(hooks.get("beforeRemove").is_none());
+
+        let input = serde_json::to_value(AutomationWorkflowInput {
+            name: "issue".into(),
+            kind: AutomationWorkflowInputKind::Object,
+            required: true,
+            default: None,
+        })
+        .unwrap();
+        assert!(input.get("default").is_none());
+    }
+
+    #[test]
     fn linear_read_request_exposes_only_typed_read_selection() {
         let value = serde_json::to_value(AutomationLinearReadParams {
             thread_id: "thread-1".into(),
@@ -711,6 +785,20 @@ mod automation_protocol_tests {
         let mut forged = value;
         forged["leaseEpoch"] = Value::from(99);
         assert!(serde_json::from_value::<AutomationReconcileParams>(forged).is_err());
+    }
+
+    #[test]
+    fn cancel_issue_request_selects_only_one_task_owned_claim() {
+        let value = serde_json::to_value(AutomationCancelIssueParams {
+            thread_id: "task-42".into(),
+            run_id: "automation-42".into(),
+            claim_id: "claim-42".into(),
+        })
+        .unwrap();
+        assert_eq!(value["claimId"], "claim-42");
+        let mut forged = value;
+        forged["issueId"] = serde_json::json!("another-issue");
+        assert!(serde_json::from_value::<AutomationCancelIssueParams>(forged).is_err());
     }
 }
 

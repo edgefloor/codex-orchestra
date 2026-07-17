@@ -5,7 +5,7 @@ index ce464565..632f69c7 100644
 @@ -1060,6 +1060,61 @@ describe("ProviderCommandReactor", () => {
      expect(harness.stopSession.mock.calls.length).toBe(0);
    });
-
+ 
 +  it("recovers an exited provider through its native resume cursor before the next turn", async () => {
 +    const harness = await createHarness();
 +    const now = "2026-01-01T00:00:00.000Z";
@@ -71,16 +71,16 @@ index 9c7a7c94..ab026ca8 100644
 @@ -80,6 +80,10 @@ function mapProviderSessionStatusToOrchestrationStatus(
    }
  }
-
+ 
 +function isUsableProviderSession(session: ProviderSession | undefined): boolean {
 +  return session !== undefined && session.status !== "error" && session.status !== "closed";
 +}
 +
  const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
    event.commandId !== null ? `command:${event.commandId}` : `event:${event.eventId}`;
-
+ 
 @@ -370,7 +374,10 @@ const make = Effect.gen(function* () {
-
+ 
      const activeSession = yield* resolveActiveSession(threadId);
      const activeThreadSession =
 -      thread.session !== null && thread.session.status !== "stopped" && activeSession
@@ -93,7 +93,7 @@ index 9c7a7c94..ab026ca8 100644
      if (
 @@ -512,7 +519,11 @@ const make = Effect.gen(function* () {
        });
-
+ 
      const existingSessionThreadId =
 -      thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
 +      thread.session &&
@@ -107,7 +107,7 @@ index 9c7a7c94..ab026ca8 100644
 @@ -578,7 +589,22 @@ const make = Effect.gen(function* () {
        return restartedSession.threadId;
      }
-
+ 
 -    const startedSession = yield* startProviderSession(undefined);
 +    const recoveryResumeCursor =
 +      activeSession !== undefined && !isUsableProviderSession(activeSession)
@@ -140,7 +140,7 @@ index ffcc94ca..d9b04369 100644
 +  Schema.Struct({ manifestSha256: Schema.NonEmptyString }),
 +);
 +const decodeOrchestraReleaseIdentity = Schema.decodeEffect(OrchestraReleaseIdentity);
-
+ 
  const DRIVER_KIND = ProviderDriverKind.make("codex");
  const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 @@ -119,7 +123,46 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
@@ -205,7 +205,7 @@ index ffcc94ca..d9b04369 100644
 +        ...(expectedProductManifestSha256 ? { expectedProductManifestSha256 } : {}),
        });
        const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);
-
+ 
 diff --git a/apps/server/src/provider/Layers/CodexAdapter.test.ts b/apps/server/src/provider/Layers/CodexAdapter.test.ts
 index 515a7c6f..b60cc64f 100644
 --- a/apps/server/src/provider/Layers/CodexAdapter.test.ts
@@ -222,7 +222,7 @@ index 515a7c6f..b60cc64f 100644
 @@ -103,6 +105,11 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
        }),
    );
-
+ 
 +  public readonly queryOrchestraImpl = vi.fn(
 +    (_input: Omit<OrchestraQueryInput, "threadId">): Promise<OrchestraQueryResult> =>
 +      Promise.resolve({ selector: "steps", result: { items: [] } }),
@@ -234,7 +234,7 @@ index 515a7c6f..b60cc64f 100644
 @@ -141,6 +148,10 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
      return Effect.promise(() => this.rollbackThreadImpl(numTurns));
    }
-
+ 
 +  queryOrchestra(input: Omit<OrchestraQueryInput, "threadId">) {
 +    return Effect.promise(() => this.queryOrchestraImpl(input));
 +  }
@@ -244,7 +244,7 @@ index 515a7c6f..b60cc64f 100644
    }
 @@ -448,6 +459,92 @@ function startLifecycleRuntime() {
  }
-
+ 
  lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
 +  it.effect("routes bounded Orchestra queries through the active Codex task", () =>
 +    Effect.gen(function* () {
@@ -336,7 +336,7 @@ index 515a7c6f..b60cc64f 100644
      Effect.gen(function* () {
        const { adapter, runtime } = yield* startLifecycleRuntime();
 diff --git a/apps/server/src/provider/Layers/CodexAdapter.ts b/apps/server/src/provider/Layers/CodexAdapter.ts
-index 270126e9..46d66f62 100644
+index 270126e9..ff8101e7 100644
 --- a/apps/server/src/provider/Layers/CodexAdapter.ts
 +++ b/apps/server/src/provider/Layers/CodexAdapter.ts
 @@ -11,6 +11,7 @@ import {
@@ -360,16 +360,16 @@ index 270126e9..46d66f62 100644
  );
  const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 +const isOrchestraReplayEvent = Schema.is(OrchestraReplayEvent);
-
+ 
  const PROVIDER = ProviderDriverKind.make("codex");
-
+ 
 @@ -82,6 +85,7 @@ export interface CodexAdapterLiveOptions {
    >;
    readonly nativeEventLogPath?: string;
    readonly nativeEventLogger?: EventNdjsonLogger;
 +  readonly expectedProductManifestSha256?: string;
  }
-
+ 
  interface CodexAdapterSessionContext {
 @@ -490,6 +494,25 @@ function mapToRuntimeEvents(
    event: ProviderEvent,
@@ -407,10 +407,10 @@ index 270126e9..46d66f62 100644
            ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
            ...(isCodexResumeCursorSchema(input.resumeCursor)
              ? { resumeCursor: input.resumeCursor }
-@@ -1613,6 +1639,175 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+@@ -1613,6 +1639,193 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
      );
    };
-
+ 
 +  const queryOrchestra: NonNullable<CodexAdapterShape["queryOrchestra"]> = Effect.fn(
 +    "queryOrchestra",
 +  )(function* (threadId, input) {
@@ -514,6 +514,24 @@ index 270126e9..46d66f62 100644
 +      .pipe(Effect.mapError((cause) => mapCodexRuntimeError(threadId, "automation/cancel", cause)));
 +  });
 +
++  const cancelAutomationIssue: NonNullable<CodexAdapterShape["cancelAutomationIssue"]> = Effect.fn(
++    "cancelAutomationIssue",
++  )(function* (threadId, input) {
++    const session = yield* requireSession(threadId);
++    if (!session.runtime.cancelAutomationIssue) {
++      return yield* new ProviderAdapterRequestError({
++        provider: PROVIDER,
++        method: "automation/cancelIssue",
++        detail: "This Codex runtime does not expose task-owned Issue cancellation.",
++      });
++    }
++    return yield* session.runtime
++      .cancelAutomationIssue(input)
++      .pipe(
++        Effect.mapError((cause) => mapCodexRuntimeError(threadId, "automation/cancelIssue", cause)),
++      );
++  });
++
 +  const automationStatus: NonNullable<CodexAdapterShape["automationStatus"]> = Effect.fn(
 +    "automationStatus",
 +  )(function* (threadId, input) {
@@ -583,7 +601,7 @@ index 270126e9..46d66f62 100644
    const respondToRequest: CodexAdapterShape["respondToRequest"] = (threadId, requestId, decision) =>
      requireSession(threadId).pipe(
        Effect.flatMap((session) => session.runtime.respondToRequest(requestId, decision)),
-@@ -1700,6 +1895,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+@@ -1700,6 +1913,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
      interruptTurn,
      readThread,
      rollbackThread,
@@ -596,6 +614,7 @@ index 270126e9..46d66f62 100644
 +    pauseAutomation,
 +    refreshAutomation,
 +    resumeAutomation,
++    cancelAutomationIssue,
 +    cancelAutomation,
      respondToRequest,
      respondToUserInput,
@@ -616,11 +635,11 @@ index 8aeacd87..9dcbbcba 100644
 +  validateOrchestraProductCompatibility,
  } from "./CodexSessionRuntime.ts";
  const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
-
+ 
 @@ -37,6 +40,132 @@ describe("CodexSessionRuntimeIdentifierGenerationError", () => {
    });
  });
-
+ 
 +describe("Orchestra Product compatibility", () => {
 +  it("accepts only the exact manifest with the required native capabilities", () => {
 +    NodeAssert.equal(
@@ -751,10 +770,10 @@ index 8aeacd87..9dcbbcba 100644
    threadId: string,
  ): CodexRpc.ClientRequestResponsesByMethod["thread/start"] {
 diff --git a/apps/server/src/provider/Layers/CodexSessionRuntime.ts b/apps/server/src/provider/Layers/CodexSessionRuntime.ts
-index 99ac498f..a22dafcd 100644
+index 99ac498f..92524061 100644
 --- a/apps/server/src/provider/Layers/CodexSessionRuntime.ts
 +++ b/apps/server/src/provider/Layers/CodexSessionRuntime.ts
-@@ -1,4 +1,20 @@
+@@ -1,4 +1,21 @@
  import {
 +  AutomationLinearReadResult,
 +  type AutomationLinearReadInput,
@@ -765,6 +784,7 @@ index 99ac498f..a22dafcd 100644
 +  AutomationRunResult,
 +  type AutomationRunInput,
 +  type AutomationCancelInput,
++  type AutomationCancelIssueInput,
 +  AutomationValidateResult,
 +  type AutomationValidateInput,
 +  OrchestraQueryInput,
@@ -775,7 +795,7 @@ index 99ac498f..a22dafcd 100644
    ApprovalRequestId,
    DEFAULT_MODEL,
    EventId,
-@@ -42,6 +58,26 @@ import {
+@@ -42,6 +59,26 @@ import {
    CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
  } from "../CodexDeveloperInstructions.ts";
  const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
@@ -799,10 +819,10 @@ index 99ac498f..a22dafcd 100644
 +  ),
 +});
 +const decodeOrchestraProductHandshake = Schema.decodeUnknownEffect(OrchestraProductHandshake);
-
+ 
  const PROVIDER = ProviderDriverKind.make("codex");
-
-@@ -54,6 +90,7 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
+ 
+@@ -54,6 +91,7 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
    "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
  ];
  const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
@@ -810,15 +830,15 @@ index 99ac498f..a22dafcd 100644
  const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
    "not found",
    "missing thread",
-@@ -107,6 +144,7 @@ export interface CodexSessionRuntimeOptions {
+@@ -107,6 +145,7 @@ export interface CodexSessionRuntimeOptions {
    readonly serviceTier?: CodexServiceTier | undefined;
    readonly resumeCursor?: CodexResumeCursor;
    readonly appServerArgs?: ReadonlyArray<string>;
 +  readonly expectedProductManifestSha256?: string;
  }
-
+ 
  export interface CodexSessionRuntimeSendTurnInput {
-@@ -142,6 +180,36 @@ export interface CodexSessionRuntimeShape {
+@@ -142,6 +181,39 @@ export interface CodexSessionRuntimeShape {
    readonly rollbackThread: (
      numTurns: number,
    ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
@@ -849,13 +869,16 @@ index 99ac498f..a22dafcd 100644
 +  readonly cancelAutomation?: (
 +    input: Omit<AutomationCancelInput, "threadId">,
 +  ) => Effect.Effect<AutomationRunResult, CodexSessionRuntimeError>;
++  readonly cancelAutomationIssue?: (
++    input: Omit<AutomationCancelIssueInput, "threadId">,
++  ) => Effect.Effect<AutomationRunResult, CodexSessionRuntimeError>;
 +  readonly queryOrchestra?: (
 +    input: Omit<OrchestraQueryInput, "threadId">,
 +  ) => Effect.Effect<OrchestraQueryResult, CodexSessionRuntimeError>;
    readonly respondToRequest: (
      requestId: ApprovalRequestId,
      decision: ProviderApprovalDecision,
-@@ -159,7 +227,48 @@ export type CodexSessionRuntimeError =
+@@ -159,7 +231,48 @@ export type CodexSessionRuntimeError =
    | CodexSessionRuntimePendingApprovalNotFoundError
    | CodexSessionRuntimePendingUserInputNotFoundError
    | CodexSessionRuntimeInvalidUserInputAnswersError
@@ -902,13 +925,13 @@ index 99ac498f..a22dafcd 100644
 +      : "The selected Codex binary does not expose the Orchestra Product manifest.",
 +  });
 +}
-
+ 
  export class CodexSessionRuntimePendingApprovalNotFoundError extends Schema.TaggedErrorClass<CodexSessionRuntimePendingApprovalNotFoundError>()(
    "CodexSessionRuntimePendingApprovalNotFoundError",
-@@ -398,6 +507,19 @@ export function buildTurnStartParams(input: {
+@@ -398,6 +511,19 @@ export function buildTurnStartParams(input: {
    );
  }
-
+ 
 +export function redactCodexDiagnostic(rawDiagnostic: string): string {
 +  const redacted = rawDiagnostic
 +    .replace(/(bearer\s+)[a-z0-9._~+/=-]+/giu, "$1[REDACTED]")
@@ -925,28 +948,28 @@ index 99ac498f..a22dafcd 100644
  function classifyCodexStderrLine(rawLine: string): { readonly message: string } | null {
    const line = rawLine.replaceAll(ANSI_ESCAPE_REGEX, "").trim();
    if (!line) {
-@@ -415,7 +537,7 @@ function classifyCodexStderrLine(rawLine: string): { readonly message: string }
+@@ -415,7 +541,7 @@ function classifyCodexStderrLine(rawLine: string): { readonly message: string }
      }
    }
-
+ 
 -  return { message: line };
 +  return { message: redactCodexDiagnostic(line) };
  }
-
+ 
  export function isRecoverableThreadResumeError(error: unknown): boolean {
-@@ -708,6 +830,8 @@ export const makeCodexSessionRuntime = (
+@@ -708,6 +834,8 @@ export const makeCodexSessionRuntime = (
      const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
      const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
      const collabReceiverTurnsRef = yield* Ref.make(new Map<string, TurnId>());
 +    const seenOrchestraEventsRef = yield* Ref.make(new Set<string>());
 +    const settledTurnIdsRef = yield* Ref.make(new Set<string>());
      const closedRef = yield* Ref.make(false);
-
+ 
      // `~` is not shell-expanded when env vars are set via
-@@ -800,6 +924,91 @@ export const makeCodexSessionRuntime = (
+@@ -800,6 +928,91 @@ export const makeCodexSessionRuntime = (
          message,
        });
-
+ 
 +    const readOrchestraReplay = (providerThreadId: string) =>
 +      Effect.gen(function* () {
 +        const raw = yield* client.raw.request("thread/read", {
@@ -1035,8 +1058,8 @@ index 99ac498f..a22dafcd 100644
      const settlePendingApprovals = (decision: ProviderApprovalDecision) =>
        Ref.get(pendingApprovalsRef).pipe(
          Effect.flatMap((pendingApprovals) =>
-@@ -826,6 +1035,14 @@ export const makeCodexSessionRuntime = (
-
+@@ -826,6 +1039,14 @@ export const makeCodexSessionRuntime = (
+ 
      const handleRawNotification = (notification: CodexServerNotification) =>
        Effect.gen(function* () {
 +        if (notification.method === "turn/completed") {
@@ -1050,7 +1073,7 @@ index 99ac498f..a22dafcd 100644
          const payload = notification.params;
          const route = readRouteFields(notification);
          const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
-@@ -927,11 +1144,56 @@ export const makeCodexSessionRuntime = (
+@@ -927,11 +1148,56 @@ export const makeCodexSessionRuntime = (
              status: payload.turn.status === "failed" ? "error" : "ready",
              activeTurnId: undefined,
              ...(lastError ? { lastError } : {}),
@@ -1059,7 +1082,7 @@ index 99ac498f..a22dafcd 100644
          }),
        ),
      );
-
+ 
 +    // The pinned Orchestra Product currently reports the native thread's
 +    // authoritative idle transition without a separate turn/completed frame.
 +    // Settle that Product turn at the existing Codex provider seam so T3Code's
@@ -1108,10 +1131,10 @@ index 99ac498f..a22dafcd 100644
      yield* client.handleServerNotification("error", (payload) =>
        currentSessionProviderThreadId.pipe(
          Effect.flatMap((providerThreadId) => {
-@@ -1170,36 +1432,58 @@ export const makeCodexSessionRuntime = (
+@@ -1170,36 +1436,58 @@ export const makeCodexSessionRuntime = (
        Effect.forkIn(runtimeScope),
      );
-
+ 
 +    const recordChildExit = (exitCode: number | undefined, failure?: unknown) =>
 +      Ref.get(closedRef).pipe(
 +        Effect.flatMap((closed) => {
@@ -1164,7 +1187,7 @@ index 99ac498f..a22dafcd 100644
 +      }),
        Effect.forkIn(runtimeScope),
      );
-
+ 
      const start = Effect.fn("CodexSessionRuntime.start")(function* () {
        yield* emitSessionEvent("session/connecting", "Starting Codex App Server session.");
 -      yield* client.request("initialize", buildCodexInitializeParams());
@@ -1189,9 +1212,9 @@ index 99ac498f..a22dafcd 100644
 +        yield* client.request("initialize", buildCodexInitializeParams());
 +      }
        yield* client.notify("initialized", undefined);
-
+ 
        const requestedModel = normalizeCodexModelSlug(options.model);
-@@ -1224,6 +1508,7 @@ export const makeCodexSessionRuntime = (
+@@ -1224,6 +1512,7 @@ export const makeCodexSessionRuntime = (
          updatedAt: yield* nowIso,
        } satisfies ProviderSession;
        yield* Ref.set(sessionRef, session);
@@ -1199,7 +1222,7 @@ index 99ac498f..a22dafcd 100644
        yield* emitSessionEvent("session/ready", "Codex App Server session ready.");
        return session;
      });
-@@ -1346,6 +1631,177 @@ export const makeCodexSessionRuntime = (
+@@ -1346,6 +1635,194 @@ export const makeCodexSessionRuntime = (
            });
            return parseThreadSnapshot(response);
          }),
@@ -1339,6 +1362,23 @@ index 99ac498f..a22dafcd 100644
 +            ),
 +          );
 +        }),
++      cancelAutomationIssue: (input) =>
++        Effect.gen(function* () {
++          const providerThreadId = yield* readProviderThreadId;
++          const response = yield* client.raw.request("automation/cancelIssue", {
++            ...input,
++            threadId: providerThreadId,
++          });
++          return yield* decodeAutomationRunResponse(response).pipe(
++            Effect.mapError((error) =>
++              CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
++                "decode-response-payload",
++                error,
++                { method: "automation/cancelIssue" },
++              ),
++            ),
++          );
++        }),
 +      cancelAutomation: (input) =>
 +        Effect.gen(function* () {
 +          const providerThreadId = yield* readProviderThreadId;
@@ -1378,13 +1418,14 @@ index 99ac498f..a22dafcd 100644
          Effect.gen(function* () {
            const pending = (yield* Ref.get(pendingApprovalsRef)).get(requestId);
 diff --git a/apps/server/src/provider/Layers/ProviderService.ts b/apps/server/src/provider/Layers/ProviderService.ts
-index 2eaaeb8c..0b8465dd 100644
+index 2eaaeb8c..8a8b166b 100644
 --- a/apps/server/src/provider/Layers/ProviderService.ts
 +++ b/apps/server/src/provider/Layers/ProviderService.ts
-@@ -10,6 +10,14 @@
+@@ -10,6 +10,15 @@
   * @module ProviderServiceLive
   */
  import {
++  AutomationCancelIssueInput,
 +  AutomationCancelInput,
 +  AutomationLinearReadInput,
 +  AutomationLifecycleInput,
@@ -1396,10 +1437,10 @@ index 2eaaeb8c..0b8465dd 100644
    ModelSelection,
    NonNegativeInt,
    ThreadId,
-@@ -1008,6 +1016,234 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+@@ -1008,6 +1017,257 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
      );
    });
-
+ 
 +  const validateAutomationProfile = Effect.fn("validateAutomationProfile")(function* (
 +    rawInput: AutomationValidateInput,
 +  ) {
@@ -1513,6 +1554,29 @@ index 2eaaeb8c..0b8465dd 100644
 +    }
 +    const { threadId: _threadId, ...request } = input;
 +    return yield* routed.adapter.cancelAutomation(routed.threadId, request);
++  });
++
++  const cancelAutomationIssue = Effect.fn("cancelAutomationIssue")(function* (
++    rawInput: AutomationCancelIssueInput,
++  ) {
++    const input = yield* decodeInputOrValidationError({
++      operation: "ProviderService.cancelAutomationIssue",
++      schema: AutomationCancelIssueInput,
++      payload: rawInput,
++    });
++    const routed = yield* resolveRoutableSession({
++      threadId: input.threadId,
++      operation: "ProviderService.cancelAutomationIssue",
++      allowRecovery: true,
++    });
++    if (routed.adapter.provider !== "codex" || !routed.adapter.cancelAutomationIssue) {
++      return yield* toValidationError(
++        "ProviderService.cancelAutomationIssue",
++        "Task-owned Issue cancellation requires an active Codex task.",
++      );
++    }
++    const { threadId: _threadId, ...request } = input;
++    return yield* routed.adapter.cancelAutomationIssue(routed.threadId, request);
 +  });
 +
 +  const automationStatus = Effect.fn("automationStatus")(function* (
@@ -1631,7 +1695,7 @@ index 2eaaeb8c..0b8465dd 100644
    const runStopAll = Effect.fn("runStopAll")(function* () {
      const threadIds = yield* directory.listThreadIds();
      const currentAdapters = yield* getAdapterEntries;
-@@ -1079,6 +1315,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
+@@ -1079,6 +1339,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
      getCapabilities,
      getInstanceInfo,
      rollbackConversation,
@@ -1644,15 +1708,16 @@ index 2eaaeb8c..0b8465dd 100644
 +    pauseAutomation,
 +    refreshAutomation,
 +    resumeAutomation,
++    cancelAutomationIssue,
 +    cancelAutomation,
      // Each access creates a fresh PubSub subscription so that multiple
      // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
      // independently receive all runtime events.
 diff --git a/apps/server/src/provider/Services/ProviderAdapter.ts b/apps/server/src/provider/Services/ProviderAdapter.ts
-index 01eeae7b..ca0d9719 100644
+index 01eeae7b..a316f714 100644
 --- a/apps/server/src/provider/Services/ProviderAdapter.ts
 +++ b/apps/server/src/provider/Services/ProviderAdapter.ts
-@@ -8,6 +8,19 @@
+@@ -8,6 +8,20 @@
   * @module ProviderAdapter
   */
  import type {
@@ -1665,6 +1730,7 @@ index 01eeae7b..ca0d9719 100644
 +  AutomationRunInput,
 +  AutomationRunResult,
 +  AutomationCancelInput,
++  AutomationCancelIssueInput,
 +  AutomationValidateInput,
 +  AutomationValidateResult,
 +  OrchestraQueryInput,
@@ -1672,10 +1738,10 @@ index 01eeae7b..ca0d9719 100644
    ApprovalRequestId,
    ProviderApprovalDecision,
    ProviderDriverKind,
-@@ -114,6 +127,48 @@ export interface ProviderAdapterShape<TError> {
+@@ -114,6 +128,52 @@ export interface ProviderAdapterShape<TError> {
      numTurns: number,
    ) => Effect.Effect<ProviderThreadSnapshot, TError>;
-
+ 
 +  /** Codex-native extension point. Other provider adapters leave this absent. */
 +  readonly validateAutomationProfile?: (
 +    threadId: ThreadId,
@@ -1713,6 +1779,10 @@ index 01eeae7b..ca0d9719 100644
 +    threadId: ThreadId,
 +    input: Omit<AutomationCancelInput, "threadId">,
 +  ) => Effect.Effect<AutomationRunResult, TError>;
++  readonly cancelAutomationIssue?: (
++    threadId: ThreadId,
++    input: Omit<AutomationCancelIssueInput, "threadId">,
++  ) => Effect.Effect<AutomationRunResult, TError>;
 +  readonly queryOrchestra?: (
 +    threadId: ThreadId,
 +    input: Omit<OrchestraQueryInput, "threadId">,
@@ -1722,10 +1792,10 @@ index 01eeae7b..ca0d9719 100644
     * Stop all sessions owned by this adapter.
     */
 diff --git a/apps/server/src/provider/Services/ProviderService.ts b/apps/server/src/provider/Services/ProviderService.ts
-index 4d4cb4fa..5cc4aba7 100644
+index 4d4cb4fa..420fcaaf 100644
 --- a/apps/server/src/provider/Services/ProviderService.ts
 +++ b/apps/server/src/provider/Services/ProviderService.ts
-@@ -12,6 +12,19 @@
+@@ -12,6 +12,20 @@
   * @module ProviderService
   */
  import type {
@@ -1738,6 +1808,7 @@ index 4d4cb4fa..5cc4aba7 100644
 +  AutomationRunInput,
 +  AutomationRunResult,
 +  AutomationCancelInput,
++  AutomationCancelIssueInput,
 +  AutomationValidateInput,
 +  AutomationValidateResult,
 +  OrchestraQueryInput,
@@ -1745,10 +1816,10 @@ index 4d4cb4fa..5cc4aba7 100644
    ProviderInterruptTurnInput,
    ProviderInstanceId,
    ProviderRespondToRequestInput,
-@@ -105,6 +118,37 @@ export interface ProviderServiceShape {
+@@ -105,6 +119,40 @@ export interface ProviderServiceShape {
      readonly numTurns: number;
    }) => Effect.Effect<void, ProviderServiceError>;
-
+ 
 +  readonly validateAutomationProfile?: (
 +    input: AutomationValidateInput,
 +  ) => Effect.Effect<AutomationValidateResult, ProviderServiceError>;
@@ -1776,6 +1847,9 @@ index 4d4cb4fa..5cc4aba7 100644
 +  readonly cancelAutomation?: (
 +    input: AutomationCancelInput,
 +  ) => Effect.Effect<AutomationRunResult, ProviderServiceError>;
++  readonly cancelAutomationIssue?: (
++    input: AutomationCancelIssueInput,
++  ) => Effect.Effect<AutomationRunResult, ProviderServiceError>;
 +  readonly queryOrchestra?: (
 +    input: OrchestraQueryInput,
 +  ) => Effect.Effect<OrchestraQueryResult, ProviderServiceError>;
@@ -1784,7 +1858,7 @@ index 4d4cb4fa..5cc4aba7 100644
     * Canonical provider runtime event stream.
     *
 diff --git a/apps/server/src/ws.ts b/apps/server/src/ws.ts
-index fafdbfa6..a0bf1fee 100644
+index fafdbfa6..867829ff 100644
 --- a/apps/server/src/ws.ts
 +++ b/apps/server/src/ws.ts
 @@ -11,6 +11,9 @@ import * as Schema from "effect/Schema";
@@ -1805,7 +1879,7 @@ index fafdbfa6..a0bf1fee 100644
  import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
  import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
  import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
-@@ -321,6 +325,16 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
+@@ -321,6 +325,17 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
    [WS_METHODS.vcsSwitchRef, AuthOrchestrationOperateScope],
    [WS_METHODS.vcsInit, AuthOrchestrationOperateScope],
    [WS_METHODS.reviewGetDiffPreview, AuthReviewWriteScope],
@@ -1817,12 +1891,13 @@ index fafdbfa6..a0bf1fee 100644
 +  [WS_METHODS.automationPause, AuthOrchestrationOperateScope],
 +  [WS_METHODS.automationRefresh, AuthOrchestrationOperateScope],
 +  [WS_METHODS.automationResume, AuthOrchestrationOperateScope],
++  [WS_METHODS.automationCancelIssue, AuthOrchestrationOperateScope],
 +  [WS_METHODS.automationCancel, AuthOrchestrationOperateScope],
 +  [WS_METHODS.orchestraQuery, AuthOrchestrationReadScope],
    [WS_METHODS.terminalOpen, AuthTerminalOperateScope],
    [WS_METHODS.terminalAttach, AuthTerminalOperateScope],
    [WS_METHODS.terminalWrite, AuthTerminalOperateScope],
-@@ -1242,6 +1256,266 @@ const makeWsRpcLayer = (
+@@ -1242,6 +1257,292 @@ const makeWsRpcLayer = (
            observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {
              "rpc.aggregate": "server",
            }),
@@ -1944,6 +2019,32 @@ index fafdbfa6..a0bf1fee 100644
 +                });
 +              }
 +              return yield* providerService.cancelAutomation(input).pipe(
++                Effect.mapError(
++                  (cause) =>
++                    new AutomationRunError({
++                      threadId: input.threadId,
++                      message: cause.message,
++                      cause,
++                    }),
++                ),
++              );
++            }),
++            { "rpc.aggregate": "automation", "thread.id": input.threadId },
++          ),
++        [WS_METHODS.automationCancelIssue]: (input) =>
++          observeRpcEffect(
++            WS_METHODS.automationCancelIssue,
++            Effect.gen(function* () {
++              const providerService = Option.getOrUndefined(
++                yield* Effect.serviceOption(ProviderService.ProviderService),
++              );
++              if (!providerService?.cancelAutomationIssue) {
++                return yield* new AutomationRunError({
++                  threadId: input.threadId,
++                  message: "Task-owned Issue cancellation is unavailable.",
++                });
++              }
++              return yield* providerService.cancelAutomationIssue(input).pipe(
 +                Effect.mapError(
 +                  (cause) =>
 +                    new AutomationRunError({
@@ -2429,10 +2530,10 @@ index 00000000..12edde65
 +}
 diff --git a/apps/web/src/components/chat/AutomationProfileDialog.tsx b/apps/web/src/components/chat/AutomationProfileDialog.tsx
 new file mode 100644
-index 00000000..e3f1c576
+index 00000000..0a3553ae
 --- /dev/null
 +++ b/apps/web/src/components/chat/AutomationProfileDialog.tsx
-@@ -0,0 +1,757 @@
+@@ -0,0 +1,875 @@
 +import type {
 +  AutomationLinearReadResult,
 +  AutomationQueueReadInput,
@@ -2447,9 +2548,10 @@ index 00000000..e3f1c576
 +  squashAtomCommandFailure,
 +} from "@t3tools/client-runtime/state/runtime";
 +import { BotIcon, CheckCircle2Icon, CircleAlertIcon } from "lucide-react";
-+import { memo, useCallback, useState } from "react";
++import { memo, useCallback, useEffect, useRef, useState } from "react";
 +
 +import {
++  cancelAutomationIssue,
 +  cancelAutomation,
 +  pauseAutomation,
 +  readLinearAutomation,
@@ -2493,6 +2595,10 @@ index 00000000..e3f1c576
 +  return cause instanceof Error ? cause.message : "Could not validate the Automation profile.";
 +}
 +
++function automationRunStorageKey(threadId: ThreadId): string {
++  return `t3code:automation-run:${threadId}`;
++}
++
 +export const AutomationProfileDialog = memo(function AutomationProfileDialog({
 +  environmentId,
 +  threadId,
@@ -2501,6 +2607,7 @@ index 00000000..e3f1c576
 +  const validate = useAtomCommand(validateAutomationProfile, { reportFailure: false });
 +  const runFixture = useAtomCommand(runAutomationFixture, { reportFailure: false });
 +  const cancel = useAtomCommand(cancelAutomation, { reportFailure: false });
++  const cancelIssue = useAtomCommand(cancelAutomationIssue, { reportFailure: false });
 +  const pause = useAtomCommand(pauseAutomation, { reportFailure: false });
 +  const readStatus = useAtomCommand(readAutomationStatus, { reportFailure: false });
 +  const refresh = useAtomCommand(refreshAutomation, { reportFailure: false });
@@ -2513,12 +2620,55 @@ index 00000000..e3f1c576
 +  const [issueState, setIssueState] = useState("Todo");
 +  const [issueLabels, setIssueLabels] = useState("automation");
 +  const [attempt, setAttempt] = useState("1");
++  const [runId, setRunId] = useState("");
 +  const [pending, setPending] = useState(false);
 +  const [result, setResult] = useState<AutomationValidateResult | null>(null);
 +  const [runResult, setRunResult] = useState<AutomationRunResult | null>(null);
 +  const [linearResult, setLinearResult] = useState<AutomationLinearReadResult | null>(null);
 +  const [queueResult, setQueueResult] = useState<AutomationQueueReadResult | null>(null);
 +  const [error, setError] = useState<string | null>(null);
++  const restoredRunId = useRef<string | null>(null);
++
++  const acceptRunResult = useCallback(
++    (value: AutomationRunResult) => {
++      setRunResult(value);
++      setRunId(value.run.runId);
++      localStorage.setItem(automationRunStorageKey(threadId), value.run.runId);
++    },
++    [threadId],
++  );
++
++  const loadRun = useCallback(
++    (candidateRunId = runId) => {
++      const normalizedRunId = candidateRunId.trim();
++      if (!normalizedRunId) return;
++      setPending(true);
++      setError(null);
++      void readStatus({
++        environmentId,
++        input: { threadId, runId: normalizedRunId },
++      }).then((commandResult) => {
++        setPending(false);
++        if (commandResult._tag === "Success") {
++          acceptRunResult(commandResult.value);
++          return;
++        }
++        if (!isAtomCommandInterrupted(commandResult)) {
++          setError(readableError(squashAtomCommandFailure(commandResult)));
++        }
++      });
++    },
++    [acceptRunResult, environmentId, readStatus, runId, threadId],
++  );
++
++  useEffect(() => {
++    if (!open || runResult) return;
++    const storedRunId = localStorage.getItem(automationRunStorageKey(threadId));
++    if (!storedRunId || restoredRunId.current === storedRunId) return;
++    restoredRunId.current = storedRunId;
++    setRunId(storedRunId);
++    loadRun(storedRunId);
++  }, [loadRun, open, runResult, threadId]);
 +
 +  const submit = useCallback(() => {
 +    setPending(true);
@@ -2577,7 +2727,7 @@ index 00000000..e3f1c576
 +    }).then((commandResult) => {
 +      setPending(false);
 +      if (commandResult._tag === "Success") {
-+        setRunResult(commandResult.value);
++        acceptRunResult(commandResult.value);
 +        return;
 +      }
 +      if (!isAtomCommandInterrupted(commandResult)) {
@@ -2586,6 +2736,7 @@ index 00000000..e3f1c576
 +    });
 +  }, [
 +    attempt,
++    acceptRunResult,
 +    environmentId,
 +    issueIdentifier,
 +    issueLabels,
@@ -2606,14 +2757,36 @@ index 00000000..e3f1c576
 +    }).then((commandResult) => {
 +      setPending(false);
 +      if (commandResult._tag === "Success") {
-+        setRunResult(commandResult.value);
++        acceptRunResult(commandResult.value);
 +        return;
 +      }
 +      if (!isAtomCommandInterrupted(commandResult)) {
 +        setError(readableError(squashAtomCommandFailure(commandResult)));
 +      }
 +    });
-+  }, [cancel, environmentId, runResult, threadId]);
++  }, [acceptRunResult, cancel, environmentId, runResult, threadId]);
++
++  const cancelClaim = useCallback(
++    (claimId: string) => {
++      if (!runResult) return;
++      setPending(true);
++      setError(null);
++      void cancelIssue({
++        environmentId,
++        input: { threadId, runId: runResult.run.runId, claimId },
++      }).then((commandResult) => {
++        setPending(false);
++        if (commandResult._tag === "Success") {
++          acceptRunResult(commandResult.value);
++          return;
++        }
++        if (!isAtomCommandInterrupted(commandResult)) {
++          setError(readableError(squashAtomCommandFailure(commandResult)));
++        }
++      });
++    },
++    [acceptRunResult, cancelIssue, environmentId, runResult, threadId],
++  );
 +
 +  const runLifecycleAction = useCallback(
 +    (action: "status" | "pause" | "refresh" | "resume") => {
@@ -2641,7 +2814,7 @@ index 00000000..e3f1c576
 +      void command.then((commandResult) => {
 +        setPending(false);
 +        if (commandResult._tag === "Success") {
-+          setRunResult(commandResult.value);
++          acceptRunResult(commandResult.value);
 +          return;
 +        }
 +        if (!isAtomCommandInterrupted(commandResult)) {
@@ -2649,7 +2822,17 @@ index 00000000..e3f1c576
 +        }
 +      });
 +    },
-+    [environmentId, pause, profilePath, readStatus, refresh, resume, runResult, threadId],
++    [
++      acceptRunResult,
++      environmentId,
++      pause,
++      profilePath,
++      readStatus,
++      refresh,
++      resume,
++      runResult,
++      threadId,
++    ],
 +  );
 +
 +  const readLinearIssues = useCallback(
@@ -2779,6 +2962,30 @@ index 00000000..e3f1c576
 +                onChange={(event) => setAttempt(event.target.value)}
 +              />
 +            </div>
++          </div>
++
++          <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
++            <Label htmlFor="automation-run-id">Existing root Run</Label>
++            <div className="flex gap-2">
++              <Input
++                id="automation-run-id"
++                value={runId}
++                onChange={(event) => setRunId(event.target.value)}
++                placeholder="automation-…"
++              />
++              <Button
++                disabled={pending || !runId.trim()}
++                onClick={() => loadRun()}
++                type="button"
++                variant="outline"
++              >
++                Reattach
++              </Button>
++            </div>
++            <p className="text-xs text-muted-foreground">
++              Reloads the bounded native projection for this task; child histories remain in their
++              Codex tasks.
++            </p>
 +          </div>
 +
 +          {error ? (
@@ -2925,6 +3132,18 @@ index 00000000..e3f1c576
 +                    <span className="font-medium">{claim.issueIdentifier}</span>
 +                    <Badge variant="secondary">{claim.status}</Badge>
 +                    <Badge variant="outline">profile r{claim.profileRevision}</Badge>
++                    {claim.status === "claimed" ||
++                    claim.status === "running" ||
++                    claim.status === "suspended" ? (
++                      <Button
++                        disabled={pending}
++                        onClick={() => cancelClaim(claim.claimId)}
++                        size="xs"
++                        variant="destructive"
++                      >
++                        Cancel issue
++                      </Button>
++                    ) : null}
 +                  </div>
 +                  <div className="text-xs text-muted-foreground">
 +                    {claim.issueTitle.text}
@@ -3167,13 +3386,13 @@ index 00000000..e3f1c576
 +          ) : null}
 +          {runResult && !["cancelled", "failed"].includes(runResult.run.status) ? (
 +            <Button disabled={pending} onClick={cancelRun} variant="destructive">
-+              Cancel
++              Cancel run
 +            </Button>
 +          ) : null}
 +          {result?.valid ? (
 +            <Button disabled={pending} onClick={run} variant="outline">
 +              {pending ? <Spinner /> : null}
-+              Run fixture
++              Start fixture
 +            </Button>
 +          ) : null}
 +          <Button
@@ -3199,7 +3418,7 @@ index ef3ec863..59e5900a 100644
  import { usePrimaryEnvironmentId } from "../../state/environments";
  import { cn } from "~/lib/utils";
 +import { AutomationProfileDialog } from "./AutomationProfileDialog";
-
+ 
  interface ChatHeaderProps {
    activeThreadEnvironmentId: EnvironmentId;
 @@ -100,6 +101,13 @@ export const ChatHeader = memo(function ChatHeader({
@@ -3567,10 +3786,10 @@ index 00000000..8ce28391
 +export type ClientNotification = { "method": "initialized" };
 diff --git a/apps/web/src/orchestra/generated/ClientRequest.ts b/apps/web/src/orchestra/generated/ClientRequest.ts
 new file mode 100644
-index 00000000..632c2231
+index 00000000..3cfe13fa
 --- /dev/null
 +++ b/apps/web/src/orchestra/generated/ClientRequest.ts
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,103 @@
 +// GENERATED CODE! DO NOT MODIFY BY HAND!
 +
 +// This file was generated by [ts-rs](https://github.com/Aleph-Alpha/ts-rs). Do not edit this file manually.
@@ -3581,6 +3800,7 @@ index 00000000..632c2231
 +import type { InitializeParams } from "./InitializeParams";
 +import type { RequestId } from "./RequestId";
 +import type { AppsListParams } from "./v2/AppsListParams";
++import type { AutomationCancelIssueParams } from "./v2/AutomationCancelIssueParams";
 +import type { AutomationLinearReadParams } from "./v2/AutomationLinearReadParams";
 +import type { AutomationQueueReadParams } from "./v2/AutomationQueueReadParams";
 +import type { AutomationReconcileParams } from "./v2/AutomationReconcileParams";
@@ -3672,7 +3892,7 @@ index 00000000..632c2231
 +/**
 + * Request from the client to the server.
 + */
-+export type ClientRequest ={ "method": "initialize", id: RequestId, params: InitializeParams, } | { "method": "thread/start", id: RequestId, params: ThreadStartParams, } | { "method": "thread/resume", id: RequestId, params: ThreadResumeParams, } | { "method": "thread/fork", id: RequestId, params: ThreadForkParams, } | { "method": "thread/archive", id: RequestId, params: ThreadArchiveParams, } | { "method": "thread/delete", id: RequestId, params: ThreadDeleteParams, } | { "method": "thread/unsubscribe", id: RequestId, params: ThreadUnsubscribeParams, } | { "method": "thread/name/set", id: RequestId, params: ThreadSetNameParams, } | { "method": "thread/goal/set", id: RequestId, params: ThreadGoalSetParams, } | { "method": "thread/goal/get", id: RequestId, params: ThreadGoalGetParams, } | { "method": "thread/goal/clear", id: RequestId, params: ThreadGoalClearParams, } | { "method": "thread/metadata/update", id: RequestId, params: ThreadMetadataUpdateParams, } | { "method": "thread/unarchive", id: RequestId, params: ThreadUnarchiveParams, } | { "method": "thread/compact/start", id: RequestId, params: ThreadCompactStartParams, } | { "method": "thread/shellCommand", id: RequestId, params: ThreadShellCommandParams, } | { "method": "thread/approveGuardianDeniedAction", id: RequestId, params: ThreadApproveGuardianDeniedActionParams, } | { "method": "thread/rollback", id: RequestId, params: ThreadRollbackParams, } | { "method": "thread/list", id: RequestId, params: ThreadListParams, } | { "method": "thread/loaded/list", id: RequestId, params: ThreadLoadedListParams, } | { "method": "thread/read", id: RequestId, params: ThreadReadParams, } | { "method": "thread/inject_items", id: RequestId, params: ThreadInjectItemsParams, } | { "method": "orchestra/validate", id: RequestId, params: OrchestraValidateParams, } | { "method": "automation/validate", id: RequestId, params: AutomationValidateParams, } | { "method": "automation/runFixture", id: RequestId, params: AutomationRunFixtureParams, } | { "method": "automation/linear/read", id: RequestId, params: AutomationLinearReadParams, } | { "method": "automation/queue/read", id: RequestId, params: AutomationQueueReadParams, } | { "method": "automation/status", id: RequestId, params: AutomationRunParams, } | { "method": "automation/pause", id: RequestId, params: AutomationRunParams, } | { "method": "automation/refresh", id: RequestId, params: AutomationReconcileParams, } | { "method": "automation/resume", id: RequestId, params: AutomationReconcileParams, } | { "method": "automation/cancel", id: RequestId, params: AutomationRunParams, } | { "method": "orchestra/invoke", id: RequestId, params: OrchestraInvokeParams, } | { "method": "orchestra/status", id: RequestId, params: OrchestraRunParams, } | { "method": "orchestra/resume", id: RequestId, params: OrchestraResumeParams, } | { "method": "orchestra/cancel", id: RequestId, params: OrchestraRunParams, } | { "method": "orchestra/query", id: RequestId, params: OrchestraQueryParams, } | { "method": "skills/list", id: RequestId, params: SkillsListParams, } | { "method": "skills/extraRoots/set", id: RequestId, params: SkillsExtraRootsSetParams, } | { "method": "hooks/list", id: RequestId, params: HooksListParams, } | { "method": "marketplace/add", id: RequestId, params: MarketplaceAddParams, } | { "method": "marketplace/remove", id: RequestId, params: MarketplaceRemoveParams, } | { "method": "marketplace/upgrade", id: RequestId, params: MarketplaceUpgradeParams, } | { "method": "plugin/list", id: RequestId, params: PluginListParams, } | { "method": "plugin/installed", id: RequestId, params: PluginInstalledParams, } | { "method": "plugin/read", id: RequestId, params: PluginReadParams, } | { "method": "plugin/skill/read", id: RequestId, params: PluginSkillReadParams, } | { "method": "plugin/share/save", id: RequestId, params: PluginShareSaveParams, } | { "method": "plugin/share/updateTargets", id: RequestId, params: PluginShareUpdateTargetsParams, } | { "method": "plugin/share/list", id: RequestId, params: PluginShareListParams, } | { "method": "plugin/share/checkout", id: RequestId, params: PluginShareCheckoutParams, } | { "method": "plugin/share/delete", id: RequestId, params: PluginShareDeleteParams, } | { "method": "app/list", id: RequestId, params: AppsListParams, } | { "method": "fs/readFile", id: RequestId, params: FsReadFileParams, } | { "method": "fs/writeFile", id: RequestId, params: FsWriteFileParams, } | { "method": "fs/createDirectory", id: RequestId, params: FsCreateDirectoryParams, } | { "method": "fs/getMetadata", id: RequestId, params: FsGetMetadataParams, } | { "method": "fs/readDirectory", id: RequestId, params: FsReadDirectoryParams, } | { "method": "fs/remove", id: RequestId, params: FsRemoveParams, } | { "method": "fs/copy", id: RequestId, params: FsCopyParams, } | { "method": "fs/watch", id: RequestId, params: FsWatchParams, } | { "method": "fs/unwatch", id: RequestId, params: FsUnwatchParams, } | { "method": "skills/config/write", id: RequestId, params: SkillsConfigWriteParams, } | { "method": "plugin/install", id: RequestId, params: PluginInstallParams, } | { "method": "plugin/uninstall", id: RequestId, params: PluginUninstallParams, } | { "method": "turn/start", id: RequestId, params: TurnStartParams, } | { "method": "turn/steer", id: RequestId, params: TurnSteerParams, } | { "method": "turn/interrupt", id: RequestId, params: TurnInterruptParams, } | { "method": "review/start", id: RequestId, params: ReviewStartParams, } | { "method": "model/list", id: RequestId, params: ModelListParams, } | { "method": "modelProvider/capabilities/read", id: RequestId, params: ModelProviderCapabilitiesReadParams, } | { "method": "experimentalFeature/list", id: RequestId, params: ExperimentalFeatureListParams, } | { "method": "permissionProfile/list", id: RequestId, params: PermissionProfileListParams, } | { "method": "experimentalFeature/enablement/set", id: RequestId, params: ExperimentalFeatureEnablementSetParams, } | { "method": "mcpServer/oauth/login", id: RequestId, params: McpServerOauthLoginParams, } | { "method": "config/mcpServer/reload", id: RequestId, params: undefined, } | { "method": "mcpServerStatus/list", id: RequestId, params: ListMcpServerStatusParams, } | { "method": "mcpServer/resource/read", id: RequestId, params: McpResourceReadParams, } | { "method": "mcpServer/tool/call", id: RequestId, params: McpServerToolCallParams, } | { "method": "windowsSandbox/setupStart", id: RequestId, params: WindowsSandboxSetupStartParams, } | { "method": "windowsSandbox/readiness", id: RequestId, params: undefined, } | { "method": "account/login/start", id: RequestId, params: LoginAccountParams, } | { "method": "account/login/cancel", id: RequestId, params: CancelLoginAccountParams, } | { "method": "account/logout", id: RequestId, params: undefined, } | { "method": "account/rateLimits/read", id: RequestId, params: undefined, } | { "method": "account/rateLimitResetCredit/consume", id: RequestId, params: ConsumeAccountRateLimitResetCreditParams, } | { "method": "account/usage/read", id: RequestId, params: undefined, } | { "method": "account/workspaceMessages/read", id: RequestId, params: undefined, } | { "method": "account/sendAddCreditsNudgeEmail", id: RequestId, params: SendAddCreditsNudgeEmailParams, } | { "method": "feedback/upload", id: RequestId, params: FeedbackUploadParams, } | { "method": "command/exec", id: RequestId, params: CommandExecParams, } | { "method": "command/exec/write", id: RequestId, params: CommandExecWriteParams, } | { "method": "command/exec/terminate", id: RequestId, params: CommandExecTerminateParams, } | { "method": "command/exec/resize", id: RequestId, params: CommandExecResizeParams, } | { "method": "config/read", id: RequestId, params: ConfigReadParams, } | { "method": "externalAgentConfig/detect", id: RequestId, params: ExternalAgentConfigDetectParams, } | { "method": "externalAgentConfig/import", id: RequestId, params: ExternalAgentConfigImportParams, } | { "method": "externalAgentConfig/import/readHistories", id: RequestId, params: undefined, } | { "method": "config/value/write", id: RequestId, params: ConfigValueWriteParams, } | { "method": "config/batchWrite", id: RequestId, params: ConfigBatchWriteParams, } | { "method": "configRequirements/read", id: RequestId, params: undefined, } | { "method": "account/read", id: RequestId, params: GetAccountParams, } | { "method": "getConversationSummary", id: RequestId, params: GetConversationSummaryParams, } | { "method": "gitDiffToRemote", id: RequestId, params: GitDiffToRemoteParams, } | { "method": "getAuthStatus", id: RequestId, params: GetAuthStatusParams, } | { "method": "fuzzyFileSearch", id: RequestId, params: FuzzyFileSearchParams, };
++export type ClientRequest ={ "method": "initialize", id: RequestId, params: InitializeParams, } | { "method": "thread/start", id: RequestId, params: ThreadStartParams, } | { "method": "thread/resume", id: RequestId, params: ThreadResumeParams, } | { "method": "thread/fork", id: RequestId, params: ThreadForkParams, } | { "method": "thread/archive", id: RequestId, params: ThreadArchiveParams, } | { "method": "thread/delete", id: RequestId, params: ThreadDeleteParams, } | { "method": "thread/unsubscribe", id: RequestId, params: ThreadUnsubscribeParams, } | { "method": "thread/name/set", id: RequestId, params: ThreadSetNameParams, } | { "method": "thread/goal/set", id: RequestId, params: ThreadGoalSetParams, } | { "method": "thread/goal/get", id: RequestId, params: ThreadGoalGetParams, } | { "method": "thread/goal/clear", id: RequestId, params: ThreadGoalClearParams, } | { "method": "thread/metadata/update", id: RequestId, params: ThreadMetadataUpdateParams, } | { "method": "thread/unarchive", id: RequestId, params: ThreadUnarchiveParams, } | { "method": "thread/compact/start", id: RequestId, params: ThreadCompactStartParams, } | { "method": "thread/shellCommand", id: RequestId, params: ThreadShellCommandParams, } | { "method": "thread/approveGuardianDeniedAction", id: RequestId, params: ThreadApproveGuardianDeniedActionParams, } | { "method": "thread/rollback", id: RequestId, params: ThreadRollbackParams, } | { "method": "thread/list", id: RequestId, params: ThreadListParams, } | { "method": "thread/loaded/list", id: RequestId, params: ThreadLoadedListParams, } | { "method": "thread/read", id: RequestId, params: ThreadReadParams, } | { "method": "thread/inject_items", id: RequestId, params: ThreadInjectItemsParams, } | { "method": "orchestra/validate", id: RequestId, params: OrchestraValidateParams, } | { "method": "automation/validate", id: RequestId, params: AutomationValidateParams, } | { "method": "automation/runFixture", id: RequestId, params: AutomationRunFixtureParams, } | { "method": "automation/linear/read", id: RequestId, params: AutomationLinearReadParams, } | { "method": "automation/queue/read", id: RequestId, params: AutomationQueueReadParams, } | { "method": "automation/status", id: RequestId, params: AutomationRunParams, } | { "method": "automation/pause", id: RequestId, params: AutomationRunParams, } | { "method": "automation/refresh", id: RequestId, params: AutomationReconcileParams, } | { "method": "automation/resume", id: RequestId, params: AutomationReconcileParams, } | { "method": "automation/cancel", id: RequestId, params: AutomationRunParams, } | { "method": "automation/cancelIssue", id: RequestId, params: AutomationCancelIssueParams, } | { "method": "orchestra/invoke", id: RequestId, params: OrchestraInvokeParams, } | { "method": "orchestra/status", id: RequestId, params: OrchestraRunParams, } | { "method": "orchestra/resume", id: RequestId, params: OrchestraResumeParams, } | { "method": "orchestra/cancel", id: RequestId, params: OrchestraRunParams, } | { "method": "orchestra/query", id: RequestId, params: OrchestraQueryParams, } | { "method": "skills/list", id: RequestId, params: SkillsListParams, } | { "method": "skills/extraRoots/set", id: RequestId, params: SkillsExtraRootsSetParams, } | { "method": "hooks/list", id: RequestId, params: HooksListParams, } | { "method": "marketplace/add", id: RequestId, params: MarketplaceAddParams, } | { "method": "marketplace/remove", id: RequestId, params: MarketplaceRemoveParams, } | { "method": "marketplace/upgrade", id: RequestId, params: MarketplaceUpgradeParams, } | { "method": "plugin/list", id: RequestId, params: PluginListParams, } | { "method": "plugin/installed", id: RequestId, params: PluginInstalledParams, } | { "method": "plugin/read", id: RequestId, params: PluginReadParams, } | { "method": "plugin/skill/read", id: RequestId, params: PluginSkillReadParams, } | { "method": "plugin/share/save", id: RequestId, params: PluginShareSaveParams, } | { "method": "plugin/share/updateTargets", id: RequestId, params: PluginShareUpdateTargetsParams, } | { "method": "plugin/share/list", id: RequestId, params: PluginShareListParams, } | { "method": "plugin/share/checkout", id: RequestId, params: PluginShareCheckoutParams, } | { "method": "plugin/share/delete", id: RequestId, params: PluginShareDeleteParams, } | { "method": "app/list", id: RequestId, params: AppsListParams, } | { "method": "fs/readFile", id: RequestId, params: FsReadFileParams, } | { "method": "fs/writeFile", id: RequestId, params: FsWriteFileParams, } | { "method": "fs/createDirectory", id: RequestId, params: FsCreateDirectoryParams, } | { "method": "fs/getMetadata", id: RequestId, params: FsGetMetadataParams, } | { "method": "fs/readDirectory", id: RequestId, params: FsReadDirectoryParams, } | { "method": "fs/remove", id: RequestId, params: FsRemoveParams, } | { "method": "fs/copy", id: RequestId, params: FsCopyParams, } | { "method": "fs/watch", id: RequestId, params: FsWatchParams, } | { "method": "fs/unwatch", id: RequestId, params: FsUnwatchParams, } | { "method": "skills/config/write", id: RequestId, params: SkillsConfigWriteParams, } | { "method": "plugin/install", id: RequestId, params: PluginInstallParams, } | { "method": "plugin/uninstall", id: RequestId, params: PluginUninstallParams, } | { "method": "turn/start", id: RequestId, params: TurnStartParams, } | { "method": "turn/steer", id: RequestId, params: TurnSteerParams, } | { "method": "turn/interrupt", id: RequestId, params: TurnInterruptParams, } | { "method": "review/start", id: RequestId, params: ReviewStartParams, } | { "method": "model/list", id: RequestId, params: ModelListParams, } | { "method": "modelProvider/capabilities/read", id: RequestId, params: ModelProviderCapabilitiesReadParams, } | { "method": "experimentalFeature/list", id: RequestId, params: ExperimentalFeatureListParams, } | { "method": "permissionProfile/list", id: RequestId, params: PermissionProfileListParams, } | { "method": "experimentalFeature/enablement/set", id: RequestId, params: ExperimentalFeatureEnablementSetParams, } | { "method": "mcpServer/oauth/login", id: RequestId, params: McpServerOauthLoginParams, } | { "method": "config/mcpServer/reload", id: RequestId, params: undefined, } | { "method": "mcpServerStatus/list", id: RequestId, params: ListMcpServerStatusParams, } | { "method": "mcpServer/resource/read", id: RequestId, params: McpResourceReadParams, } | { "method": "mcpServer/tool/call", id: RequestId, params: McpServerToolCallParams, } | { "method": "windowsSandbox/setupStart", id: RequestId, params: WindowsSandboxSetupStartParams, } | { "method": "windowsSandbox/readiness", id: RequestId, params: undefined, } | { "method": "account/login/start", id: RequestId, params: LoginAccountParams, } | { "method": "account/login/cancel", id: RequestId, params: CancelLoginAccountParams, } | { "method": "account/logout", id: RequestId, params: undefined, } | { "method": "account/rateLimits/read", id: RequestId, params: undefined, } | { "method": "account/rateLimitResetCredit/consume", id: RequestId, params: ConsumeAccountRateLimitResetCreditParams, } | { "method": "account/usage/read", id: RequestId, params: undefined, } | { "method": "account/workspaceMessages/read", id: RequestId, params: undefined, } | { "method": "account/sendAddCreditsNudgeEmail", id: RequestId, params: SendAddCreditsNudgeEmailParams, } | { "method": "feedback/upload", id: RequestId, params: FeedbackUploadParams, } | { "method": "command/exec", id: RequestId, params: CommandExecParams, } | { "method": "command/exec/write", id: RequestId, params: CommandExecWriteParams, } | { "method": "command/exec/terminate", id: RequestId, params: CommandExecTerminateParams, } | { "method": "command/exec/resize", id: RequestId, params: CommandExecResizeParams, } | { "method": "config/read", id: RequestId, params: ConfigReadParams, } | { "method": "externalAgentConfig/detect", id: RequestId, params: ExternalAgentConfigDetectParams, } | { "method": "externalAgentConfig/import", id: RequestId, params: ExternalAgentConfigImportParams, } | { "method": "externalAgentConfig/import/readHistories", id: RequestId, params: undefined, } | { "method": "config/value/write", id: RequestId, params: ConfigValueWriteParams, } | { "method": "config/batchWrite", id: RequestId, params: ConfigBatchWriteParams, } | { "method": "configRequirements/read", id: RequestId, params: undefined, } | { "method": "account/read", id: RequestId, params: GetAccountParams, } | { "method": "getConversationSummary", id: RequestId, params: GetConversationSummaryParams, } | { "method": "gitDiffToRemote", id: RequestId, params: GitDiffToRemoteParams, } | { "method": "getAuthStatus", id: RequestId, params: GetAuthStatusParams, } | { "method": "fuzzyFileSearch", id: RequestId, params: FuzzyFileSearchParams, };
 diff --git a/apps/web/src/orchestra/generated/CollaborationMode.ts b/apps/web/src/orchestra/generated/CollaborationMode.ts
 new file mode 100644
 index 00000000..0f60f5d1
@@ -5606,6 +5826,17 @@ index 00000000..364c5956
 +// This file was generated by [ts-rs](https://github.com/Aleph-Alpha/ts-rs). Do not edit this file manually.
 +
 +export type AutomationAgentProfile = { maxConcurrentAgents: number, maxTurns: number, maxRetryBackoffMs: bigint, maxConcurrentAgentsByState: { [key in string]?: number }, };
+diff --git a/apps/web/src/orchestra/generated/v2/AutomationCancelIssueParams.ts b/apps/web/src/orchestra/generated/v2/AutomationCancelIssueParams.ts
+new file mode 100644
+index 00000000..8f6fbc86
+--- /dev/null
++++ b/apps/web/src/orchestra/generated/v2/AutomationCancelIssueParams.ts
+@@ -0,0 +1,5 @@
++// GENERATED CODE! DO NOT MODIFY BY HAND!
++
++// This file was generated by [ts-rs](https://github.com/Aleph-Alpha/ts-rs). Do not edit this file manually.
++
++export type AutomationCancelIssueParams = { threadId: string, runId: string, claimId: string, };
 diff --git a/apps/web/src/orchestra/generated/v2/AutomationClaimStatus.ts b/apps/web/src/orchestra/generated/v2/AutomationClaimStatus.ts
 new file mode 100644
 index 00000000..40ac1d1a
@@ -5619,21 +5850,17 @@ index 00000000..40ac1d1a
 +export type AutomationClaimStatus = "claimed" | "running" | "completed" | "suspended" | "cancelled" | "failed";
 diff --git a/apps/web/src/orchestra/generated/v2/AutomationCleanupProjection.ts b/apps/web/src/orchestra/generated/v2/AutomationCleanupProjection.ts
 new file mode 100644
-index 00000000..0b9c15dd
+index 00000000..ea995417
 --- /dev/null
 +++ b/apps/web/src/orchestra/generated/v2/AutomationCleanupProjection.ts
-@@ -0,0 +1,11 @@
+@@ -0,0 +1,7 @@
 +// GENERATED CODE! DO NOT MODIFY BY HAND!
 +
 +// This file was generated by [ts-rs](https://github.com/Aleph-Alpha/ts-rs). Do not edit this file manually.
 +import type { AutomationCleanupStatus } from "./AutomationCleanupStatus";
 +import type { OrchestraBoundedText } from "./OrchestraBoundedText";
 +
-+export type AutomationCleanupProjection = {
-+  status: AutomationCleanupStatus;
-+  attempts: number;
-+  lastFailure?: OrchestraBoundedText;
-+};
++export type AutomationCleanupProjection = { status: AutomationCleanupStatus, attempts: number, lastFailure?: OrchestraBoundedText, };
 diff --git a/apps/web/src/orchestra/generated/v2/AutomationCleanupStatus.ts b/apps/web/src/orchestra/generated/v2/AutomationCleanupStatus.ts
 new file mode 100644
 index 00000000..b79706a7
@@ -5742,10 +5969,10 @@ index 00000000..d4dacdd5
 +export type AutomationHookKind = "after_create" | "before_run" | "after_run" | "before_remove";
 diff --git a/apps/web/src/orchestra/generated/v2/AutomationHookReceiptProjection.ts b/apps/web/src/orchestra/generated/v2/AutomationHookReceiptProjection.ts
 new file mode 100644
-index 00000000..81dbc3a2
+index 00000000..2a91813b
 --- /dev/null
 +++ b/apps/web/src/orchestra/generated/v2/AutomationHookReceiptProjection.ts
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,8 @@
 +// GENERATED CODE! DO NOT MODIFY BY HAND!
 +
 +// This file was generated by [ts-rs](https://github.com/Aleph-Alpha/ts-rs). Do not edit this file manually.
@@ -5753,16 +5980,7 @@ index 00000000..81dbc3a2
 +import type { AutomationHookStatus } from "./AutomationHookStatus";
 +import type { OrchestraBoundedText } from "./OrchestraBoundedText";
 +
-+export type AutomationHookReceiptProjection = {
-+  kind: AutomationHookKind;
-+  invocation: number;
-+  commandSha256?: string;
-+  status: AutomationHookStatus;
-+  exitCode?: number;
-+  stdoutPreview: OrchestraBoundedText;
-+  stderrPreview: OrchestraBoundedText;
-+  failure?: OrchestraBoundedText;
-+};
++export type AutomationHookReceiptProjection = { kind: AutomationHookKind, invocation: number, commandSha256?: string, status: AutomationHookStatus, exitCode?: number, stdoutPreview: OrchestraBoundedText, stderrPreview: OrchestraBoundedText, failure?: OrchestraBoundedText, };
 diff --git a/apps/web/src/orchestra/generated/v2/AutomationHookStatus.ts b/apps/web/src/orchestra/generated/v2/AutomationHookStatus.ts
 new file mode 100644
 index 00000000..a2cd8ad7
@@ -5810,10 +6028,10 @@ index 00000000..c3b65a9e
 +export type AutomationIssueBlocker = { id?: string, identifier?: string, state?: string, };
 diff --git a/apps/web/src/orchestra/generated/v2/AutomationIssueClaimProjection.ts b/apps/web/src/orchestra/generated/v2/AutomationIssueClaimProjection.ts
 new file mode 100644
-index 00000000..6eff2eb1
+index 00000000..dac3f160
 --- /dev/null
 +++ b/apps/web/src/orchestra/generated/v2/AutomationIssueClaimProjection.ts
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,12 @@
 +// GENERATED CODE! DO NOT MODIFY BY HAND!
 +
 +// This file was generated by [ts-rs](https://github.com/Aleph-Alpha/ts-rs). Do not edit this file manually.
@@ -5825,27 +6043,7 @@ index 00000000..6eff2eb1
 +import type { OrchestraBoundedText } from "./OrchestraBoundedText";
 +import type { OrchestraRunStatus } from "./OrchestraRunStatus";
 +
-+export type AutomationIssueClaimProjection = {
-+  claimId: string;
-+  issueId: string;
-+  issueIdentifier: string;
-+  issueTitle: OrchestraBoundedText;
-+  trackerState: string;
-+  priority?: bigint;
-+  attempt: number;
-+  profileDigest: string;
-+  profileRevision: bigint;
-+  status: AutomationClaimStatus;
-+  worktree: string;
-+  sourceRevision: string;
-+  issueTask?: OrchestraAgentReference;
-+  workflowRunId?: string;
-+  workflowStatus?: OrchestraRunStatus;
-+  effects: Array<AutomationEffectReceiptProjection>;
-+  hookReceipts: Array<AutomationHookReceiptProjection>;
-+  cleanup: AutomationCleanupProjection;
-+  nextAction: OrchestraBoundedText;
-+};
++export type AutomationIssueClaimProjection = { claimId: string, issueId: string, issueIdentifier: string, issueTitle: OrchestraBoundedText, trackerState: string, priority?: bigint, attempt: number, profileDigest: string, profileRevision: bigint, status: AutomationClaimStatus, worktree: string, sourceRevision: string, issueTask?: OrchestraAgentReference, workflowRunId?: string, workflowStatus?: OrchestraRunStatus, effects: Array<AutomationEffectReceiptProjection>, hookReceipts: Array<AutomationHookReceiptProjection>, cleanup: AutomationCleanupProjection, nextAction: OrchestraBoundedText, };
 diff --git a/apps/web/src/orchestra/generated/v2/AutomationLinearReadKind.ts b/apps/web/src/orchestra/generated/v2/AutomationLinearReadKind.ts
 new file mode 100644
 index 00000000..d644940d
@@ -14037,10 +14235,10 @@ index 00000000..068eb3bd
 +export type WriteStatus = "ok" | "okOverridden";
 diff --git a/apps/web/src/orchestra/generated/v2/index.ts b/apps/web/src/orchestra/generated/v2/index.ts
 new file mode 100644
-index 00000000..d1c435ea
+index 00000000..c4df6161
 --- /dev/null
 +++ b/apps/web/src/orchestra/generated/v2/index.ts
-@@ -0,0 +1,599 @@
+@@ -0,0 +1,600 @@
 +// GENERATED CODE! DO NOT MODIFY BY HAND!
 +
 +export type { Account } from "./Account";
@@ -14080,6 +14278,7 @@ index 00000000..d1c435ea
 +export type { AttestationGenerateResponse } from "./AttestationGenerateResponse";
 +export type { AutoReviewDecisionSource } from "./AutoReviewDecisionSource";
 +export type { AutomationAgentProfile } from "./AutomationAgentProfile";
++export type { AutomationCancelIssueParams } from "./AutomationCancelIssueParams";
 +export type { AutomationClaimStatus } from "./AutomationClaimStatus";
 +export type { AutomationCleanupProjection } from "./AutomationCleanupProjection";
 +export type { AutomationCleanupStatus } from "./AutomationCleanupStatus";
@@ -14647,7 +14846,7 @@ index 0f12e672..007a2d02 100644
 @@ -756,6 +756,42 @@ describe("deriveWorkLogEntries", () => {
      expect(entries[0]?.label).toBe("Searching for API endpoints");
    });
-
+ 
 +  it("retains bounded Orchestra lifecycle data for its native timeline row", () => {
 +    const orchestra = {
 +      schemaVersion: 1,
@@ -14707,10 +14906,10 @@ index 5d5051f7..0b4a26c4 100644
    }
 diff --git a/apps/web/src/state/automation.ts b/apps/web/src/state/automation.ts
 new file mode 100644
-index 00000000..161b0d84
+index 00000000..9c936391
 --- /dev/null
 +++ b/apps/web/src/state/automation.ts
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,54 @@
 +import { WS_METHODS } from "@t3tools/contracts";
 +import { createEnvironmentRpcCommand } from "@t3tools/client-runtime/state/runtime";
 +
@@ -14760,6 +14959,11 @@ index 00000000..161b0d84
 +  label: "Automation.cancel",
 +  tag: WS_METHODS.automationCancel,
 +});
++
++export const cancelAutomationIssue = createEnvironmentRpcCommand(connectionAtomRuntime, {
++  label: "Automation.cancelIssue",
++  tag: WS_METHODS.automationCancelIssue,
++});
 diff --git a/apps/web/src/state/orchestra.ts b/apps/web/src/state/orchestra.ts
 new file mode 100644
 index 00000000..4557414a
@@ -14777,10 +14981,10 @@ index 00000000..4557414a
 +});
 diff --git a/packages/contracts/src/automation.ts b/packages/contracts/src/automation.ts
 new file mode 100644
-index 00000000..f97b14c2
+index 00000000..747f6c6f
 --- /dev/null
 +++ b/packages/contracts/src/automation.ts
-@@ -0,0 +1,358 @@
+@@ -0,0 +1,365 @@
 +import * as Schema from "effect/Schema";
 +
 +import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -15112,6 +15316,13 @@ index 00000000..f97b14c2
 +});
 +export type AutomationCancelInput = typeof AutomationCancelInput.Type;
 +
++export const AutomationCancelIssueInput = Schema.Struct({
++  threadId: ThreadId,
++  runId: TrimmedNonEmptyString,
++  claimId: TrimmedNonEmptyString,
++});
++export type AutomationCancelIssueInput = typeof AutomationCancelIssueInput.Type;
++
 +export const AutomationLifecycleInput = AutomationCancelInput;
 +export type AutomationLifecycleInput = typeof AutomationLifecycleInput.Type;
 +
@@ -15309,14 +15520,15 @@ index 00000000..7c405cb6
 +  },
 +) {}
 diff --git a/packages/contracts/src/rpc.ts b/packages/contracts/src/rpc.ts
-index 48c5d9a7..4d9cc2ad 100644
+index 48c5d9a7..d2b13235 100644
 --- a/packages/contracts/src/rpc.ts
 +++ b/packages/contracts/src/rpc.ts
-@@ -143,6 +143,22 @@ import {
+@@ -143,6 +143,23 @@ import {
    SourceControlRepositoryLookupInput,
  } from "./sourceControl.ts";
  import { VcsError } from "./vcs.ts";
 +import {
++  AutomationCancelIssueInput,
 +  AutomationCancelInput,
 +  AutomationLinearReadInput,
 +  AutomationLinearReadResult,
@@ -15332,13 +15544,13 @@ index 48c5d9a7..4d9cc2ad 100644
 +  AutomationValidateResult,
 +} from "./automation.ts";
 +import { OrchestraQueryError, OrchestraQueryInput, OrchestraQueryResult } from "./orchestra.ts";
-
+ 
  export const WS_METHODS = {
    // Project registry methods
-@@ -179,6 +195,18 @@ export const WS_METHODS = {
+@@ -179,6 +196,19 @@ export const WS_METHODS = {
    // Review methods
    reviewGetDiffPreview: "review.getDiffPreview",
-
+ 
 +  // Codex-native Automation methods
 +  automationValidate: "automation.validate",
 +  automationRunFixture: "automation.runFixture",
@@ -15348,16 +15560,17 @@ index 48c5d9a7..4d9cc2ad 100644
 +  automationPause: "automation.pause",
 +  automationRefresh: "automation.refresh",
 +  automationResume: "automation.resume",
++  automationCancelIssue: "automation.cancelIssue",
 +  automationCancel: "automation.cancel",
 +  orchestraQuery: "orchestra.query",
 +
    // Terminal methods
    terminalOpen: "terminal.open",
    terminalAttach: "terminal.attach",
-@@ -284,6 +312,66 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
+@@ -284,6 +314,72 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
  });
-
+ 
 +export const WsAutomationValidateRpc = Rpc.make(WS_METHODS.automationValidate, {
 +  payload: AutomationValidateInput,
 +  success: AutomationValidateResult,
@@ -15412,6 +15625,12 @@ index 48c5d9a7..4d9cc2ad 100644
 +  error: Schema.Union([AutomationRunError, EnvironmentAuthorizationError]),
 +});
 +
++export const WsAutomationCancelIssueRpc = Rpc.make(WS_METHODS.automationCancelIssue, {
++  payload: AutomationCancelIssueInput,
++  success: AutomationRunResult,
++  error: Schema.Union([AutomationRunError, EnvironmentAuthorizationError]),
++});
++
 +export const WsOrchestraQueryRpc = Rpc.make(WS_METHODS.orchestraQuery, {
 +  payload: OrchestraQueryInput,
 +  success: OrchestraQueryResult,
@@ -15421,7 +15640,7 @@ index 48c5d9a7..4d9cc2ad 100644
  export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
    payload: Schema.Struct({}),
    success: SourceControlDiscoveryResult,
-@@ -719,6 +807,16 @@ export const WsRpcGroup = RpcGroup.make(
+@@ -719,6 +815,17 @@ export const WsRpcGroup = RpcGroup.make(
    WsVcsSwitchRefRpc,
    WsVcsInitRpc,
    WsReviewGetDiffPreviewRpc,
@@ -15433,6 +15652,7 @@ index 48c5d9a7..4d9cc2ad 100644
 +  WsAutomationPauseRpc,
 +  WsAutomationRefreshRpc,
 +  WsAutomationResumeRpc,
++  WsAutomationCancelIssueRpc,
 +  WsAutomationCancelRpc,
 +  WsOrchestraQueryRpc,
    WsTerminalOpenRpc,

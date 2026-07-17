@@ -122,6 +122,9 @@ and effective limits ship as one architecture-specific signed Product release. T
 manifest records exact source and artifact identities. Native components update and roll back together;
 the Authoring plugin lifecycle is independent.
 
+The field-by-field and behavior-by-behavior Symphony mapping is maintained in
+[`SYMPHONY-COMPATIBILITY.md`](SYMPHONY-COMPATIBILITY.md).
+
 Updates preserve the user-owned Codex home, canonical rollouts, and repository Run checkpoints.
 Rebuildable projections use versioned generations. Direct Developer ID distribution, separate arm64
 and x86_64 builds, full-app updates, rollback barriers, signing, notarization, notices, SBOM, and fork

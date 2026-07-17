@@ -585,6 +585,10 @@ pub struct OrchestraService {
     automation_shutdown: Arc<AutomationShutdownFence>,
 }
 
+type AutomationStartResult = Result<AutomationRootCheckpoint, String>;
+type AutomationStartSignal =
+    Arc<Mutex<Option<tokio::sync::oneshot::Sender<AutomationStartResult>>>>;
+
 #[derive(Default)]
 struct AutomationShutdownFence {
     roots: Mutex<BTreeMap<(PathBuf, String), ()>>,
@@ -1045,6 +1049,62 @@ impl OrchestraService {
         fixture_issue: AutomationIssue,
         attempt: Option<u32>,
     ) -> Result<AutomationRootCheckpoint, String> {
+        self.run_automation_fixture_inner(
+            parent_thread_id,
+            profile_path,
+            fixture_issue,
+            attempt,
+            None,
+        )
+        .await
+    }
+
+    pub async fn start_automation_fixture(
+        &self,
+        parent_thread_id: &str,
+        profile_path: &str,
+        fixture_issue: AutomationIssue,
+        attempt: Option<u32>,
+    ) -> Result<AutomationRootCheckpoint, String> {
+        let service = self.clone();
+        let parent_thread_id = parent_thread_id.to_owned();
+        let profile_path = profile_path.to_owned();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let started = Arc::new(Mutex::new(Some(sender)));
+        let background_started = Arc::clone(&started);
+        tokio::spawn(async move {
+            let result = service
+                .run_automation_fixture_inner(
+                    &parent_thread_id,
+                    &profile_path,
+                    fixture_issue,
+                    attempt,
+                    Some(Arc::clone(&background_started)),
+                )
+                .await;
+            let sender = background_started
+                .lock()
+                .ok()
+                .and_then(|mut sender| sender.take());
+            if let Some(sender) = sender {
+                let _ = sender.send(result);
+            } else if let Err(error) = result {
+                eprintln!("Automation fixture background execution failed: {error}");
+            }
+        });
+        receiver.await.map_err(|_| {
+            "Automation fixture stopped before publishing its first checkpoint".to_owned()
+        })?
+    }
+
+    async fn run_automation_fixture_inner(
+        &self,
+        parent_thread_id: &str,
+        profile_path: &str,
+        fixture_issue: AutomationIssue,
+        attempt: Option<u32>,
+        started: Option<AutomationStartSignal>,
+    ) -> Result<AutomationRootCheckpoint, String> {
         let attempt = attempt.unwrap_or(1);
         if attempt == 0 {
             return Err("Automation attempt must be greater than zero".into());
@@ -1387,6 +1447,7 @@ impl OrchestraService {
         let observed_store = AutomationRunStore::open(&repository, &root.run_id)
             .map_err(|error| error.to_string())?;
         let observed_claim = claim_id.clone();
+        let observed_started = started.clone();
         let outcome = self
             .runtime
             .run_with_inputs_observed(
@@ -1403,10 +1464,31 @@ impl OrchestraService {
                             claim.workflow_status = Some(checkpoint.status.clone());
                             claim.next_action = "observe Workflow checkpoint".into();
                         })
-                        .map_err(|error| error.to_string())
+                        .map_err(|error| error.to_string())?;
+                    if let Some(started) = observed_started.as_ref() {
+                        let sender = started.lock().ok().and_then(|mut sender| sender.take());
+                        if let Some(sender) = sender {
+                            let _ = sender.send(Ok(automation.clone()));
+                        }
+                    }
+                    Ok(())
                 },
             )
             .await;
+        // The observer persists each typed Workflow checkpoint and advances the
+        // Automation lease revision. Continue from that authoritative snapshot
+        // so post-run hooks and reconciliation do not write through a stale fence.
+        root = store.load().map_err(|error| error.to_string())?;
+        if root.status != AutomationRootStatus::Running
+            || root.claims.get(&claim_id).is_some_and(|claim| {
+                matches!(
+                    claim.status,
+                    AutomationClaimStatus::Suspended | AutomationClaimStatus::Cancelled
+                )
+            })
+        {
+            return Ok(root);
+        }
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -1649,6 +1731,91 @@ impl OrchestraService {
         store.cancel(&mut root).map_err(|error| error.to_string())?;
         self.automation_shutdown.remove(&repository, run_id);
         Ok(root)
+    }
+
+    pub async fn cancel_automation_issue(
+        &self,
+        parent_thread_id: &str,
+        run_id: &str,
+        claim_id: &str,
+    ) -> Result<AutomationRootCheckpoint, String> {
+        let repository = self.repository(parent_thread_id).await?;
+        let store =
+            AutomationRunStore::open(&repository, run_id).map_err(|error| error.to_string())?;
+        let mut root = store.load().map_err(|error| error.to_string())?;
+        authorize_automation_root(&root, parent_thread_id)?;
+        store
+            .begin_claim_cancellation(&mut root, claim_id)
+            .map_err(|error| error.to_string())?;
+        let service = self.clone();
+        let repository = repository.clone();
+        let parent_thread_id = parent_thread_id.to_owned();
+        let run_id = run_id.to_owned();
+        let claim_id = claim_id.to_owned();
+        tokio::spawn(async move {
+            if let Err(error) = service
+                .finish_automation_issue_cancellation(
+                    &parent_thread_id,
+                    &repository,
+                    &run_id,
+                    &claim_id,
+                )
+                .await
+            {
+                eprintln!("Automation issue cancellation failed: {error}");
+            }
+        });
+        Ok(root)
+    }
+
+    async fn finish_automation_issue_cancellation(
+        &self,
+        parent_thread_id: &str,
+        repository: &Path,
+        run_id: &str,
+        claim_id: &str,
+    ) -> Result<(), String> {
+        let store =
+            AutomationRunStore::open(repository, run_id).map_err(|error| error.to_string())?;
+        let mut root = store.load().map_err(|error| error.to_string())?;
+        authorize_automation_root(&root, parent_thread_id)?;
+        let claim = root
+            .claims
+            .get(claim_id)
+            .cloned()
+            .ok_or_else(|| format!("Automation claim `{claim_id}` was not found"))?;
+        let mut descendants_cancelled = true;
+        if let Some(issue_task) = claim.issue_task.as_ref()
+            && self.host.cancel(issue_task).await.is_err()
+        {
+            descendants_cancelled = false;
+        }
+        if let Some(workflow_run_id) = claim.workflow_run_id.as_deref() {
+            match self.runtime.cancel(&claim.worktree, workflow_run_id).await {
+                Ok(checkpoint) => {
+                    if let Some(issue_task) = claim.issue_task.as_ref()
+                        && self
+                            .persist_lifecycle(
+                                &issue_task.thread_id,
+                                &checkpoint,
+                                OrchestraLifecycleKind::Cancelled,
+                            )
+                            .await
+                            .is_err()
+                    {
+                        descendants_cancelled = false;
+                    }
+                }
+                Err(_) => descendants_cancelled = false,
+            }
+        }
+        root = store.load().map_err(|error| error.to_string())?;
+        store
+            .complete_claim_cancellation(&mut root, claim_id, descendants_cancelled)
+            .map_err(|error| error.to_string())?;
+        self.cleanup_eligible_automation_claims(parent_thread_id, &repository, &store, &mut root)
+            .await?;
+        Ok(())
     }
 
     pub async fn automation_status(

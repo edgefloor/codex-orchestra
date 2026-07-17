@@ -1,5 +1,6 @@
 use super::*;
 use codex_app_server_protocol as protocol;
+use codex_app_server_protocol::AutomationCancelIssueParams;
 use codex_app_server_protocol::AutomationLinearReadParams;
 use codex_app_server_protocol::AutomationLinearReadResponse;
 use codex_app_server_protocol::AutomationQueueReadParams;
@@ -99,7 +100,7 @@ impl OrchestraRequestProcessor {
         params: AutomationRunFixtureParams,
     ) -> Result<AutomationRunResponse, JSONRPCErrorError> {
         self.service
-            .run_automation_fixture(
+            .start_automation_fixture(
                 &params.thread_id,
                 &params.profile_path,
                 core_automation_issue(params.fixture_issue),
@@ -181,6 +182,19 @@ impl OrchestraRequestProcessor {
     ) -> Result<AutomationRunResponse, JSONRPCErrorError> {
         self.service
             .cancel_automation(&params.thread_id, &params.run_id)
+            .await
+            .map(|run| AutomationRunResponse {
+                run: project_automation_run(run),
+            })
+            .map_err(orchestra_error)
+    }
+
+    pub(crate) async fn cancel_automation_issue(
+        &self,
+        params: AutomationCancelIssueParams,
+    ) -> Result<AutomationRunResponse, JSONRPCErrorError> {
+        self.service
+            .cancel_automation_issue(&params.thread_id, &params.run_id, &params.claim_id)
             .await
             .map(|run| AutomationRunResponse {
                 run: project_automation_run(run),
@@ -1256,5 +1270,335 @@ fn project_persisted_event(
                 .collect(),
             next_action: projection.next_action,
         },
+    }
+}
+
+#[cfg(test)]
+mod automation_acceptance_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use codex_orchestra_core::AgentHandle;
+    use codex_orchestra_core::AgentOutcome;
+    use codex_orchestra_core::AgentStatus;
+    use codex_orchestra_core::AutomationEffectExecution;
+    use codex_orchestra_core::AutomationGatePolicy;
+    use codex_orchestra_core::AutomationRunStart;
+    use codex_orchestra_core::AutomationRunStore;
+    use codex_orchestra_core::CommandOutcome;
+    use codex_orchestra_core::InheritedCodexPolicy;
+    use codex_orchestra_core::NativeHost;
+    use codex_orchestra_core::OrchestraRuntime;
+    use codex_orchestra_core::RunOutcome;
+    use codex_orchestra_core::SpawnRequest;
+    use codex_orchestra_core::WorktreePolicy;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+    use std::path::Path;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
+    const RAW_CHILD_DETAIL: &str = "RAW_CHILD_DETAIL_MUST_STAY_IN_THE_NATIVE_WORKFLOW_RUN";
+
+    struct AcceptanceHost;
+
+    #[async_trait]
+    impl NativeHost for AcceptanceHost {
+        async fn spawn(&self, request: SpawnRequest) -> Result<AgentHandle, String> {
+            Ok(AgentHandle {
+                thread_id: "workflow-child-42".into(),
+                task_path: request.task_name,
+                parent_thread_id: request.parent_thread_id,
+            })
+        }
+
+        async fn status(&self, _: &AgentHandle) -> Result<AgentStatus, String> {
+            Ok(AgentStatus::Running)
+        }
+
+        async fn wait(&self, _: &AgentHandle) -> Result<AgentOutcome, String> {
+            Ok(AgentOutcome {
+                status: AgentStatus::Completed,
+                final_response: Some(
+                    json!({
+                        "summary": RAW_CHILD_DETAIL,
+                        "tracker_comment": {"body": "Issue ORC-42 implemented and verified."}
+                    })
+                    .to_string(),
+                ),
+            })
+        }
+
+        async fn cancel(&self, _: &AgentHandle) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn run_command(
+            &self,
+            _: &str,
+            _: &Path,
+            _: &[String],
+            _: Option<&Path>,
+            _: u64,
+        ) -> Result<CommandOutcome, String> {
+            Ok(CommandOutcome {
+                exit_code: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+
+        async fn create_worktree(
+            &self,
+            _: &str,
+            repository: &Path,
+            run_id: &str,
+            step_id: &str,
+            _: &WorktreePolicy,
+            _: &str,
+        ) -> Result<PathBuf, String> {
+            let path = repository
+                .join(".codex/orchestra/worktrees")
+                .join(format!("{run_id}-{step_id}"));
+            std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+            Ok(path)
+        }
+
+        async fn remove_worktree(&self, _: &str, _: &Path, path: &Path) -> Result<(), String> {
+            if path.exists() {
+                std::fs::remove_dir_all(path).map_err(|error| error.to_string())?;
+            }
+            Ok(())
+        }
+
+        async fn request_approval(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[String],
+        ) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+
+        async fn emit_activity(&self, _: &str, _: &str) {}
+    }
+
+    fn initialize_repository(repository: &Path) {
+        std::process::Command::new("git")
+            .arg("init")
+            .arg("-q")
+            .arg(repository)
+            .status()
+            .unwrap();
+        std::fs::write(repository.join("README.md"), "acceptance fixture\n").unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(repository)
+                .args(["add", "."])
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(repository)
+                .args([
+                    "-c",
+                    "user.name=Orchestra Acceptance",
+                    "-c",
+                    "user.email=orchestra@example.invalid",
+                    "commit",
+                    "-q",
+                    "-m",
+                    "fixture",
+                ])
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_md_linear_fixture_reaches_bounded_desktop_projection() {
+        let repository = tempdir().unwrap();
+        initialize_repository(repository.path());
+        let workflow_source = r#"
+            import { agent, pipeline, workflow } from "@codex-orchestra/workflow";
+            export default workflow({
+              name: "automation-issue",
+              max_parallel: 1,
+              inputs: {
+                issue: { type: "object" },
+                task_prompt: { type: "string" },
+                automation: { type: "object" },
+              },
+              steps: [pipeline([agent({
+                id: "implement",
+                prompt: "{{inputs.task_prompt}}",
+                model: "gpt-5.4",
+                outputs: ["summary", "tracker_comment"],
+                write_scope: ["."],
+              })])],
+            });
+        "#;
+        std::fs::write(repository.path().join("issue.workflow.ts"), workflow_source).unwrap();
+        std::fs::write(
+            repository.path().join("WORKFLOW.md"),
+            r#"---
+tracker:
+  kind: linear
+  project_slug: orchestra
+  api_key: $LINEAR_API_KEY
+  required_labels: [automation]
+  active_states: [Todo, In Progress]
+  terminal_states: [Done, Cancelled]
+workspace:
+  root: .codex/orchestra/automation-worktrees
+agent:
+  max_concurrent_agents: 1
+orchestra:
+  workflow: issue.workflow.ts
+  effects: [tracker.comment]
+---
+Implement {{ issue.identifier }}: {{ issue.title }}
+"#,
+        )
+        .unwrap();
+
+        let linear_fixture = json!({"data": {"issue": {
+            "id": "linear-42",
+            "identifier": "ORC-42",
+            "title": "Prove the Automation acceptance path",
+            "description": "Use the native Issue task and typed Workflow.",
+            "priority": 1,
+            "state": {"name": "Todo"},
+            "branchName": "orc-42-acceptance",
+            "url": "https://linear.app/orchestra/issue/ORC-42",
+            "labels": {"nodes": [{"name": "automation"}]},
+            "relations": {"nodes": []},
+            "inverseRelations": {"nodes": []},
+            "createdAt": "2026-07-17T00:00:00.000Z",
+            "updatedAt": "2026-07-17T00:00:00.000Z"
+        }}});
+        let issue = core::normalize_linear_issue(&linear_fixture).unwrap();
+        let validation = core::validate_automation_profile(core::AutomationValidationRequest {
+            workflow_md_path: repository.path().join("WORKFLOW.md"),
+            repository_root: repository.path().to_path_buf(),
+            fixture_issue: issue.clone(),
+            attempt: Some(1),
+            environment: BTreeMap::new(),
+            home_dir: None,
+            inherited_policy: InheritedCodexPolicy::default(),
+        });
+        assert!(validation.valid, "{:?}", validation.diagnostics);
+        assert!(validation.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == core::AutomationDiagnosticCode::MissingSecret
+                && diagnostic.severity == core::AutomationValidationSeverity::Warning
+        }));
+        let profile = validation.profile.unwrap();
+        let profile_digest = validation.profile_digest.unwrap();
+        let plan = core::compile_workflow(workflow_source).unwrap();
+
+        let (store, mut root) = AutomationRunStore::start(AutomationRunStart {
+            repository: repository.path(),
+            owner_thread_id: "automation-task-42",
+            source_revision: "fixture-revision-42",
+            profile: &profile,
+            profile_digest: &profile_digest,
+        })
+        .unwrap();
+        let coordinated = store
+            .coordinate_fixture(&mut root, &profile, std::slice::from_ref(&issue), 1)
+            .unwrap();
+        let claim_id = coordinated.dispatched_claim_ids[0].clone();
+        let issue_task = AgentHandle {
+            thread_id: "issue-task-42".into(),
+            task_path: "automation_orc_42".into(),
+            parent_thread_id: "automation-task-42".into(),
+        };
+        let issue_worktree = root.claims[&claim_id].worktree.clone();
+        std::fs::create_dir_all(&issue_worktree).unwrap();
+        initialize_repository(&issue_worktree);
+        store
+            .update_claim(&mut root, &claim_id, |claim| {
+                claim.issue_task = Some(issue_task.clone());
+                claim.status = core::AutomationClaimStatus::Running;
+                claim.task_prompt = validation
+                    .preview
+                    .as_ref()
+                    .and_then(|preview| preview.rendered_prompt.clone())
+                    .unwrap();
+            })
+            .unwrap();
+
+        let workflow = OrchestraRuntime::new(AcceptanceHost)
+            .run_with_inputs(
+                &issue_worktree,
+                &issue_task.thread_id,
+                plan,
+                Some(&json!({
+                    "issue": issue,
+                    "task_prompt": root.claims[&claim_id].task_prompt,
+                    "automation": {
+                        "root_run_id": root.run_id,
+                        "claim_id": claim_id,
+                        "attempt": 1
+                    }
+                })),
+            )
+            .await
+            .unwrap();
+        let workflow_checkpoint = match workflow {
+            RunOutcome::Completed(checkpoint) => checkpoint,
+            outcome => panic!("unexpected workflow outcome: {outcome:?}"),
+        };
+        let tracker_body =
+            workflow_checkpoint.steps["implement"].outputs["tracker_comment"]["body"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+        store
+            .update_claim(&mut root, &claim_id, |claim| {
+                claim.workflow_run_id = Some(workflow_checkpoint.run_id.clone());
+                claim.workflow_status = Some(workflow_checkpoint.status.clone());
+            })
+            .unwrap();
+        let receipt = store
+            .resolve_tracker_comment(
+                &mut root,
+                &claim_id,
+                &profile,
+                &tracker_body,
+                AutomationGatePolicy::AutoAccept,
+                |_| AutomationEffectExecution::Committed {
+                    provider_receipt: "linear-comment-42".into(),
+                },
+            )
+            .unwrap();
+        assert_eq!(receipt.status, core::AutomationEffectStatus::Committed);
+        store
+            .record_completed_invocation(&mut root, &claim_id, &profile, false, 42)
+            .unwrap();
+
+        let projection = project_automation_run(root);
+        let claim = &projection.claims[0];
+        assert_eq!(projection.owner_thread_id, "automation-task-42");
+        assert_eq!(
+            claim.issue_task.as_ref().unwrap().thread_id,
+            "issue-task-42"
+        );
+        assert_eq!(
+            claim.workflow_run_id.as_deref(),
+            Some(workflow_checkpoint.run_id.as_str())
+        );
+        assert_eq!(
+            claim.effects[0].provider_receipt.as_deref(),
+            Some("linear-comment-42")
+        );
+        assert!(claim.worktree.contains("orc-42"));
+        let desktop_payload = serde_json::to_string(&projection).unwrap();
+        assert!(!desktop_payload.contains(RAW_CHILD_DETAIL));
+        assert!(!desktop_payload.contains("tracker_comment"));
     }
 }

@@ -1,8 +1,16 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index e1e13b225d..10d4fde842 100644
+index e1e13b225d..d56c8fe478 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
-@@ -2020,6 +2020,8 @@ dependencies = [
+@@ -1983,6 +1983,7 @@ version = "0.0.0"
+ dependencies = [
+  "anyhow",
+  "app_test_support",
++ "async-trait",
+  "axum",
+  "base64 0.22.1",
+  "chrono",
+@@ -2020,6 +2021,8 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
@@ -11,7 +19,7 @@ index e1e13b225d..10d4fde842 100644
   "codex-otel",
   "codex-plugin",
   "codex-protocol",
-@@ -3654,6 +3656,42 @@ dependencies = [
+@@ -3654,6 +3657,42 @@ dependencies = [
   "wiremock",
  ]
 
@@ -54,7 +62,7 @@ index e1e13b225d..10d4fde842 100644
  [[package]]
  name = "codex-otel"
  version = "0.0.0"
-@@ -9196,6 +9234,12 @@ dependencies = [
+@@ -9196,6 +9235,12 @@ dependencies = [
   "libc",
  ]
 
@@ -67,7 +75,7 @@ index e1e13b225d..10d4fde842 100644
  [[package]]
  name = "memoffset"
  version = "0.9.1"
-@@ -9221,6 +9265,16 @@ dependencies = [
+@@ -9221,6 +9266,16 @@ dependencies = [
   "unicase",
  ]
 
@@ -84,7 +92,7 @@ index e1e13b225d..10d4fde842 100644
  [[package]]
  name = "minimal-lexical"
  version = "0.2.1"
-@@ -11829,6 +11883,12 @@ version = "1.0.22"
+@@ -11829,6 +11884,12 @@ version = "1.0.22"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "a50f4cf475b65d88e057964e0e9bb1f0aa9bbb2036dc65c64596b42932536984"
 
@@ -97,7 +105,7 @@ index e1e13b225d..10d4fde842 100644
  [[package]]
  name = "salsa20"
  version = "0.10.2"
-@@ -12317,6 +12377,17 @@ dependencies = [
+@@ -12317,6 +12378,17 @@ dependencies = [
   "zmij",
  ]
 
@@ -115,7 +123,7 @@ index e1e13b225d..10d4fde842 100644
  [[package]]
  name = "serde_path_to_error"
  version = "0.1.20"
-@@ -12404,6 +12475,19 @@ dependencies = [
+@@ -12404,6 +12476,19 @@ dependencies = [
   "unsafe-libyaml",
  ]
 
@@ -158,13 +166,33 @@ index 9ee09478b6..97e41c48c3 100644
  codex-external-agent-migration = { path = "external-agent-migration" }
  codex-experimental-api-macros = { path = "codex-experimental-api-macros" }
 diff --git a/codex-rs/app-server-protocol/schema/json/ClientRequest.json b/codex-rs/app-server-protocol/schema/json/ClientRequest.json
-index c1c43bd656..431e836cd2 100644
+index c1c43bd656..9f059dbade 100644
 --- a/codex-rs/app-server-protocol/schema/json/ClientRequest.json
 +++ b/codex-rs/app-server-protocol/schema/json/ClientRequest.json
-@@ -169,6 +169,288 @@
+@@ -169,6 +169,308 @@
          }
        ]
      },
++    "AutomationCancelIssueParams": {
++      "additionalProperties": false,
++      "properties": {
++        "claimId": {
++          "type": "string"
++        },
++        "runId": {
++          "type": "string"
++        },
++        "threadId": {
++          "type": "string"
++        }
++      },
++      "required": [
++        "claimId",
++        "runId",
++        "threadId"
++      ],
++      "type": "object"
++    },
 +    "AutomationIssue": {
 +      "properties": {
 +        "blockedBy": {
@@ -450,7 +478,7 @@ index c1c43bd656..431e836cd2 100644
      "ByteRange": {
        "properties": {
          "end": {
-@@ -1877,39 +2159,198 @@
+@@ -1877,36 +2179,195 @@
        ],
        "type": "string"
      },
@@ -488,15 +516,17 @@ index c1c43bd656..431e836cd2 100644
 -            "null"
 -          ]
 +          "type": "integer"
-+        }
-+      },
+         }
+       },
 +      "required": [
 +        "itemId",
 +        "revision",
 +        "sequence"
 +      ],
-+      "type": "object"
-+    },
+       "type": "object"
+     },
+-    "Personality": {
+-      "enum": [
 +    "OrchestraInvokeParams": {
 +      "properties": {
 +        "inputs": true,
@@ -505,20 +535,16 @@ index c1c43bd656..431e836cd2 100644
 +        },
 +        "workflowPath": {
 +          "type": "string"
-         }
-       },
++        }
++      },
 +      "required": [
 +        "threadId",
 +        "workflowPath"
 +      ],
-       "type": "object"
-     },
--    "Personality": {
++      "type": "object"
++    },
 +    "OrchestraQueryKind": {
-       "enum": [
--        "none",
--        "friendly",
--        "pragmatic"
++      "enum": [
 +        "run",
 +        "steps",
 +        "outputs",
@@ -667,13 +693,10 @@ index c1c43bd656..431e836cd2 100644
 +    },
 +    "Personality": {
 +      "enum": [
-+        "none",
-+        "friendly",
-+        "pragmatic"
-       ],
-       "type": "string"
-     },
-@@ -5383,6 +5824,366 @@
+         "none",
+         "friendly",
+         "pragmatic"
+@@ -5383,6 +5844,390 @@
        "title": "Thread/injectItemsRequest",
        "type": "object"
      },
@@ -924,6 +947,30 @@ index c1c43bd656..431e836cd2 100644
 +        },
 +        "method": {
 +          "enum": [
++            "automation/cancelIssue"
++          ],
++          "title": "Automation/cancelIssueRequestMethod",
++          "type": "string"
++        },
++        "params": {
++          "$ref": "#/definitions/AutomationCancelIssueParams"
++        }
++      },
++      "required": [
++        "id",
++        "method",
++        "params"
++      ],
++      "title": "Automation/cancelIssueRequest",
++      "type": "object"
++    },
++    {
++      "properties": {
++        "id": {
++          "$ref": "#/definitions/RequestId"
++        },
++        "method": {
++          "enum": [
 +            "orchestra/invoke"
 +          ],
 +          "title": "Orchestra/invokeRequestMethod",
@@ -1041,7 +1088,7 @@ index c1c43bd656..431e836cd2 100644
        "properties": {
          "id": {
 diff --git a/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json b/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json
-index 7c974ae4ae..bbfed6ed61 100644
+index 7c974ae4ae..8e49d3419e 100644
 --- a/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json
 +++ b/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json
 @@ -716,13 +716,13 @@
@@ -1309,15 +1356,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "plugin/share/save"
-+                "orchestra/invoke"
++                "automation/cancelIssue"
                ],
 -              "title": "Plugin/share/saveRequestMethod",
-+              "title": "Orchestra/invokeRequestMethod",
++              "title": "Automation/cancelIssueRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/PluginShareSaveParams"
-+              "$ref": "#/definitions/v2/OrchestraInvokeParams"
++              "$ref": "#/definitions/v2/AutomationCancelIssueParams"
              }
            },
            "required": [
@@ -1326,7 +1373,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Plugin/share/saveRequest",
-+          "title": "Orchestra/invokeRequest",
++          "title": "Automation/cancelIssueRequest",
            "type": "object"
          },
          {
@@ -1335,15 +1382,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "plugin/share/updateTargets"
-+                "orchestra/status"
++                "orchestra/invoke"
                ],
 -              "title": "Plugin/share/updateTargetsRequestMethod",
-+              "title": "Orchestra/statusRequestMethod",
++              "title": "Orchestra/invokeRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/PluginShareUpdateTargetsParams"
-+              "$ref": "#/definitions/v2/OrchestraRunParams"
++              "$ref": "#/definitions/v2/OrchestraInvokeParams"
              }
            },
            "required": [
@@ -1352,7 +1399,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Plugin/share/updateTargetsRequest",
-+          "title": "Orchestra/statusRequest",
++          "title": "Orchestra/invokeRequest",
            "type": "object"
          },
          {
@@ -1361,15 +1408,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "plugin/share/list"
-+                "orchestra/resume"
++                "orchestra/status"
                ],
 -              "title": "Plugin/share/listRequestMethod",
-+              "title": "Orchestra/resumeRequestMethod",
++              "title": "Orchestra/statusRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/PluginShareListParams"
-+              "$ref": "#/definitions/v2/OrchestraResumeParams"
++              "$ref": "#/definitions/v2/OrchestraRunParams"
              }
            },
            "required": [
@@ -1378,7 +1425,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Plugin/share/listRequest",
-+          "title": "Orchestra/resumeRequest",
++          "title": "Orchestra/statusRequest",
            "type": "object"
          },
          {
@@ -1387,15 +1434,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "plugin/share/checkout"
-+                "orchestra/cancel"
++                "orchestra/resume"
                ],
 -              "title": "Plugin/share/checkoutRequestMethod",
-+              "title": "Orchestra/cancelRequestMethod",
++              "title": "Orchestra/resumeRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/PluginShareCheckoutParams"
-+              "$ref": "#/definitions/v2/OrchestraRunParams"
++              "$ref": "#/definitions/v2/OrchestraResumeParams"
              }
            },
            "required": [
@@ -1404,7 +1451,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Plugin/share/checkoutRequest",
-+          "title": "Orchestra/cancelRequest",
++          "title": "Orchestra/resumeRequest",
            "type": "object"
          },
          {
@@ -1413,15 +1460,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "plugin/share/delete"
-+                "orchestra/query"
++                "orchestra/cancel"
                ],
 -              "title": "Plugin/share/deleteRequestMethod",
-+              "title": "Orchestra/queryRequestMethod",
++              "title": "Orchestra/cancelRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/PluginShareDeleteParams"
-+              "$ref": "#/definitions/v2/OrchestraQueryParams"
++              "$ref": "#/definitions/v2/OrchestraRunParams"
              }
            },
            "required": [
@@ -1430,7 +1477,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Plugin/share/deleteRequest",
-+          "title": "Orchestra/queryRequest",
++          "title": "Orchestra/cancelRequest",
            "type": "object"
          },
          {
@@ -1439,15 +1486,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "app/list"
-+                "skills/list"
++                "orchestra/query"
                ],
 -              "title": "App/listRequestMethod",
-+              "title": "Skills/listRequestMethod",
++              "title": "Orchestra/queryRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/AppsListParams"
-+              "$ref": "#/definitions/v2/SkillsListParams"
++              "$ref": "#/definitions/v2/OrchestraQueryParams"
              }
            },
            "required": [
@@ -1456,7 +1503,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "App/listRequest",
-+          "title": "Skills/listRequest",
++          "title": "Orchestra/queryRequest",
            "type": "object"
          },
          {
@@ -1465,15 +1512,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "fs/readFile"
-+                "skills/extraRoots/set"
++                "skills/list"
                ],
 -              "title": "Fs/readFileRequestMethod",
-+              "title": "Skills/extraRoots/setRequestMethod",
++              "title": "Skills/listRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/FsReadFileParams"
-+              "$ref": "#/definitions/v2/SkillsExtraRootsSetParams"
++              "$ref": "#/definitions/v2/SkillsListParams"
              }
            },
            "required": [
@@ -1482,7 +1529,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Fs/readFileRequest",
-+          "title": "Skills/extraRoots/setRequest",
++          "title": "Skills/listRequest",
            "type": "object"
          },
          {
@@ -1491,15 +1538,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "fs/writeFile"
-+                "hooks/list"
++                "skills/extraRoots/set"
                ],
 -              "title": "Fs/writeFileRequestMethod",
-+              "title": "Hooks/listRequestMethod",
++              "title": "Skills/extraRoots/setRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/FsWriteFileParams"
-+              "$ref": "#/definitions/v2/HooksListParams"
++              "$ref": "#/definitions/v2/SkillsExtraRootsSetParams"
              }
            },
            "required": [
@@ -1508,7 +1555,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Fs/writeFileRequest",
-+          "title": "Hooks/listRequest",
++          "title": "Skills/extraRoots/setRequest",
            "type": "object"
          },
          {
@@ -1517,15 +1564,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "fs/createDirectory"
-+                "marketplace/add"
++                "hooks/list"
                ],
 -              "title": "Fs/createDirectoryRequestMethod",
-+              "title": "Marketplace/addRequestMethod",
++              "title": "Hooks/listRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/FsCreateDirectoryParams"
-+              "$ref": "#/definitions/v2/MarketplaceAddParams"
++              "$ref": "#/definitions/v2/HooksListParams"
              }
            },
            "required": [
@@ -1534,7 +1581,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Fs/createDirectoryRequest",
-+          "title": "Marketplace/addRequest",
++          "title": "Hooks/listRequest",
            "type": "object"
          },
          {
@@ -1543,15 +1590,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "fs/getMetadata"
-+                "marketplace/remove"
++                "marketplace/add"
                ],
 -              "title": "Fs/getMetadataRequestMethod",
-+              "title": "Marketplace/removeRequestMethod",
++              "title": "Marketplace/addRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/FsGetMetadataParams"
-+              "$ref": "#/definitions/v2/MarketplaceRemoveParams"
++              "$ref": "#/definitions/v2/MarketplaceAddParams"
              }
            },
            "required": [
@@ -1560,7 +1607,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Fs/getMetadataRequest",
-+          "title": "Marketplace/removeRequest",
++          "title": "Marketplace/addRequest",
            "type": "object"
          },
          {
@@ -1569,15 +1616,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "fs/readDirectory"
-+                "marketplace/upgrade"
++                "marketplace/remove"
                ],
 -              "title": "Fs/readDirectoryRequestMethod",
-+              "title": "Marketplace/upgradeRequestMethod",
++              "title": "Marketplace/removeRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/FsReadDirectoryParams"
-+              "$ref": "#/definitions/v2/MarketplaceUpgradeParams"
++              "$ref": "#/definitions/v2/MarketplaceRemoveParams"
              }
            },
            "required": [
@@ -1586,7 +1633,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Fs/readDirectoryRequest",
-+          "title": "Marketplace/upgradeRequest",
++          "title": "Marketplace/removeRequest",
            "type": "object"
          },
          {
@@ -1595,15 +1642,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "fs/remove"
-+                "plugin/list"
++                "marketplace/upgrade"
                ],
 -              "title": "Fs/removeRequestMethod",
-+              "title": "Plugin/listRequestMethod",
++              "title": "Marketplace/upgradeRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/FsRemoveParams"
-+              "$ref": "#/definitions/v2/PluginListParams"
++              "$ref": "#/definitions/v2/MarketplaceUpgradeParams"
              }
            },
            "required": [
@@ -1612,7 +1659,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Fs/removeRequest",
-+          "title": "Plugin/listRequest",
++          "title": "Marketplace/upgradeRequest",
            "type": "object"
          },
          {
@@ -1621,15 +1668,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "fs/copy"
-+                "plugin/installed"
++                "plugin/list"
                ],
 -              "title": "Fs/copyRequestMethod",
-+              "title": "Plugin/installedRequestMethod",
++              "title": "Plugin/listRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/FsCopyParams"
-+              "$ref": "#/definitions/v2/PluginInstalledParams"
++              "$ref": "#/definitions/v2/PluginListParams"
              }
            },
            "required": [
@@ -1638,7 +1685,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Fs/copyRequest",
-+          "title": "Plugin/installedRequest",
++          "title": "Plugin/listRequest",
            "type": "object"
          },
          {
@@ -1647,15 +1694,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "fs/watch"
-+                "plugin/read"
++                "plugin/installed"
                ],
 -              "title": "Fs/watchRequestMethod",
-+              "title": "Plugin/readRequestMethod",
++              "title": "Plugin/installedRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/FsWatchParams"
-+              "$ref": "#/definitions/v2/PluginReadParams"
++              "$ref": "#/definitions/v2/PluginInstalledParams"
              }
            },
            "required": [
@@ -1664,7 +1711,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Fs/watchRequest",
-+          "title": "Plugin/readRequest",
++          "title": "Plugin/installedRequest",
            "type": "object"
          },
          {
@@ -1673,15 +1720,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "fs/unwatch"
-+                "plugin/skill/read"
++                "plugin/read"
                ],
 -              "title": "Fs/unwatchRequestMethod",
-+              "title": "Plugin/skill/readRequestMethod",
++              "title": "Plugin/readRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/FsUnwatchParams"
-+              "$ref": "#/definitions/v2/PluginSkillReadParams"
++              "$ref": "#/definitions/v2/PluginReadParams"
              }
            },
            "required": [
@@ -1690,7 +1737,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Fs/unwatchRequest",
-+          "title": "Plugin/skill/readRequest",
++          "title": "Plugin/readRequest",
            "type": "object"
          },
          {
@@ -1699,15 +1746,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "skills/config/write"
-+                "plugin/share/save"
++                "plugin/skill/read"
                ],
 -              "title": "Skills/config/writeRequestMethod",
-+              "title": "Plugin/share/saveRequestMethod",
++              "title": "Plugin/skill/readRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/SkillsConfigWriteParams"
-+              "$ref": "#/definitions/v2/PluginShareSaveParams"
++              "$ref": "#/definitions/v2/PluginSkillReadParams"
              }
            },
            "required": [
@@ -1716,7 +1763,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Skills/config/writeRequest",
-+          "title": "Plugin/share/saveRequest",
++          "title": "Plugin/skill/readRequest",
            "type": "object"
          },
          {
@@ -1725,15 +1772,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "plugin/install"
-+                "plugin/share/updateTargets"
++                "plugin/share/save"
                ],
 -              "title": "Plugin/installRequestMethod",
-+              "title": "Plugin/share/updateTargetsRequestMethod",
++              "title": "Plugin/share/saveRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/PluginInstallParams"
-+              "$ref": "#/definitions/v2/PluginShareUpdateTargetsParams"
++              "$ref": "#/definitions/v2/PluginShareSaveParams"
              }
            },
            "required": [
@@ -1742,7 +1789,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Plugin/installRequest",
-+          "title": "Plugin/share/updateTargetsRequest",
++          "title": "Plugin/share/saveRequest",
            "type": "object"
          },
          {
@@ -1751,15 +1798,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "plugin/uninstall"
-+                "plugin/share/list"
++                "plugin/share/updateTargets"
                ],
 -              "title": "Plugin/uninstallRequestMethod",
-+              "title": "Plugin/share/listRequestMethod",
++              "title": "Plugin/share/updateTargetsRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/PluginUninstallParams"
-+              "$ref": "#/definitions/v2/PluginShareListParams"
++              "$ref": "#/definitions/v2/PluginShareUpdateTargetsParams"
              }
            },
            "required": [
@@ -1768,7 +1815,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Plugin/uninstallRequest",
-+          "title": "Plugin/share/listRequest",
++          "title": "Plugin/share/updateTargetsRequest",
            "type": "object"
          },
          {
@@ -1777,15 +1824,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "turn/start"
-+                "plugin/share/checkout"
++                "plugin/share/list"
                ],
 -              "title": "Turn/startRequestMethod",
-+              "title": "Plugin/share/checkoutRequestMethod",
++              "title": "Plugin/share/listRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/TurnStartParams"
-+              "$ref": "#/definitions/v2/PluginShareCheckoutParams"
++              "$ref": "#/definitions/v2/PluginShareListParams"
              }
            },
            "required": [
@@ -1794,7 +1841,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Turn/startRequest",
-+          "title": "Plugin/share/checkoutRequest",
++          "title": "Plugin/share/listRequest",
            "type": "object"
          },
          {
@@ -1803,15 +1850,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "turn/steer"
-+                "plugin/share/delete"
++                "plugin/share/checkout"
                ],
 -              "title": "Turn/steerRequestMethod",
-+              "title": "Plugin/share/deleteRequestMethod",
++              "title": "Plugin/share/checkoutRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/TurnSteerParams"
-+              "$ref": "#/definitions/v2/PluginShareDeleteParams"
++              "$ref": "#/definitions/v2/PluginShareCheckoutParams"
              }
            },
            "required": [
@@ -1820,7 +1867,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Turn/steerRequest",
-+          "title": "Plugin/share/deleteRequest",
++          "title": "Plugin/share/checkoutRequest",
            "type": "object"
          },
          {
@@ -1829,15 +1876,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "turn/interrupt"
-+                "app/list"
++                "plugin/share/delete"
                ],
 -              "title": "Turn/interruptRequestMethod",
-+              "title": "App/listRequestMethod",
++              "title": "Plugin/share/deleteRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/TurnInterruptParams"
-+              "$ref": "#/definitions/v2/AppsListParams"
++              "$ref": "#/definitions/v2/PluginShareDeleteParams"
              }
            },
            "required": [
@@ -1846,7 +1893,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Turn/interruptRequest",
-+          "title": "App/listRequest",
++          "title": "Plugin/share/deleteRequest",
            "type": "object"
          },
          {
@@ -1855,15 +1902,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "review/start"
-+                "fs/readFile"
++                "app/list"
                ],
 -              "title": "Review/startRequestMethod",
-+              "title": "Fs/readFileRequestMethod",
++              "title": "App/listRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/ReviewStartParams"
-+              "$ref": "#/definitions/v2/FsReadFileParams"
++              "$ref": "#/definitions/v2/AppsListParams"
              }
            },
            "required": [
@@ -1872,7 +1919,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Review/startRequest",
-+          "title": "Fs/readFileRequest",
++          "title": "App/listRequest",
            "type": "object"
          },
          {
@@ -1881,15 +1928,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "model/list"
-+                "fs/writeFile"
++                "fs/readFile"
                ],
 -              "title": "Model/listRequestMethod",
-+              "title": "Fs/writeFileRequestMethod",
++              "title": "Fs/readFileRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/ModelListParams"
-+              "$ref": "#/definitions/v2/FsWriteFileParams"
++              "$ref": "#/definitions/v2/FsReadFileParams"
              }
            },
            "required": [
@@ -1898,7 +1945,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Model/listRequest",
-+          "title": "Fs/writeFileRequest",
++          "title": "Fs/readFileRequest",
            "type": "object"
          },
          {
@@ -1907,15 +1954,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "modelProvider/capabilities/read"
-+                "fs/createDirectory"
++                "fs/writeFile"
                ],
 -              "title": "ModelProvider/capabilities/readRequestMethod",
-+              "title": "Fs/createDirectoryRequestMethod",
++              "title": "Fs/writeFileRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/ModelProviderCapabilitiesReadParams"
-+              "$ref": "#/definitions/v2/FsCreateDirectoryParams"
++              "$ref": "#/definitions/v2/FsWriteFileParams"
              }
            },
            "required": [
@@ -1924,7 +1971,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "ModelProvider/capabilities/readRequest",
-+          "title": "Fs/createDirectoryRequest",
++          "title": "Fs/writeFileRequest",
            "type": "object"
          },
          {
@@ -1933,15 +1980,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "experimentalFeature/list"
-+                "fs/getMetadata"
++                "fs/createDirectory"
                ],
 -              "title": "ExperimentalFeature/listRequestMethod",
-+              "title": "Fs/getMetadataRequestMethod",
++              "title": "Fs/createDirectoryRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/ExperimentalFeatureListParams"
-+              "$ref": "#/definitions/v2/FsGetMetadataParams"
++              "$ref": "#/definitions/v2/FsCreateDirectoryParams"
              }
            },
            "required": [
@@ -1950,7 +1997,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "ExperimentalFeature/listRequest",
-+          "title": "Fs/getMetadataRequest",
++          "title": "Fs/createDirectoryRequest",
            "type": "object"
          },
          {
@@ -1959,15 +2006,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "permissionProfile/list"
-+                "fs/readDirectory"
++                "fs/getMetadata"
                ],
 -              "title": "PermissionProfile/listRequestMethod",
-+              "title": "Fs/readDirectoryRequestMethod",
++              "title": "Fs/getMetadataRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/PermissionProfileListParams"
-+              "$ref": "#/definitions/v2/FsReadDirectoryParams"
++              "$ref": "#/definitions/v2/FsGetMetadataParams"
              }
            },
            "required": [
@@ -1976,7 +2023,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "PermissionProfile/listRequest",
-+          "title": "Fs/readDirectoryRequest",
++          "title": "Fs/getMetadataRequest",
            "type": "object"
          },
          {
@@ -1985,15 +2032,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "experimentalFeature/enablement/set"
-+                "fs/remove"
++                "fs/readDirectory"
                ],
 -              "title": "ExperimentalFeature/enablement/setRequestMethod",
-+              "title": "Fs/removeRequestMethod",
++              "title": "Fs/readDirectoryRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/ExperimentalFeatureEnablementSetParams"
-+              "$ref": "#/definitions/v2/FsRemoveParams"
++              "$ref": "#/definitions/v2/FsReadDirectoryParams"
              }
            },
            "required": [
@@ -2002,7 +2049,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "ExperimentalFeature/enablement/setRequest",
-+          "title": "Fs/removeRequest",
++          "title": "Fs/readDirectoryRequest",
            "type": "object"
          },
          {
@@ -2011,15 +2058,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "mcpServer/oauth/login"
-+                "fs/copy"
++                "fs/remove"
                ],
 -              "title": "McpServer/oauth/loginRequestMethod",
-+              "title": "Fs/copyRequestMethod",
++              "title": "Fs/removeRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/McpServerOauthLoginParams"
-+              "$ref": "#/definitions/v2/FsCopyParams"
++              "$ref": "#/definitions/v2/FsRemoveParams"
              }
            },
            "required": [
@@ -2028,7 +2075,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "McpServer/oauth/loginRequest",
-+          "title": "Fs/copyRequest",
++          "title": "Fs/removeRequest",
            "type": "object"
          },
          {
@@ -2037,15 +2084,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "config/mcpServer/reload"
-+                "fs/watch"
++                "fs/copy"
                ],
 -              "title": "Config/mcpServer/reloadRequestMethod",
-+              "title": "Fs/watchRequestMethod",
++              "title": "Fs/copyRequestMethod",
                "type": "string"
              },
              "params": {
 -              "type": "null"
-+              "$ref": "#/definitions/v2/FsWatchParams"
++              "$ref": "#/definitions/v2/FsCopyParams"
              }
            },
            "required": [
@@ -2055,7 +2102,7 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            "params"
            ],
 -          "title": "Config/mcpServer/reloadRequest",
-+          "title": "Fs/watchRequest",
++          "title": "Fs/copyRequest",
            "type": "object"
          },
          {
@@ -2064,15 +2111,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "mcpServerStatus/list"
-+                "fs/unwatch"
++                "fs/watch"
                ],
 -              "title": "McpServerStatus/listRequestMethod",
-+              "title": "Fs/unwatchRequestMethod",
++              "title": "Fs/watchRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/ListMcpServerStatusParams"
-+              "$ref": "#/definitions/v2/FsUnwatchParams"
++              "$ref": "#/definitions/v2/FsWatchParams"
              }
            },
            "required": [
@@ -2081,7 +2128,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "McpServerStatus/listRequest",
-+          "title": "Fs/unwatchRequest",
++          "title": "Fs/watchRequest",
            "type": "object"
          },
          {
@@ -2090,15 +2137,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "mcpServer/resource/read"
-+                "skills/config/write"
++                "fs/unwatch"
                ],
 -              "title": "McpServer/resource/readRequestMethod",
-+              "title": "Skills/config/writeRequestMethod",
++              "title": "Fs/unwatchRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/McpResourceReadParams"
-+              "$ref": "#/definitions/v2/SkillsConfigWriteParams"
++              "$ref": "#/definitions/v2/FsUnwatchParams"
              }
            },
            "required": [
@@ -2107,7 +2154,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "McpServer/resource/readRequest",
-+          "title": "Skills/config/writeRequest",
++          "title": "Fs/unwatchRequest",
            "type": "object"
          },
          {
@@ -2116,15 +2163,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "mcpServer/tool/call"
-+                "plugin/install"
++                "skills/config/write"
                ],
 -              "title": "McpServer/tool/callRequestMethod",
-+              "title": "Plugin/installRequestMethod",
++              "title": "Skills/config/writeRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/McpServerToolCallParams"
-+              "$ref": "#/definitions/v2/PluginInstallParams"
++              "$ref": "#/definitions/v2/SkillsConfigWriteParams"
              }
            },
            "required": [
@@ -2133,7 +2180,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "McpServer/tool/callRequest",
-+          "title": "Plugin/installRequest",
++          "title": "Skills/config/writeRequest",
            "type": "object"
          },
          {
@@ -2142,15 +2189,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "windowsSandbox/setupStart"
-+                "plugin/uninstall"
++                "plugin/install"
                ],
 -              "title": "WindowsSandbox/setupStartRequestMethod",
-+              "title": "Plugin/uninstallRequestMethod",
++              "title": "Plugin/installRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/WindowsSandboxSetupStartParams"
-+              "$ref": "#/definitions/v2/PluginUninstallParams"
++              "$ref": "#/definitions/v2/PluginInstallParams"
              }
            },
            "required": [
@@ -2159,7 +2206,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "WindowsSandbox/setupStartRequest",
-+          "title": "Plugin/uninstallRequest",
++          "title": "Plugin/installRequest",
            "type": "object"
          },
          {
@@ -2168,15 +2215,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "windowsSandbox/readiness"
-+                "turn/start"
++                "plugin/uninstall"
                ],
 -              "title": "WindowsSandbox/readinessRequestMethod",
-+              "title": "Turn/startRequestMethod",
++              "title": "Plugin/uninstallRequestMethod",
                "type": "string"
              },
              "params": {
 -              "type": "null"
-+              "$ref": "#/definitions/v2/TurnStartParams"
++              "$ref": "#/definitions/v2/PluginUninstallParams"
              }
            },
            "required": [
@@ -2186,7 +2233,7 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            "params"
            ],
 -          "title": "WindowsSandbox/readinessRequest",
-+          "title": "Turn/startRequest",
++          "title": "Plugin/uninstallRequest",
            "type": "object"
          },
          {
@@ -2195,15 +2242,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "account/login/start"
-+                "turn/steer"
++                "turn/start"
                ],
 -              "title": "Account/login/startRequestMethod",
-+              "title": "Turn/steerRequestMethod",
++              "title": "Turn/startRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/LoginAccountParams"
-+              "$ref": "#/definitions/v2/TurnSteerParams"
++              "$ref": "#/definitions/v2/TurnStartParams"
              }
            },
            "required": [
@@ -2212,7 +2259,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Account/login/startRequest",
-+          "title": "Turn/steerRequest",
++          "title": "Turn/startRequest",
            "type": "object"
          },
          {
@@ -2221,15 +2268,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "account/login/cancel"
-+                "turn/interrupt"
++                "turn/steer"
                ],
 -              "title": "Account/login/cancelRequestMethod",
-+              "title": "Turn/interruptRequestMethod",
++              "title": "Turn/steerRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/CancelLoginAccountParams"
-+              "$ref": "#/definitions/v2/TurnInterruptParams"
++              "$ref": "#/definitions/v2/TurnSteerParams"
              }
            },
            "required": [
@@ -2238,7 +2285,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Account/login/cancelRequest",
-+          "title": "Turn/interruptRequest",
++          "title": "Turn/steerRequest",
            "type": "object"
          },
          {
@@ -2247,9 +2294,36 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "account/logout"
-+                "review/start"
++                "turn/interrupt"
                ],
 -              "title": "Account/logoutRequestMethod",
++              "title": "Turn/interruptRequestMethod",
+               "type": "string"
+             },
+             "params": {
+-              "type": "null"
++              "$ref": "#/definitions/v2/TurnInterruptParams"
+             }
+           },
+           "required": [
+             "id",
+-            "method"
++            "method",
++            "params"
+           ],
+-          "title": "Account/logoutRequest",
++          "title": "Turn/interruptRequest",
+           "type": "object"
+         },
+         {
+@@ -1841,20 +1844,21 @@
+             },
+             "method": {
+               "enum": [
+-                "account/rateLimits/read"
++                "review/start"
+               ],
+-              "title": "Account/rateLimits/readRequestMethod",
 +              "title": "Review/startRequestMethod",
                "type": "string"
              },
@@ -2264,35 +2338,8 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            "method",
 +            "params"
            ],
--          "title": "Account/logoutRequest",
-+          "title": "Review/startRequest",
-           "type": "object"
-         },
-         {
-@@ -1841,20 +1844,21 @@
-             },
-             "method": {
-               "enum": [
--                "account/rateLimits/read"
-+                "model/list"
-               ],
--              "title": "Account/rateLimits/readRequestMethod",
-+              "title": "Model/listRequestMethod",
-               "type": "string"
-             },
-             "params": {
--              "type": "null"
-+              "$ref": "#/definitions/v2/ModelListParams"
-             }
-           },
-           "required": [
-             "id",
--            "method"
-+            "method",
-+            "params"
-           ],
 -          "title": "Account/rateLimits/readRequest",
-+          "title": "Model/listRequest",
++          "title": "Review/startRequest",
            "type": "object"
          },
          {
@@ -2301,15 +2348,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "account/rateLimitResetCredit/consume"
-+                "modelProvider/capabilities/read"
++                "model/list"
                ],
 -              "title": "Account/rateLimitResetCredit/consumeRequestMethod",
-+              "title": "ModelProvider/capabilities/readRequestMethod",
++              "title": "Model/listRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/ConsumeAccountRateLimitResetCreditParams"
-+              "$ref": "#/definitions/v2/ModelProviderCapabilitiesReadParams"
++              "$ref": "#/definitions/v2/ModelListParams"
              }
            },
            "required": [
@@ -2318,7 +2365,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Account/rateLimitResetCredit/consumeRequest",
-+          "title": "ModelProvider/capabilities/readRequest",
++          "title": "Model/listRequest",
            "type": "object"
          },
          {
@@ -2327,9 +2374,36 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "account/usage/read"
-+                "experimentalFeature/list"
++                "modelProvider/capabilities/read"
                ],
 -              "title": "Account/usage/readRequestMethod",
++              "title": "ModelProvider/capabilities/readRequestMethod",
+               "type": "string"
+             },
+             "params": {
+-              "type": "null"
++              "$ref": "#/definitions/v2/ModelProviderCapabilitiesReadParams"
+             }
+           },
+           "required": [
+             "id",
+-            "method"
++            "method",
++            "params"
+           ],
+-          "title": "Account/usage/readRequest",
++          "title": "ModelProvider/capabilities/readRequest",
+           "type": "object"
+         },
+         {
+@@ -1911,20 +1916,21 @@
+             },
+             "method": {
+               "enum": [
+-                "account/workspaceMessages/read"
++                "experimentalFeature/list"
+               ],
+-              "title": "Account/workspaceMessages/readRequestMethod",
 +              "title": "ExperimentalFeature/listRequestMethod",
                "type": "string"
              },
@@ -2344,35 +2418,8 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            "method",
 +            "params"
            ],
--          "title": "Account/usage/readRequest",
-+          "title": "ExperimentalFeature/listRequest",
-           "type": "object"
-         },
-         {
-@@ -1911,20 +1916,21 @@
-             },
-             "method": {
-               "enum": [
--                "account/workspaceMessages/read"
-+                "permissionProfile/list"
-               ],
--              "title": "Account/workspaceMessages/readRequestMethod",
-+              "title": "PermissionProfile/listRequestMethod",
-               "type": "string"
-             },
-             "params": {
--              "type": "null"
-+              "$ref": "#/definitions/v2/PermissionProfileListParams"
-             }
-           },
-           "required": [
-             "id",
--            "method"
-+            "method",
-+            "params"
-           ],
 -          "title": "Account/workspaceMessages/readRequest",
-+          "title": "PermissionProfile/listRequest",
++          "title": "ExperimentalFeature/listRequest",
            "type": "object"
          },
          {
@@ -2381,15 +2428,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "account/sendAddCreditsNudgeEmail"
-+                "experimentalFeature/enablement/set"
++                "permissionProfile/list"
                ],
 -              "title": "Account/sendAddCreditsNudgeEmailRequestMethod",
-+              "title": "ExperimentalFeature/enablement/setRequestMethod",
++              "title": "PermissionProfile/listRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/SendAddCreditsNudgeEmailParams"
-+              "$ref": "#/definitions/v2/ExperimentalFeatureEnablementSetParams"
++              "$ref": "#/definitions/v2/PermissionProfileListParams"
              }
            },
            "required": [
@@ -2398,7 +2445,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Account/sendAddCreditsNudgeEmailRequest",
-+          "title": "ExperimentalFeature/enablement/setRequest",
++          "title": "PermissionProfile/listRequest",
            "type": "object"
          },
          {
@@ -2407,24 +2454,24 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "feedback/upload"
-+                "mcpServer/oauth/login"
++                "experimentalFeature/enablement/set"
                ],
 -              "title": "Feedback/uploadRequestMethod",
-+              "title": "McpServer/oauth/loginRequestMethod",
++              "title": "ExperimentalFeature/enablement/setRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/FeedbackUploadParams"
-+              "$ref": "#/definitions/v2/McpServerOauthLoginParams"
++              "$ref": "#/definitions/v2/ExperimentalFeatureEnablementSetParams"
              }
            },
            "required": [
-@@ -1972,49 +1978,46 @@
+@@ -1972,24 +1978,23 @@
              "method",
              "params"
            ],
 -          "title": "Feedback/uploadRequest",
-+          "title": "McpServer/oauth/loginRequest",
++          "title": "ExperimentalFeature/enablement/setRequest",
            "type": "object"
          },
          {
@@ -2436,25 +2483,24 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "command/exec"
-+                "config/mcpServer/reload"
++                "mcpServer/oauth/login"
                ],
 -              "title": "Command/execRequestMethod",
-+              "title": "Config/mcpServer/reloadRequestMethod",
++              "title": "McpServer/oauth/loginRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/CommandExecParams"
-+              "type": "null"
++              "$ref": "#/definitions/v2/McpServerOauthLoginParams"
              }
            },
            "required": [
-             "id",
--            "method",
--            "params"
-+            "method"
+@@ -1997,49 +2002,46 @@
+             "method",
+             "params"
            ],
 -          "title": "Command/execRequest",
-+          "title": "Config/mcpServer/reloadRequest",
++          "title": "McpServer/oauth/loginRequest",
            "type": "object"
          },
          {
@@ -2466,24 +2512,25 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "command/exec/write"
-+                "mcpServerStatus/list"
++                "config/mcpServer/reload"
                ],
 -              "title": "Command/exec/writeRequestMethod",
-+              "title": "McpServerStatus/listRequestMethod",
++              "title": "Config/mcpServer/reloadRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/CommandExecWriteParams"
-+              "$ref": "#/definitions/v2/ListMcpServerStatusParams"
++              "type": "null"
              }
            },
            "required": [
-@@ -2022,24 +2025,23 @@
-             "method",
-             "params"
+             "id",
+-            "method",
+-            "params"
++            "method"
            ],
 -          "title": "Command/exec/writeRequest",
-+          "title": "McpServerStatus/listRequest",
++          "title": "Config/mcpServer/reloadRequest",
            "type": "object"
          },
          {
@@ -2495,15 +2542,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "command/exec/terminate"
-+                "mcpServer/resource/read"
++                "mcpServerStatus/list"
                ],
 -              "title": "Command/exec/terminateRequestMethod",
-+              "title": "McpServer/resource/readRequestMethod",
++              "title": "McpServerStatus/listRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/CommandExecTerminateParams"
-+              "$ref": "#/definitions/v2/McpResourceReadParams"
++              "$ref": "#/definitions/v2/ListMcpServerStatusParams"
              }
            },
            "required": [
@@ -2512,7 +2559,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Command/exec/terminateRequest",
-+          "title": "McpServer/resource/readRequest",
++          "title": "McpServerStatus/listRequest",
            "type": "object"
          },
          {
@@ -2524,15 +2571,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "command/exec/resize"
-+                "mcpServer/tool/call"
++                "mcpServer/resource/read"
                ],
 -              "title": "Command/exec/resizeRequestMethod",
-+              "title": "McpServer/tool/callRequestMethod",
++              "title": "McpServer/resource/readRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/CommandExecResizeParams"
-+              "$ref": "#/definitions/v2/McpServerToolCallParams"
++              "$ref": "#/definitions/v2/McpResourceReadParams"
              }
            },
            "required": [
@@ -2541,7 +2588,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Command/exec/resizeRequest",
-+          "title": "McpServer/tool/callRequest",
++          "title": "McpServer/resource/readRequest",
            "type": "object"
          },
          {
@@ -2550,15 +2597,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "config/read"
-+                "windowsSandbox/setupStart"
++                "mcpServer/tool/call"
                ],
 -              "title": "Config/readRequestMethod",
-+              "title": "WindowsSandbox/setupStartRequestMethod",
++              "title": "McpServer/tool/callRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/ConfigReadParams"
-+              "$ref": "#/definitions/v2/WindowsSandboxSetupStartParams"
++              "$ref": "#/definitions/v2/McpServerToolCallParams"
              }
            },
            "required": [
@@ -2567,23 +2614,49 @@ index 7c974ae4ae..bbfed6ed61 100644
              "params"
            ],
 -          "title": "Config/readRequest",
-+          "title": "WindowsSandbox/setupStartRequest",
++          "title": "McpServer/tool/callRequest",
            "type": "object"
          },
          {
-@@ -2106,21 +2107,20 @@
+@@ -2106,13 +2107,13 @@
              },
              "method": {
                "enum": [
 -                "externalAgentConfig/detect"
-+                "windowsSandbox/readiness"
++                "windowsSandbox/setupStart"
                ],
 -              "title": "ExternalAgentConfig/detectRequestMethod",
-+              "title": "WindowsSandbox/readinessRequestMethod",
++              "title": "WindowsSandbox/setupStartRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/ExternalAgentConfigDetectParams"
++              "$ref": "#/definitions/v2/WindowsSandboxSetupStartParams"
+             }
+           },
+           "required": [
+@@ -2120,7 +2121,7 @@
+             "method",
+             "params"
+           ],
+-          "title": "ExternalAgentConfig/detectRequest",
++          "title": "WindowsSandbox/setupStartRequest",
+           "type": "object"
+         },
+         {
+@@ -2130,21 +2131,20 @@
+             },
+             "method": {
+               "enum": [
+-                "externalAgentConfig/import"
++                "windowsSandbox/readiness"
+               ],
+-              "title": "ExternalAgentConfig/importRequestMethod",
++              "title": "WindowsSandbox/readinessRequestMethod",
+               "type": "string"
+             },
+             "params": {
+-              "$ref": "#/definitions/v2/ExternalAgentConfigImportParams"
 +              "type": "null"
              }
            },
@@ -2593,34 +2666,8 @@ index 7c974ae4ae..bbfed6ed61 100644
 -            "params"
 +            "method"
            ],
--          "title": "ExternalAgentConfig/detectRequest",
-+          "title": "WindowsSandbox/readinessRequest",
-           "type": "object"
-         },
-         {
-@@ -2130,13 +2130,13 @@
-             },
-             "method": {
-               "enum": [
--                "externalAgentConfig/import"
-+                "account/login/start"
-               ],
--              "title": "ExternalAgentConfig/importRequestMethod",
-+              "title": "Account/login/startRequestMethod",
-               "type": "string"
-             },
-             "params": {
--              "$ref": "#/definitions/v2/ExternalAgentConfigImportParams"
-+              "$ref": "#/definitions/v2/LoginAccountParams"
-             }
-           },
-           "required": [
-@@ -2144,7 +2144,7 @@
-             "method",
-             "params"
-           ],
 -          "title": "ExternalAgentConfig/importRequest",
-+          "title": "Account/login/startRequest",
++          "title": "WindowsSandbox/readinessRequest",
            "type": "object"
          },
          {
@@ -2629,15 +2676,15 @@ index 7c974ae4ae..bbfed6ed61 100644
              "method": {
                "enum": [
 -                "externalAgentConfig/import/readHistories"
-+                "account/login/cancel"
++                "account/login/start"
                ],
 -              "title": "ExternalAgentConfig/import/readHistoriesRequestMethod",
-+              "title": "Account/login/cancelRequestMethod",
++              "title": "Account/login/startRequestMethod",
                "type": "string"
              },
              "params": {
 -              "type": "null"
-+              "$ref": "#/definitions/v2/CancelLoginAccountParams"
++              "$ref": "#/definitions/v2/LoginAccountParams"
              }
            },
            "required": [
@@ -2647,46 +2694,45 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            "params"
            ],
 -          "title": "ExternalAgentConfig/import/readHistoriesRequest",
-+          "title": "Account/login/cancelRequest",
++          "title": "Account/login/startRequest",
            "type": "object"
          },
          {
-@@ -2177,21 +2178,20 @@
+@@ -2177,13 +2178,13 @@
              },
              "method": {
                "enum": [
 -                "config/value/write"
-+                "account/logout"
++                "account/login/cancel"
                ],
 -              "title": "Config/value/writeRequestMethod",
-+              "title": "Account/logoutRequestMethod",
++              "title": "Account/login/cancelRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/ConfigValueWriteParams"
-+              "type": "null"
++              "$ref": "#/definitions/v2/CancelLoginAccountParams"
              }
            },
            "required": [
-             "id",
--            "method",
--            "params"
-+            "method"
+@@ -2191,7 +2192,7 @@
+             "method",
+             "params"
            ],
 -          "title": "Config/value/writeRequest",
-+          "title": "Account/logoutRequest",
++          "title": "Account/login/cancelRequest",
            "type": "object"
          },
          {
-@@ -2201,21 +2201,20 @@
+@@ -2201,21 +2202,20 @@
              },
              "method": {
                "enum": [
 -                "config/batchWrite"
-+                "account/rateLimits/read"
++                "account/logout"
                ],
 -              "title": "Config/batchWriteRequestMethod",
-+              "title": "Account/rateLimits/readRequestMethod",
++              "title": "Account/logoutRequestMethod",
                "type": "string"
              },
              "params": {
@@ -2701,73 +2747,66 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            "method"
            ],
 -          "title": "Config/batchWriteRequest",
-+          "title": "Account/rateLimits/readRequest",
++          "title": "Account/logoutRequest",
            "type": "object"
          },
          {
-@@ -2225,20 +2224,21 @@
+@@ -2225,9 +2225,9 @@
              },
              "method": {
                "enum": [
 -                "configRequirements/read"
-+                "account/rateLimitResetCredit/consume"
++                "account/rateLimits/read"
                ],
 -              "title": "ConfigRequirements/readRequestMethod",
-+              "title": "Account/rateLimitResetCredit/consumeRequestMethod",
++              "title": "Account/rateLimits/readRequestMethod",
                "type": "string"
              },
              "params": {
--              "type": "null"
-+              "$ref": "#/definitions/v2/ConsumeAccountRateLimitResetCreditParams"
-             }
-           },
-           "required": [
+@@ -2238,7 +2238,7 @@
              "id",
--            "method"
-+            "method",
-+            "params"
+             "method"
            ],
 -          "title": "ConfigRequirements/readRequest",
-+          "title": "Account/rateLimitResetCredit/consumeRequest",
++          "title": "Account/rateLimits/readRequest",
            "type": "object"
          },
          {
-@@ -2248,21 +2248,20 @@
+@@ -2248,13 +2248,13 @@
              },
              "method": {
                "enum": [
 -                "account/read"
-+                "account/usage/read"
++                "account/rateLimitResetCredit/consume"
                ],
 -              "title": "Account/readRequestMethod",
-+              "title": "Account/usage/readRequestMethod",
++              "title": "Account/rateLimitResetCredit/consumeRequestMethod",
                "type": "string"
              },
              "params": {
 -              "$ref": "#/definitions/v2/GetAccountParams"
-+              "type": "null"
++              "$ref": "#/definitions/v2/ConsumeAccountRateLimitResetCreditParams"
              }
            },
            "required": [
-             "id",
--            "method",
--            "params"
-+            "method"
+@@ -2262,7 +2262,7 @@
+             "method",
+             "params"
            ],
 -          "title": "Account/readRequest",
-+          "title": "Account/usage/readRequest",
++          "title": "Account/rateLimitResetCredit/consumeRequest",
            "type": "object"
          },
          {
-@@ -2272,436 +2271,459 @@
+@@ -2272,436 +2272,482 @@
              },
              "method": {
                "enum": [
 -                "fuzzyFileSearch"
-+                "account/workspaceMessages/read"
++                "account/usage/read"
                ],
 -              "title": "FuzzyFileSearchRequestMethod",
-+              "title": "Account/workspaceMessages/readRequestMethod",
++              "title": "Account/usage/readRequestMethod",
                "type": "string"
              },
              "params": {
@@ -2782,7 +2821,7 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            "method"
            ],
 -          "title": "FuzzyFileSearchRequest",
-+          "title": "Account/workspaceMessages/readRequest",
++          "title": "Account/usage/readRequest",
            "type": "object"
 -        }
 -      ],
@@ -2807,22 +2846,21 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            },
 +            "method": {
 +              "enum": [
-+                "account/sendAddCreditsNudgeEmail"
++                "account/workspaceMessages/read"
 +              ],
-+              "title": "Account/sendAddCreditsNudgeEmailRequestMethod",
++              "title": "Account/workspaceMessages/readRequestMethod",
 +              "type": "string"
 +            },
 +            "params": {
-+              "$ref": "#/definitions/v2/SendAddCreditsNudgeEmailParams"
++              "type": "null"
 +            }
 +          },
 +          "required": [
 +            "id",
-+            "method",
-+            "params"
++            "method"
            ],
 -          "type": "string"
-+          "title": "Account/sendAddCreditsNudgeEmailRequest",
++          "title": "Account/workspaceMessages/readRequest",
 +          "type": "object"
          },
          {
@@ -2845,14 +2883,14 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            },
 +            "method": {
 +              "enum": [
-+                "feedback/upload"
++                "account/sendAddCreditsNudgeEmail"
                ],
 -              "type": "object"
-+              "title": "Feedback/uploadRequestMethod",
++              "title": "Account/sendAddCreditsNudgeEmailRequestMethod",
 +              "type": "string"
 +            },
 +            "params": {
-+              "$ref": "#/definitions/v2/FeedbackUploadParams"
++              "$ref": "#/definitions/v2/SendAddCreditsNudgeEmailParams"
              }
            },
            "required": [
@@ -2862,13 +2900,12 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            "params"
            ],
 -          "title": "AcceptWithExecpolicyAmendmentCommandExecutionApprovalDecision",
-+          "title": "Feedback/uploadRequest",
++          "title": "Account/sendAddCreditsNudgeEmailRequest",
            "type": "object"
          },
          {
 -          "additionalProperties": false,
 -          "description": "User chose a persistent network policy rule (allow/deny) for this host.",
-+          "description": "Execute a standalone command (argv vector) under the server's sandbox.",
            "properties": {
 -            "applyNetworkPolicyAmendment": {
 -              "properties": {
@@ -2883,14 +2920,14 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            },
 +            "method": {
 +              "enum": [
-+                "command/exec"
++                "feedback/upload"
                ],
 -              "type": "object"
-+              "title": "Command/execRequestMethod",
++              "title": "Feedback/uploadRequestMethod",
 +              "type": "string"
 +            },
 +            "params": {
-+              "$ref": "#/definitions/v2/CommandExecParams"
++              "$ref": "#/definitions/v2/FeedbackUploadParams"
              }
            },
            "required": [
@@ -2900,13 +2937,42 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            "params"
            ],
 -          "title": "ApplyNetworkPolicyAmendmentCommandExecutionApprovalDecision",
-+          "title": "Command/execRequest",
++          "title": "Feedback/uploadRequest",
            "type": "object"
          },
          {
 -          "description": "User denied the command. The agent will continue the turn.",
 -          "enum": [
 -            "decline"
++          "description": "Execute a standalone command (argv vector) under the server's sandbox.",
++          "properties": {
++            "id": {
++              "$ref": "#/definitions/v2/RequestId"
++            },
++            "method": {
++              "enum": [
++                "command/exec"
++              ],
++              "title": "Command/execRequestMethod",
++              "type": "string"
++            },
++            "params": {
++              "$ref": "#/definitions/v2/CommandExecParams"
++            }
++          },
++          "required": [
++            "id",
++            "method",
++            "params"
+           ],
+-          "type": "string"
++          "title": "Command/execRequest",
++          "type": "object"
+         },
+         {
+-          "description": "User denied the command. The turn will also be immediately interrupted.",
+-          "enum": [
+-            "cancel"
 +          "description": "Write stdin bytes to a running `command/exec` session or close stdin.",
 +          "properties": {
 +            "id": {
@@ -2929,15 +2995,6 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            "params"
            ],
 -          "type": "string"
-+          "title": "Command/exec/writeRequest",
-+          "type": "object"
-         },
-         {
--          "description": "User denied the command. The turn will also be immediately interrupted.",
--          "enum": [
--            "cancel"
--          ],
--          "type": "string"
 -        }
 -      ]
 -    },
@@ -2957,28 +3014,19 @@ index 7c974ae4ae..bbfed6ed61 100644
 -            "string",
 -            "null"
 -          ]
--        },
++          "title": "Command/exec/writeRequest",
++          "type": "object"
+         },
 -        "commandActions": {
 -          "description": "Best-effort parsed command actions for friendly display.",
 -          "items": {
 -            "$ref": "#/definitions/v2/CommandAction"
--          },
--          "type": [
--            "array",
--            "null"
--          ]
--        },
--        "cwd": {
--          "anyOf": [
--            {
--              "$ref": "#/definitions/v2/LegacyAppPathString"
++        {
 +          "description": "Terminate a running `command/exec` session by client-supplied `processId`.",
 +          "properties": {
 +            "id": {
 +              "$ref": "#/definitions/v2/RequestId"
-             },
--            {
--              "type": "null"
++            },
 +            "method": {
 +              "enum": [
 +                "command/exec/terminate"
@@ -2988,32 +3036,24 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            },
 +            "params": {
 +              "$ref": "#/definitions/v2/CommandExecTerminateParams"
-             }
-+          },
++            }
+           },
+-          "type": [
+-            "array",
+-            "null"
+-          ]
 +          "required": [
 +            "id",
 +            "method",
 +            "params"
-           ],
--          "description": "The command's working directory."
--        },
--        "environmentId": {
--          "default": null,
--          "description": "Environment in which the command will run.",
--          "type": [
--            "string",
--            "null"
--          ]
--        },
--        "itemId": {
--          "type": "string"
++          ],
 +          "title": "Command/exec/terminateRequest",
 +          "type": "object"
          },
--        "networkApprovalContext": {
+-        "cwd": {
 -          "anyOf": [
 -            {
--              "$ref": "#/definitions/NetworkApprovalContext"
+-              "$ref": "#/definitions/v2/LegacyAppPathString"
 +        {
 +          "description": "Resize a running PTY-backed `command/exec` session by client-supplied `processId`.",
 +          "properties": {
@@ -3038,19 +3078,32 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            "method",
 +            "params"
            ],
--          "description": "Optional context for a managed-network approval prompt."
+-          "description": "The command's working directory."
+-        },
+-        "environmentId": {
+-          "default": null,
+-          "description": "Environment in which the command will run.",
+-          "type": [
+-            "string",
+-            "null"
+-          ]
+-        },
+-        "itemId": {
+-          "type": "string"
 +          "title": "Command/exec/resizeRequest",
 +          "type": "object"
          },
--        "proposedExecpolicyAmendment": {
--          "description": "Optional proposed execpolicy amendment to allow similar commands without prompting.",
--          "items": {
--            "type": "string"
+-        "networkApprovalContext": {
+-          "anyOf": [
+-            {
+-              "$ref": "#/definitions/NetworkApprovalContext"
 +        {
 +          "properties": {
 +            "id": {
 +              "$ref": "#/definitions/v2/RequestId"
-+            },
+             },
+-            {
+-              "type": "null"
 +            "method": {
 +              "enum": [
 +                "config/read"
@@ -3060,20 +3113,27 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            },
 +            "params": {
 +              "$ref": "#/definitions/v2/ConfigReadParams"
-+            }
-           },
--          "type": [
--            "array",
--            "null"
--          ]
+             }
++          },
 +          "required": [
 +            "id",
 +            "method",
 +            "params"
-+          ],
+           ],
+-          "description": "Optional context for a managed-network approval prompt."
 +          "title": "Config/readRequest",
 +          "type": "object"
          },
+-        "proposedExecpolicyAmendment": {
+-          "description": "Optional proposed execpolicy amendment to allow similar commands without prompting.",
+-          "items": {
+-            "type": "string"
+-          },
+-          "type": [
+-            "array",
+-            "null"
+-          ]
+-        },
 -        "proposedNetworkPolicyAmendments": {
 -          "description": "Optional proposed network policy amendments (allow/deny host) for future requests.",
 -          "items": {
@@ -3359,16 +3419,11 @@ index 7c974ae4ae..bbfed6ed61 100644
 -            "acceptForSession"
 -          ],
 -          "type": "string"
--        },
--        {
+         },
+         {
 -          "description": "User denied the file changes. The agent will continue the turn.",
 -          "enum": [
 -            "decline"
--          ],
--          "type": "string"
-         },
-         {
--          "description": "User denied the file changes. The turn will also be immediately interrupted.",
 +          "properties": {
 +            "id": {
 +              "$ref": "#/definitions/v2/RequestId"
@@ -3496,10 +3551,11 @@ index 7c974ae4ae..bbfed6ed61 100644
 +          "description": "User approved the command.",
 +          "enum": [
 +            "accept"
-+          ],
-+          "type": "string"
-+        },
-+        {
+           ],
+           "type": "string"
+         },
+         {
+-          "description": "User denied the file changes. The turn will also be immediately interrupted.",
 +          "description": "User approved the command and future prompts in the same session-scoped approval cache should run without prompting.",
 +          "enum": [
 +            "acceptForSession"
@@ -3565,7 +3621,7 @@ index 7c974ae4ae..bbfed6ed61 100644
            "enum": [
              "cancel"
            ],
-@@ -2709,507 +2731,564 @@
+@@ -2709,507 +2755,564 @@
          }
        ]
      },
@@ -3598,40 +3654,12 @@ index 7c974ae4ae..bbfed6ed61 100644
 -          "description": "Unix timestamp (in milliseconds) when this approval request started.",
 -          "format": "int64",
 -          "type": "integer"
-+        "commandActions": {
-+          "description": "Best-effort parsed command actions for friendly display.",
-+          "items": {
-+            "$ref": "#/definitions/v2/CommandAction"
-+          },
-+          "type": [
-+            "array",
-+            "null"
-+          ]
-         },
+-        },
 -        "threadId": {
 -          "type": "string"
-+        "cwd": {
-+          "anyOf": [
-+            {
-+              "$ref": "#/definitions/v2/LegacyAppPathString"
-+            },
-+            {
-+              "type": "null"
-+            }
-+          ],
-+          "description": "The command's working directory."
-         },
+-        },
 -        "turnId": {
-+        "environmentId": {
-+          "default": null,
-+          "description": "Environment in which the command will run.",
-+          "type": [
-+            "string",
-+            "null"
-+          ]
-+        },
-+        "itemId": {
-           "type": "string"
+-          "type": "string"
 -        }
 -      },
 -      "required": [
@@ -3667,7 +3695,41 @@ index 7c974ae4ae..bbfed6ed61 100644
 -      "$schema": "http://json-schema.org/draft-07/schema#",
 -      "properties": {
 -        "cancellationToken": {
++        "commandActions": {
++          "description": "Best-effort parsed command actions for friendly display.",
++          "items": {
++            "$ref": "#/definitions/v2/CommandAction"
++          },
+           "type": [
+-            "string",
++            "array",
+             "null"
+           ]
+         },
+-        "query": {
++        "cwd": {
++          "anyOf": [
++            {
++              "$ref": "#/definitions/v2/LegacyAppPathString"
++            },
++            {
++              "type": "null"
++            }
++          ],
++          "description": "The command's working directory."
 +        },
++        "environmentId": {
++          "default": null,
++          "description": "Environment in which the command will run.",
++          "type": [
++            "string",
++            "null"
++          ]
++        },
++        "itemId": {
+           "type": "string"
+         },
+-        "roots": {
 +        "networkApprovalContext": {
 +          "anyOf": [
 +            {
@@ -3681,9 +3743,10 @@ index 7c974ae4ae..bbfed6ed61 100644
 +        },
 +        "proposedExecpolicyAmendment": {
 +          "description": "Optional proposed execpolicy amendment to allow similar commands without prompting.",
-+          "items": {
-+            "type": "string"
-+          },
+           "items": {
+             "type": "string"
+           },
+-          "type": "array"
 +          "type": [
 +            "array",
 +            "null"
@@ -3701,25 +3764,19 @@ index 7c974ae4ae..bbfed6ed61 100644
 +        },
 +        "reason": {
 +          "description": "Optional explanatory reason (e.g. request for network access).",
-           "type": [
-             "string",
-             "null"
-           ]
-         },
--        "query": {
++          "type": [
++            "string",
++            "null"
++          ]
++        },
 +        "startedAtMs": {
 +          "description": "Unix timestamp (in milliseconds) when this approval request started.",
 +          "format": "int64",
 +          "type": "integer"
 +        },
 +        "threadId": {
-           "type": "string"
-         },
--        "roots": {
--          "items": {
--            "type": "string"
--          },
--          "type": "array"
++          "type": "string"
++        },
 +        "turnId": {
 +          "type": "string"
          }
@@ -4465,7 +4522,7 @@ index 7c974ae4ae..bbfed6ed61 100644
            "items": {
              "type": "string"
            },
-@@ -3218,166 +3297,210 @@
+@@ -3218,166 +3321,210 @@
              "null"
            ]
          },
@@ -4588,25 +4645,18 @@ index 7c974ae4ae..bbfed6ed61 100644
        },
        "required": [
 -        "type"
--      ],
--      "type": "object"
--    },
--    "McpElicitationNumberType": {
--      "enum": [
--        "number",
--        "integer"
 +        "codexHome",
 +        "platformFamily",
 +        "platformOs",
 +        "userAgent"
        ],
--      "type": "string"
 +      "title": "InitializeResponse",
-+      "type": "object"
+       "type": "object"
      },
--    "McpElicitationObjectType": {
+-    "McpElicitationNumberType": {
 -      "enum": [
--        "object"
+-        "number",
+-        "integer"
 +    "JSONRPCError": {
 +      "$schema": "http://json-schema.org/draft-07/schema#",
 +      "description": "A response to a request that indicates an error occurred.",
@@ -4626,7 +4676,9 @@ index 7c974ae4ae..bbfed6ed61 100644
 +      "title": "JSONRPCError",
 +      "type": "object"
      },
--    "McpElicitationPrimitiveSchema": {
+-    "McpElicitationObjectType": {
+-      "enum": [
+-        "object"
 +    "JSONRPCErrorError": {
 +      "$schema": "http://json-schema.org/draft-07/schema#",
 +      "properties": {
@@ -4642,10 +4694,12 @@ index 7c974ae4ae..bbfed6ed61 100644
 +      "required": [
 +        "code",
 +        "message"
-+      ],
+       ],
+-      "type": "string"
 +      "title": "JSONRPCErrorError",
 +      "type": "object"
-+    },
+     },
+-    "McpElicitationPrimitiveSchema": {
 +    "JSONRPCMessage": {
 +      "$schema": "http://json-schema.org/draft-07/schema#",
        "anyOf": [
@@ -4786,7 +4840,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "null"
            ]
          },
-@@ -3387,32 +3510,6 @@
+@@ -3387,32 +3534,6 @@
              "null"
            ]
          },
@@ -4819,7 +4873,7 @@ index 7c974ae4ae..bbfed6ed61 100644
          "title": {
            "type": [
              "string",
-@@ -3420,7 +3517,7 @@
+@@ -3420,7 +3541,7 @@
            ]
          },
          "type": {
@@ -4828,7 +4882,7 @@ index 7c974ae4ae..bbfed6ed61 100644
          }
        },
        "required": [
-@@ -3428,36 +3525,47 @@
+@@ -3428,36 +3549,47 @@
        ],
        "type": "object"
      },
@@ -4890,7 +4944,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "null"
            ]
          },
-@@ -3467,22 +3575,18 @@
+@@ -3467,22 +3599,18 @@
              "null"
            ]
          },
@@ -4923,7 +4977,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "null"
            ]
          },
-@@ -3493,21 +3597,32 @@
+@@ -3493,35 +3621,54 @@
            ]
          },
          "type": {
@@ -4941,6 +4995,14 @@ index 7c974ae4ae..bbfed6ed61 100644
 -    "McpElicitationTitledSingleSelectEnumSchema": {
 -      "additionalProperties": false,
 -      "properties": {
+-        "default": {
+-          "type": [
+-            "string",
+-            "null"
+-          ]
+-        },
+-        "description": {
+-          "type": [
 +    "McpElicitationMultiSelectEnumSchema": {
 +      "anyOf": [
 +        {
@@ -4954,15 +5016,16 @@ index 7c974ae4ae..bbfed6ed61 100644
 +    "McpElicitationNumberSchema": {
 +      "additionalProperties": false,
 +      "properties": {
-         "default": {
++        "default": {
 +          "format": "double",
-           "type": [
--            "string",
++          "type": [
 +            "number",
-             "null"
-           ]
-         },
-@@ -3517,11 +3632,19 @@
++            "null"
++          ]
++        },
++        "description": {
++          "type": [
+             "string",
              "null"
            ]
          },
@@ -4987,7 +5050,7 @@ index 7c974ae4ae..bbfed6ed61 100644
          },
          "title": {
            "type": [
-@@ -3530,35 +3653,175 @@
+@@ -3530,35 +3677,175 @@
            ]
          },
          "type": {
@@ -5170,7 +5233,7 @@ index 7c974ae4ae..bbfed6ed61 100644
        "additionalProperties": false,
        "properties": {
          "default": {
-@@ -3577,7 +3840,7 @@
+@@ -3577,7 +3864,7 @@
            ]
          },
          "items": {
@@ -5179,7 +5242,7 @@ index 7c974ae4ae..bbfed6ed61 100644
          },
          "maxItems": {
            "format": "uint64",
-@@ -3611,7 +3874,7 @@
+@@ -3611,7 +3898,7 @@
        ],
        "type": "object"
      },
@@ -5188,7 +5251,7 @@ index 7c974ae4ae..bbfed6ed61 100644
        "additionalProperties": false,
        "properties": {
          "default": {
-@@ -3626,9 +3889,9 @@
+@@ -3626,9 +3913,9 @@
              "null"
            ]
          },
@@ -5200,7 +5263,7 @@ index 7c974ae4ae..bbfed6ed61 100644
            },
            "type": "array"
          },
-@@ -3643,46 +3906,155 @@
+@@ -3643,43 +3930,152 @@
          }
        },
        "required": [
@@ -5265,13 +5328,11 @@ index 7c974ae4ae..bbfed6ed61 100644
 -            "mode",
 -            "requestedSchema"
 -          ],
--          "type": "object"
 +          "type": [
 +            "array",
 +            "null"
 +          ]
-         },
--        {
++        },
 +        "description": {
 +          "type": [
 +            "string",
@@ -5382,13 +5443,10 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            "mode",
 +            "requestedSchema"
 +          ],
-+          "type": "object"
-+        },
-+        {
-           "properties": {
-             "_meta": true,
-             "message": {
-@@ -3809,6 +4181,131 @@
+           "type": "object"
+         },
+         {
+@@ -3809,6 +4205,131 @@
        ],
        "type": "string"
      },
@@ -5520,7 +5578,7 @@ index 7c974ae4ae..bbfed6ed61 100644
      "ParsedCommand": {
        "oneOf": [
          {
-@@ -7014,1426 +7511,1670 @@
+@@ -7014,1426 +7535,1692 @@
          ],
          "type": "string"
        },
@@ -5566,14 +5624,33 @@ index 7c974ae4ae..bbfed6ed61 100644
          "type": "object"
        },
 -      "CancelLoginAccountParams": {
--        "$schema": "http://json-schema.org/draft-07/schema#",
--        "properties": {
++      "AutomationCancelIssueParams": {
+         "$schema": "http://json-schema.org/draft-07/schema#",
++        "additionalProperties": false,
+         "properties": {
 -          "loginId": {
--            "type": "string"
--          }
--        },
--        "required": [
++          "claimId": {
++            "type": "string"
++          },
++          "runId": {
++            "type": "string"
++          },
++          "threadId": {
+             "type": "string"
+           }
+         },
+         "required": [
 -          "loginId"
++          "claimId",
++          "runId",
++          "threadId"
+         ],
+-        "title": "CancelLoginAccountParams",
++        "title": "AutomationCancelIssueParams",
+         "type": "object"
+       },
+-      "CancelLoginAccountResponse": {
+-        "$schema": "http://json-schema.org/draft-07/schema#",
 +      "AutomationClaimStatus": {
 +        "enum": [
 +          "claimed",
@@ -5582,13 +5659,9 @@ index 7c974ae4ae..bbfed6ed61 100644
 +          "suspended",
 +          "cancelled",
 +          "failed"
-         ],
--        "title": "CancelLoginAccountParams",
--        "type": "object"
++        ],
 +        "type": "string"
-       },
--      "CancelLoginAccountResponse": {
--        "$schema": "http://json-schema.org/draft-07/schema#",
++      },
 +      "AutomationCleanupProjection": {
          "properties": {
 +          "attempts": {
@@ -6333,19 +6406,9 @@ index 7c974ae4ae..bbfed6ed61 100644
              ]
            },
 -          "sandboxPolicy": {
--            "anyOf": [
--              {
--                "$ref": "#/definitions/v2/SandboxPolicy"
--              },
--              {
--                "type": "null"
--              }
--            ],
--            "description": "Optional sandbox policy for this command.\n\nUses the same shape as thread/turn execution sandbox configuration and defaults to the user's configured policy when omitted. Cannot be combined with `permissionProfile`."
 +          "id": {
 +            "type": "string"
-           },
--          "size": {
++          },
 +          "identifier": {
 +            "type": "string"
 +          },
@@ -6448,40 +6511,30 @@ index 7c974ae4ae..bbfed6ed61 100644
 +          "issueTask": {
              "anyOf": [
                {
--                "$ref": "#/definitions/v2/CommandExecTerminalSize"
+-                "$ref": "#/definitions/v2/SandboxPolicy"
 +                "$ref": "#/definitions/v2/OrchestraAgentReference"
                },
                {
                  "type": "null"
                }
 -            ],
--            "description": "Optional initial PTY size in character cells. Only valid when `tty` is true."
+-            "description": "Optional sandbox policy for this command.\n\nUses the same shape as thread/turn execution sandbox configuration and defaults to the user's configured policy when omitted. Cannot be combined with `permissionProfile`."
 +            ]
            },
--          "streamStdin": {
--            "description": "Allow follow-up `command/exec/write` requests to write stdin bytes.\n\nRequires a client-supplied `processId`.",
--            "type": "boolean"
+-          "size": {
 +          "issueTitle": {
 +            "$ref": "#/definitions/v2/OrchestraBoundedText"
-           },
--          "streamStdoutStderr": {
--            "description": "Stream stdout/stderr via `command/exec/outputDelta` notifications.\n\nStreamed bytes are not duplicated into the final response and require a client-supplied `processId`.",
--            "type": "boolean"
++          },
 +          "nextAction": {
 +            "$ref": "#/definitions/v2/OrchestraBoundedText"
-           },
--          "timeoutMs": {
--            "description": "Optional timeout in milliseconds.\n\nWhen omitted, the server default applies. Cannot be combined with `disableTimeout`.",
++          },
 +          "priority": {
-             "format": "int64",
-             "type": [
-               "integer",
-               "null"
-             ]
-           },
--          "tty": {
--            "description": "Enable PTY mode.\n\nThis implies `streamStdin` and `streamStdoutStderr`.",
--            "type": "boolean"
++            "format": "int64",
++            "type": [
++              "integer",
++              "null"
++            ]
++          },
 +          "profileDigest": {
 +            "type": "string"
 +          },
@@ -6506,21 +6559,30 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            ]
 +          },
 +          "workflowStatus": {
-+            "anyOf": [
-+              {
+             "anyOf": [
+               {
+-                "$ref": "#/definitions/v2/CommandExecTerminalSize"
 +                "$ref": "#/definitions/v2/OrchestraRunStatus"
-+              },
-+              {
-+                "type": "null"
-+              }
+               },
+               {
+                 "type": "null"
+               }
+-            ],
+-            "description": "Optional initial PTY size in character cells. Only valid when `tty` is true."
+-          },
+-          "streamStdin": {
+-            "description": "Allow follow-up `command/exec/write` requests to write stdin bytes.\n\nRequires a client-supplied `processId`.",
+-            "type": "boolean"
 +            ]
-+          },
+           },
+-          "streamStdoutStderr": {
+-            "description": "Stream stdout/stderr via `command/exec/outputDelta` notifications.\n\nStreamed bytes are not duplicated into the final response and require a client-supplied `processId`.",
+-            "type": "boolean"
 +          "worktree": {
 +            "type": "string"
-           }
-         },
-         "required": [
--          "command"
++          }
++        },
++        "required": [
 +          "attempt",
 +          "claimId",
 +          "cleanup",
@@ -6536,11 +6598,9 @@ index 7c974ae4ae..bbfed6ed61 100644
 +          "status",
 +          "trackerState",
 +          "worktree"
-         ],
--        "title": "CommandExecParams",
-         "type": "object"
-       },
--      "CommandExecResizeParams": {
++        ],
++        "type": "object"
++      },
 +      "AutomationLinearReadKind": {
 +        "enum": [
 +          "candidates",
@@ -6550,26 +6610,29 @@ index 7c974ae4ae..bbfed6ed61 100644
 +        "type": "string"
 +      },
 +      "AutomationLinearReadParams": {
-         "$schema": "http://json-schema.org/draft-07/schema#",
--        "description": "Resize a running PTY-backed `command/exec` session.",
++        "$schema": "http://json-schema.org/draft-07/schema#",
 +        "additionalProperties": false,
-         "properties": {
--          "processId": {
--            "description": "Client-supplied, connection-scoped `processId` from the original `command/exec` request.",
++        "properties": {
 +          "after": {
 +            "type": [
 +              "string",
 +              "null"
 +            ]
-+          },
+           },
+-          "timeoutMs": {
+-            "description": "Optional timeout in milliseconds.\n\nWhen omitted, the server default applies. Cannot be combined with `disableTimeout`.",
+-            "format": "int64",
 +          "first": {
 +            "format": "uint32",
 +            "minimum": 0.0,
-+            "type": [
-+              "integer",
-+              "null"
-+            ]
-+          },
+             "type": [
+               "integer",
+               "null"
+             ]
+           },
+-          "tty": {
+-            "description": "Enable PTY mode.\n\nThis implies `streamStdin` and `streamStdoutStderr`.",
+-            "type": "boolean"
 +          "issueIdentifier": {
 +            "type": [
 +              "string",
@@ -6580,7 +6643,35 @@ index 7c974ae4ae..bbfed6ed61 100644
 +            "$ref": "#/definitions/v2/AutomationLinearReadKind"
 +          },
 +          "profilePath": {
-             "type": "string"
++            "type": "string"
++          },
++          "threadId": {
++            "type": "string"
+           }
+         },
+         "required": [
+-          "command"
++          "kind",
++          "profilePath",
++          "threadId"
+         ],
+-        "title": "CommandExecParams",
++        "title": "AutomationLinearReadParams",
+         "type": "object"
+       },
+-      "CommandExecResizeParams": {
++      "AutomationLinearReadResponse": {
+         "$schema": "http://json-schema.org/draft-07/schema#",
+-        "description": "Resize a running PTY-backed `command/exec` session.",
+         "properties": {
+-          "processId": {
+-            "description": "Client-supplied, connection-scoped `processId` from the original `command/exec` request.",
+-            "type": "string"
++          "endCursor": {
++            "type": [
++              "string",
++              "null"
++            ]
            },
 -          "size": {
 -            "allOf": [
@@ -6589,33 +6680,6 @@ index 7c974ae4ae..bbfed6ed61 100644
 -              }
 -            ],
 -            "description": "New PTY size in character cells."
-+          "threadId": {
-+            "type": "string"
-           }
-         },
-         "required": [
--          "processId",
--          "size"
-+          "kind",
-+          "profilePath",
-+          "threadId"
-         ],
--        "title": "CommandExecResizeParams",
-+        "title": "AutomationLinearReadParams",
-         "type": "object"
-       },
--      "CommandExecResizeResponse": {
-+      "AutomationLinearReadResponse": {
-         "$schema": "http://json-schema.org/draft-07/schema#",
--        "description": "Empty success response for `command/exec/resize`.",
--        "title": "CommandExecResizeResponse",
-+        "properties": {
-+          "endCursor": {
-+            "type": [
-+              "string",
-+              "null"
-+            ]
-+          },
 +          "hasNextPage": {
 +            "type": "boolean"
 +          },
@@ -6630,27 +6694,35 @@ index 7c974ae4ae..bbfed6ed61 100644
 +          },
 +          "status": {
 +            "$ref": "#/definitions/v2/AutomationLinearReadStatus"
-+          }
-+        },
-+        "required": [
+           }
+         },
+         "required": [
+-          "processId",
+-          "size"
 +          "hasNextPage",
 +          "issues",
 +          "nextAction",
 +          "status"
-+        ],
+         ],
+-        "title": "CommandExecResizeParams",
 +        "title": "AutomationLinearReadResponse",
          "type": "object"
        },
--      "CommandExecResponse": {
+-      "CommandExecResizeResponse": {
 -        "$schema": "http://json-schema.org/draft-07/schema#",
--        "description": "Final buffered result for `command/exec`.",
+-        "description": "Empty success response for `command/exec/resize`.",
+-        "title": "CommandExecResizeResponse",
+-        "type": "object"
 +      "AutomationLinearReadStatus": {
 +        "enum": [
 +          "ready",
 +          "skipped"
 +        ],
 +        "type": "string"
-+      },
+       },
+-      "CommandExecResponse": {
+-        "$schema": "http://json-schema.org/draft-07/schema#",
+-        "description": "Final buffered result for `command/exec`.",
 +      "AutomationOrchestraProfile": {
          "properties": {
 -          "exitCode": {
@@ -6765,7 +6837,6 @@ index 7c974ae4ae..bbfed6ed61 100644
 -        "$schema": "http://json-schema.org/draft-07/schema#",
 -        "description": "Empty success response for `command/exec/terminate`.",
 -        "title": "CommandExecTerminateResponse",
--        "type": "object"
 +      "AutomationProfileRevisionStatus": {
 +        "enum": [
 +          "active",
@@ -6773,10 +6844,7 @@ index 7c974ae4ae..bbfed6ed61 100644
 +          "rejected"
 +        ],
 +        "type": "string"
-       },
--      "CommandExecWriteParams": {
--        "$schema": "http://json-schema.org/draft-07/schema#",
--        "description": "Write stdin bytes to a running `command/exec` session, close stdin, or both.",
++      },
 +      "AutomationQueueCategory": {
 +        "enum": [
 +          "queued",
@@ -6789,17 +6857,12 @@ index 7c974ae4ae..bbfed6ed61 100644
 +        "type": "string"
 +      },
 +      "AutomationQueueCounts": {
-         "properties": {
--          "closeStdin": {
--            "description": "Close stdin after writing `deltaBase64`, if present.",
--            "type": "boolean"
++        "properties": {
 +          "blocked": {
 +            "format": "uint32",
 +            "minimum": 0.0,
 +            "type": "integer"
-           },
--          "deltaBase64": {
--            "description": "Optional base64-encoded stdin bytes to write.",
++          },
 +          "handoff": {
 +            "format": "uint32",
 +            "minimum": 0.0,
@@ -6834,13 +6897,21 @@ index 7c974ae4ae..bbfed6ed61 100644
 +          "terminal",
 +          "waitingGate"
 +        ],
-+        "type": "object"
-+      },
+         "type": "object"
+       },
+-      "CommandExecWriteParams": {
+-        "$schema": "http://json-schema.org/draft-07/schema#",
+-        "description": "Write stdin bytes to a running `command/exec` session, close stdin, or both.",
 +      "AutomationQueueItemProjection": {
-+        "properties": {
+         "properties": {
+-          "closeStdin": {
+-            "description": "Close stdin after writing `deltaBase64`, if present.",
+-            "type": "boolean"
 +          "category": {
 +            "$ref": "#/definitions/v2/AutomationQueueCategory"
-+          },
+           },
+-          "deltaBase64": {
+-            "description": "Optional base64-encoded stdin bytes to write.",
 +          "claimId": {
              "type": [
                "string",
@@ -8196,7 +8267,7 @@ index 7c974ae4ae..bbfed6ed61 100644
                },
                {
                  "type": "null"
-@@ -8441,3158 +9182,3344 @@
+@@ -8441,3158 +9228,3344 @@
              ]
            }
          },
@@ -13767,7 +13838,7 @@ index 7c974ae4ae..bbfed6ed61 100644
                  "type": [
                    "string",
                    "null"
-@@ -11600,504 +12527,2070 @@
+@@ -11600,504 +12573,2070 @@
                },
                "type": {
                  "enum": [
@@ -16146,7 +16217,7 @@ index 7c974ae4ae..bbfed6ed61 100644
              "type": [
                "string",
                "null"
-@@ -12105,1055 +14598,1395 @@
+@@ -12105,1055 +14644,1395 @@
            }
          },
          "required": [
@@ -18216,7 +18287,7 @@ index 7c974ae4ae..bbfed6ed61 100644
        },
        "OverriddenMetadata": {
          "properties": {
-@@ -19080,6 +21913,17 @@
+@@ -19080,6 +21959,17 @@
        "ThreadReadResponse": {
          "$schema": "http://json-schema.org/draft-07/schema#",
          "properties": {
@@ -18235,10 +18306,10 @@ index 7c974ae4ae..bbfed6ed61 100644
              "$ref": "#/definitions/v2/Thread"
            }
 diff --git a/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json b/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json
-index 7c5d0060ae..c256d1e7cd 100644
+index 7c5d0060ae..386730fc47 100644
 --- a/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json
 +++ b/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json
-@@ -1133,201 +1133,1884 @@
+@@ -1133,201 +1133,1930 @@
        ],
        "type": "string"
      },
@@ -18284,6 +18355,32 @@ index 7c5d0060ae..c256d1e7cd 100644
        "type": "object"
      },
 -    "CancelLoginAccountParams": {
++    "AutomationCancelIssueParams": {
+       "$schema": "http://json-schema.org/draft-07/schema#",
++      "additionalProperties": false,
+       "properties": {
+-        "loginId": {
++        "claimId": {
++          "type": "string"
++        },
++        "runId": {
++          "type": "string"
++        },
++        "threadId": {
+           "type": "string"
+         }
+       },
+       "required": [
+-        "loginId"
++        "claimId",
++        "runId",
++        "threadId"
+       ],
+-      "title": "CancelLoginAccountParams",
++      "title": "AutomationCancelIssueParams",
+       "type": "object"
+     },
+-    "CancelLoginAccountResponse": {
 -      "$schema": "http://json-schema.org/draft-07/schema#",
 +    "AutomationClaimStatus": {
 +      "enum": [
@@ -18298,7 +18395,6 @@ index 7c5d0060ae..c256d1e7cd 100644
 +    },
 +    "AutomationCleanupProjection": {
        "properties": {
--        "loginId": {
 +        "attempts": {
 +          "format": "uint32",
 +          "minimum": 0.0,
@@ -18314,113 +18410,27 @@ index 7c5d0060ae..c256d1e7cd 100644
 +            }
 +          ]
 +        },
-+        "status": {
-+          "$ref": "#/definitions/AutomationCleanupStatus"
-+        }
-+      },
-+      "required": [
-+        "attempts",
-+        "status"
-+      ],
-+      "type": "object"
-+    },
-+    "AutomationCleanupStatus": {
-+      "enum": [
-+        "retained",
-+        "eligible",
-+        "retry_pending",
-+        "removed"
-+      ],
-+      "type": "string"
-+    },
-+    "AutomationCodexPolicy": {
-+      "properties": {
-+        "approvalPolicy": true,
-+        "readTimeoutMs": {
-+          "format": "uint64",
-+          "minimum": 0.0,
-+          "type": "integer"
-+        },
-+        "stallTimeoutMs": {
-+          "format": "uint64",
-+          "minimum": 0.0,
-+          "type": "integer"
-+        },
-+        "threadSandbox": {
-           "type": "string"
-+        },
-+        "turnSandboxPolicy": true,
-+        "turnTimeoutMs": {
-+          "format": "uint64",
-+          "minimum": 0.0,
-+          "type": "integer"
-         }
-       },
-       "required": [
--        "loginId"
-+        "approvalPolicy",
-+        "readTimeoutMs",
-+        "stallTimeoutMs",
-+        "threadSandbox",
-+        "turnSandboxPolicy",
-+        "turnTimeoutMs"
-       ],
--      "title": "CancelLoginAccountParams",
-       "type": "object"
-     },
--    "CancelLoginAccountResponse": {
--      "$schema": "http://json-schema.org/draft-07/schema#",
-+    "AutomationDiagnostic": {
-       "properties": {
--        "status": {
+         "status": {
 -          "$ref": "#/definitions/CancelLoginAccountStatus"
-+        "code": {
-+          "$ref": "#/definitions/AutomationDiagnosticCode"
-+        },
-+        "message": {
-+          "type": "string"
-+        },
-+        "path": {
-+          "type": "string"
-+        },
-+        "severity": {
-+          "$ref": "#/definitions/AutomationValidationSeverity"
++          "$ref": "#/definitions/AutomationCleanupStatus"
          }
        },
        "required": [
--        "status"
-+        "code",
-+        "message",
-+        "path",
-+        "severity"
++        "attempts",
+         "status"
        ],
 -      "title": "CancelLoginAccountResponse",
        "type": "object"
      },
 -    "CancelLoginAccountStatus": {
-+    "AutomationDiagnosticCode": {
++    "AutomationCleanupStatus": {
        "enum": [
 -        "canceled",
 -        "notFound"
-+        "missing_workflow_file",
-+        "workflow_parse_error",
-+        "workflow_front_matter_not_a_map",
-+        "missing_field",
-+        "invalid_value",
-+        "unknown_field",
-+        "unsupported_tracker",
-+        "missing_secret",
-+        "prohibited_codex_command",
-+        "policy_broadening",
-+        "unsafe_workspace_root",
-+        "missing_orchestra_extension",
-+        "unsupported_effect",
-+        "workflow_compile_error",
-+        "workflow_input_missing",
-+        "workflow_input_incompatible",
-+        "workflow_input_needs_default",
-+        "template_parse_error",
-+        "template_render_error"
++        "retained",
++        "eligible",
++        "retry_pending",
++        "removed"
        ],
        "type": "string"
      },
@@ -18452,8 +18462,90 @@ index 7c5d0060ae..c256d1e7cd 100644
 -          ],
 -          "title": "EnvironmentCapabilityRootLocation",
 -          "type": "object"
--        }
++    "AutomationCodexPolicy": {
++      "properties": {
++        "approvalPolicy": true,
++        "readTimeoutMs": {
++          "format": "uint64",
++          "minimum": 0.0,
++          "type": "integer"
++        },
++        "stallTimeoutMs": {
++          "format": "uint64",
++          "minimum": 0.0,
++          "type": "integer"
++        },
++        "threadSandbox": {
++          "type": "string"
++        },
++        "turnSandboxPolicy": true,
++        "turnTimeoutMs": {
++          "format": "uint64",
++          "minimum": 0.0,
++          "type": "integer"
+         }
 -      ]
++      },
++      "required": [
++        "approvalPolicy",
++        "readTimeoutMs",
++        "stallTimeoutMs",
++        "threadSandbox",
++        "turnSandboxPolicy",
++        "turnTimeoutMs"
++      ],
++      "type": "object"
+     },
+-    "ClientInfo": {
++    "AutomationDiagnostic": {
+       "properties": {
+-        "name": {
++        "code": {
++          "$ref": "#/definitions/AutomationDiagnosticCode"
++        },
++        "message": {
+           "type": "string"
+         },
+-        "title": {
++        "path": {
++          "type": "string"
++        },
++        "severity": {
++          "$ref": "#/definitions/AutomationValidationSeverity"
++        }
++      },
++      "required": [
++        "code",
++        "message",
++        "path",
++        "severity"
++      ],
++      "type": "object"
++    },
++    "AutomationDiagnosticCode": {
++      "enum": [
++        "missing_workflow_file",
++        "workflow_parse_error",
++        "workflow_front_matter_not_a_map",
++        "missing_field",
++        "invalid_value",
++        "unknown_field",
++        "unsupported_tracker",
++        "missing_secret",
++        "prohibited_codex_command",
++        "policy_broadening",
++        "unsafe_workspace_root",
++        "missing_orchestra_extension",
++        "unsupported_effect",
++        "workflow_compile_error",
++        "workflow_input_missing",
++        "workflow_input_incompatible",
++        "workflow_input_needs_default",
++        "template_parse_error",
++        "template_render_error"
++      ],
++      "type": "string"
++    },
 +    "AutomationEffect": {
 +      "enum": [
 +        "tracker.comment",
@@ -18461,18 +18553,15 @@ index 7c5d0060ae..c256d1e7cd 100644
 +        "tracker.link_pull_request"
 +      ],
 +      "type": "string"
-     },
--    "ClientInfo": {
++    },
 +    "AutomationEffectReceiptProjection": {
-       "properties": {
--        "name": {
++      "properties": {
 +        "bodyPreview": {
 +          "$ref": "#/definitions/OrchestraBoundedText"
 +        },
 +        "effectId": {
-           "type": "string"
-         },
--        "title": {
++          "type": "string"
++        },
 +        "failure": {
 +          "anyOf": [
 +            {
@@ -18645,14 +18734,6 @@ index 7c5d0060ae..c256d1e7cd 100644
 +          ]
          },
 -        {
--          "properties": {
--            "id": {
--              "$ref": "#/definitions/RequestId"
--            },
--            "method": {
--              "enum": [
--                "thread/fork"
--              ],
 +        "invocation": {
 +          "format": "uint32",
 +          "minimum": 0.0,
@@ -19917,11 +19998,10 @@ index 7c5d0060ae..c256d1e7cd 100644
 +              "enum": [
 +                "thread/fork"
 +              ],
-               "title": "Thread/forkRequestMethod",
-               "type": "string"
-             },
-             "params": {
--              "$ref": "#/definitions/ThreadForkParams"
++              "title": "Thread/forkRequestMethod",
++              "type": "string"
++            },
++            "params": {
 +              "$ref": "#/definitions/ThreadForkParams"
 +            }
 +          },
@@ -20259,66 +20339,67 @@ index 7c5d0060ae..c256d1e7cd 100644
 +            },
 +            "params": {
 +              "$ref": "#/definitions/ThreadListParams"
-             }
-           },
-           "required": [
-@@ -1335,7 +3018,7 @@
-             "method",
-             "params"
-           ],
--          "title": "Thread/forkRequest",
++            }
++          },
++          "required": [
++            "id",
++            "method",
++            "params"
++          ],
 +          "title": "Thread/listRequest",
-           "type": "object"
-         },
-         {
-@@ -1345,13 +3028,13 @@
++          "type": "object"
++        },
++        {
+           "properties": {
+             "id": {
+               "$ref": "#/definitions/RequestId"
              },
              "method": {
                "enum": [
--                "thread/archive"
+-                "thread/fork"
 +                "thread/loaded/list"
                ],
--              "title": "Thread/archiveRequestMethod",
+-              "title": "Thread/forkRequestMethod",
 +              "title": "Thread/loaded/listRequestMethod",
                "type": "string"
              },
              "params": {
--              "$ref": "#/definitions/ThreadArchiveParams"
+-              "$ref": "#/definitions/ThreadForkParams"
 +              "$ref": "#/definitions/ThreadLoadedListParams"
              }
            },
            "required": [
-@@ -1359,7 +3042,7 @@
+@@ -1335,7 +3064,7 @@
              "method",
              "params"
            ],
--          "title": "Thread/archiveRequest",
+-          "title": "Thread/forkRequest",
 +          "title": "Thread/loaded/listRequest",
            "type": "object"
          },
          {
-@@ -1369,13 +3052,13 @@
+@@ -1345,13 +3074,13 @@
              },
              "method": {
                "enum": [
--                "thread/delete"
+-                "thread/archive"
 +                "thread/read"
                ],
--              "title": "Thread/deleteRequestMethod",
+-              "title": "Thread/archiveRequestMethod",
 +              "title": "Thread/readRequestMethod",
                "type": "string"
              },
              "params": {
--              "$ref": "#/definitions/ThreadDeleteParams"
+-              "$ref": "#/definitions/ThreadArchiveParams"
 +              "$ref": "#/definitions/ThreadReadParams"
              }
            },
            "required": [
-@@ -1383,23 +3066,24 @@
+@@ -1359,23 +3088,24 @@
              "method",
              "params"
            ],
--          "title": "Thread/deleteRequest",
+-          "title": "Thread/archiveRequest",
 +          "title": "Thread/readRequest",
            "type": "object"
          },
@@ -20330,167 +20411,193 @@ index 7c5d0060ae..c256d1e7cd 100644
              },
              "method": {
                "enum": [
--                "thread/unsubscribe"
+-                "thread/delete"
 +                "thread/inject_items"
                ],
--              "title": "Thread/unsubscribeRequestMethod",
+-              "title": "Thread/deleteRequestMethod",
 +              "title": "Thread/injectItemsRequestMethod",
                "type": "string"
              },
              "params": {
--              "$ref": "#/definitions/ThreadUnsubscribeParams"
+-              "$ref": "#/definitions/ThreadDeleteParams"
 +              "$ref": "#/definitions/ThreadInjectItemsParams"
              }
            },
            "required": [
-@@ -1407,7 +3091,7 @@
+@@ -1383,7 +3113,7 @@
              "method",
              "params"
            ],
--          "title": "Thread/unsubscribeRequest",
+-          "title": "Thread/deleteRequest",
 +          "title": "Thread/injectItemsRequest",
            "type": "object"
          },
          {
-@@ -1417,13 +3101,13 @@
+@@ -1393,13 +3123,13 @@
              },
              "method": {
                "enum": [
--                "thread/name/set"
+-                "thread/unsubscribe"
 +                "orchestra/validate"
                ],
--              "title": "Thread/name/setRequestMethod",
+-              "title": "Thread/unsubscribeRequestMethod",
 +              "title": "Orchestra/validateRequestMethod",
                "type": "string"
              },
              "params": {
--              "$ref": "#/definitions/ThreadSetNameParams"
+-              "$ref": "#/definitions/ThreadUnsubscribeParams"
 +              "$ref": "#/definitions/OrchestraValidateParams"
              }
            },
            "required": [
-@@ -1431,7 +3115,7 @@
+@@ -1407,7 +3137,7 @@
              "method",
              "params"
            ],
--          "title": "Thread/name/setRequest",
+-          "title": "Thread/unsubscribeRequest",
 +          "title": "Orchestra/validateRequest",
            "type": "object"
          },
          {
-@@ -1441,13 +3125,13 @@
+@@ -1417,13 +3147,13 @@
              },
              "method": {
                "enum": [
--                "thread/goal/set"
+-                "thread/name/set"
 +                "automation/validate"
                ],
--              "title": "Thread/goal/setRequestMethod",
+-              "title": "Thread/name/setRequestMethod",
 +              "title": "Automation/validateRequestMethod",
                "type": "string"
              },
              "params": {
--              "$ref": "#/definitions/ThreadGoalSetParams"
+-              "$ref": "#/definitions/ThreadSetNameParams"
 +              "$ref": "#/definitions/AutomationValidateParams"
              }
            },
            "required": [
-@@ -1455,7 +3139,7 @@
+@@ -1431,7 +3161,7 @@
              "method",
              "params"
            ],
--          "title": "Thread/goal/setRequest",
+-          "title": "Thread/name/setRequest",
 +          "title": "Automation/validateRequest",
            "type": "object"
          },
          {
-@@ -1465,13 +3149,13 @@
+@@ -1441,13 +3171,13 @@
              },
              "method": {
                "enum": [
--                "thread/goal/get"
+-                "thread/goal/set"
 +                "automation/runFixture"
                ],
--              "title": "Thread/goal/getRequestMethod",
+-              "title": "Thread/goal/setRequestMethod",
 +              "title": "Automation/runFixtureRequestMethod",
                "type": "string"
              },
              "params": {
--              "$ref": "#/definitions/ThreadGoalGetParams"
+-              "$ref": "#/definitions/ThreadGoalSetParams"
 +              "$ref": "#/definitions/AutomationRunFixtureParams"
              }
            },
            "required": [
-@@ -1479,7 +3163,7 @@
+@@ -1455,7 +3185,7 @@
              "method",
              "params"
            ],
--          "title": "Thread/goal/getRequest",
+-          "title": "Thread/goal/setRequest",
 +          "title": "Automation/runFixtureRequest",
            "type": "object"
          },
          {
-@@ -1489,13 +3173,13 @@
+@@ -1465,13 +3195,13 @@
              },
              "method": {
                "enum": [
--                "thread/goal/clear"
+-                "thread/goal/get"
 +                "automation/linear/read"
                ],
--              "title": "Thread/goal/clearRequestMethod",
+-              "title": "Thread/goal/getRequestMethod",
 +              "title": "Automation/linear/readRequestMethod",
                "type": "string"
              },
              "params": {
--              "$ref": "#/definitions/ThreadGoalClearParams"
+-              "$ref": "#/definitions/ThreadGoalGetParams"
 +              "$ref": "#/definitions/AutomationLinearReadParams"
              }
            },
            "required": [
-@@ -1503,7 +3187,7 @@
+@@ -1479,7 +3209,7 @@
              "method",
              "params"
            ],
--          "title": "Thread/goal/clearRequest",
+-          "title": "Thread/goal/getRequest",
 +          "title": "Automation/linear/readRequest",
            "type": "object"
          },
          {
-@@ -1513,13 +3197,13 @@
+@@ -1489,13 +3219,13 @@
              },
              "method": {
                "enum": [
--                "thread/metadata/update"
+-                "thread/goal/clear"
 +                "automation/queue/read"
                ],
--              "title": "Thread/metadata/updateRequestMethod",
+-              "title": "Thread/goal/clearRequestMethod",
 +              "title": "Automation/queue/readRequestMethod",
                "type": "string"
              },
              "params": {
--              "$ref": "#/definitions/ThreadMetadataUpdateParams"
+-              "$ref": "#/definitions/ThreadGoalClearParams"
 +              "$ref": "#/definitions/AutomationQueueReadParams"
              }
            },
            "required": [
-@@ -1527,7 +3211,7 @@
+@@ -1503,7 +3233,7 @@
              "method",
              "params"
            ],
--          "title": "Thread/metadata/updateRequest",
+-          "title": "Thread/goal/clearRequest",
 +          "title": "Automation/queue/readRequest",
            "type": "object"
          },
          {
-@@ -1537,13 +3221,13 @@
+@@ -1513,13 +3243,13 @@
+             },
+             "method": {
+               "enum": [
+-                "thread/metadata/update"
++                "automation/status"
+               ],
+-              "title": "Thread/metadata/updateRequestMethod",
++              "title": "Automation/statusRequestMethod",
+               "type": "string"
+             },
+             "params": {
+-              "$ref": "#/definitions/ThreadMetadataUpdateParams"
++              "$ref": "#/definitions/AutomationRunParams"
+             }
+           },
+           "required": [
+@@ -1527,7 +3257,7 @@
+             "method",
+             "params"
+           ],
+-          "title": "Thread/metadata/updateRequest",
++          "title": "Automation/statusRequest",
+           "type": "object"
+         },
+         {
+@@ -1537,13 +3267,13 @@
              },
              "method": {
                "enum": [
 -                "thread/unarchive"
-+                "automation/status"
++                "automation/pause"
                ],
 -              "title": "Thread/unarchiveRequestMethod",
-+              "title": "Automation/statusRequestMethod",
++              "title": "Automation/pauseRequestMethod",
                "type": "string"
              },
              "params": {
@@ -20499,50 +20606,50 @@ index 7c5d0060ae..c256d1e7cd 100644
              }
            },
            "required": [
-@@ -1551,7 +3235,7 @@
+@@ -1551,7 +3281,7 @@
              "method",
              "params"
            ],
 -          "title": "Thread/unarchiveRequest",
-+          "title": "Automation/statusRequest",
-           "type": "object"
-         },
-         {
-@@ -1561,13 +3245,13 @@
-             },
-             "method": {
-               "enum": [
--                "thread/compact/start"
-+                "automation/pause"
-               ],
--              "title": "Thread/compact/startRequestMethod",
-+              "title": "Automation/pauseRequestMethod",
-               "type": "string"
-             },
-             "params": {
--              "$ref": "#/definitions/ThreadCompactStartParams"
-+              "$ref": "#/definitions/AutomationRunParams"
-             }
-           },
-           "required": [
-@@ -1575,7 +3259,7 @@
-             "method",
-             "params"
-           ],
--          "title": "Thread/compact/startRequest",
 +          "title": "Automation/pauseRequest",
            "type": "object"
          },
          {
-@@ -1585,13 +3269,13 @@
+@@ -1561,13 +3291,13 @@
+             },
+             "method": {
+               "enum": [
+-                "thread/compact/start"
++                "automation/refresh"
+               ],
+-              "title": "Thread/compact/startRequestMethod",
++              "title": "Automation/refreshRequestMethod",
+               "type": "string"
+             },
+             "params": {
+-              "$ref": "#/definitions/ThreadCompactStartParams"
++              "$ref": "#/definitions/AutomationReconcileParams"
+             }
+           },
+           "required": [
+@@ -1575,7 +3305,7 @@
+             "method",
+             "params"
+           ],
+-          "title": "Thread/compact/startRequest",
++          "title": "Automation/refreshRequest",
+           "type": "object"
+         },
+         {
+@@ -1585,13 +3315,13 @@
              },
              "method": {
                "enum": [
 -                "thread/shellCommand"
-+                "automation/refresh"
++                "automation/resume"
                ],
 -              "title": "Thread/shellCommandRequestMethod",
-+              "title": "Automation/refreshRequestMethod",
++              "title": "Automation/resumeRequestMethod",
                "type": "string"
              },
              "params": {
@@ -20551,68 +20658,68 @@ index 7c5d0060ae..c256d1e7cd 100644
              }
            },
            "required": [
-@@ -1599,7 +3283,7 @@
+@@ -1599,7 +3329,7 @@
              "method",
              "params"
            ],
 -          "title": "Thread/shellCommandRequest",
-+          "title": "Automation/refreshRequest",
-           "type": "object"
-         },
-         {
-@@ -1609,13 +3293,13 @@
-             },
-             "method": {
-               "enum": [
--                "thread/approveGuardianDeniedAction"
-+                "automation/resume"
-               ],
--              "title": "Thread/approveGuardianDeniedActionRequestMethod",
-+              "title": "Automation/resumeRequestMethod",
-               "type": "string"
-             },
-             "params": {
--              "$ref": "#/definitions/ThreadApproveGuardianDeniedActionParams"
-+              "$ref": "#/definitions/AutomationReconcileParams"
-             }
-           },
-           "required": [
-@@ -1623,7 +3307,7 @@
-             "method",
-             "params"
-           ],
--          "title": "Thread/approveGuardianDeniedActionRequest",
 +          "title": "Automation/resumeRequest",
            "type": "object"
          },
          {
-@@ -1633,13 +3317,13 @@
+@@ -1609,13 +3339,13 @@
              },
              "method": {
                "enum": [
--                "thread/rollback"
+-                "thread/approveGuardianDeniedAction"
 +                "automation/cancel"
                ],
--              "title": "Thread/rollbackRequestMethod",
+-              "title": "Thread/approveGuardianDeniedActionRequestMethod",
 +              "title": "Automation/cancelRequestMethod",
                "type": "string"
              },
              "params": {
--              "$ref": "#/definitions/ThreadRollbackParams"
+-              "$ref": "#/definitions/ThreadApproveGuardianDeniedActionParams"
 +              "$ref": "#/definitions/AutomationRunParams"
              }
            },
            "required": [
-@@ -1647,7 +3331,7 @@
+@@ -1623,7 +3353,7 @@
              "method",
              "params"
            ],
--          "title": "Thread/rollbackRequest",
+-          "title": "Thread/approveGuardianDeniedActionRequest",
 +          "title": "Automation/cancelRequest",
            "type": "object"
          },
          {
-@@ -1657,13 +3341,13 @@
+@@ -1633,13 +3363,13 @@
+             },
+             "method": {
+               "enum": [
+-                "thread/rollback"
++                "automation/cancelIssue"
+               ],
+-              "title": "Thread/rollbackRequestMethod",
++              "title": "Automation/cancelIssueRequestMethod",
+               "type": "string"
+             },
+             "params": {
+-              "$ref": "#/definitions/ThreadRollbackParams"
++              "$ref": "#/definitions/AutomationCancelIssueParams"
+             }
+           },
+           "required": [
+@@ -1647,7 +3377,7 @@
+             "method",
+             "params"
+           ],
+-          "title": "Thread/rollbackRequest",
++          "title": "Automation/cancelIssueRequest",
+           "type": "object"
+         },
+         {
+@@ -1657,13 +3387,13 @@
              },
              "method": {
                "enum": [
@@ -20629,7 +20736,7 @@ index 7c5d0060ae..c256d1e7cd 100644
              }
            },
            "required": [
-@@ -1671,7 +3355,7 @@
+@@ -1671,7 +3401,7 @@
              "method",
              "params"
            ],
@@ -20638,7 +20745,7 @@ index 7c5d0060ae..c256d1e7cd 100644
            "type": "object"
          },
          {
-@@ -1681,13 +3365,13 @@
+@@ -1681,13 +3411,13 @@
              },
              "method": {
                "enum": [
@@ -20655,7 +20762,7 @@ index 7c5d0060ae..c256d1e7cd 100644
              }
            },
            "required": [
-@@ -1695,7 +3379,7 @@
+@@ -1695,7 +3425,7 @@
              "method",
              "params"
            ],
@@ -20664,7 +20771,7 @@ index 7c5d0060ae..c256d1e7cd 100644
            "type": "object"
          },
          {
-@@ -1705,13 +3389,13 @@
+@@ -1705,13 +3435,13 @@
              },
              "method": {
                "enum": [
@@ -20681,7 +20788,7 @@ index 7c5d0060ae..c256d1e7cd 100644
              }
            },
            "required": [
-@@ -1719,24 +3403,23 @@
+@@ -1719,24 +3449,23 @@
              "method",
              "params"
            ],
@@ -20710,7 +20817,7 @@ index 7c5d0060ae..c256d1e7cd 100644
              }
            },
            "required": [
-@@ -1744,7 +3427,31 @@
+@@ -1744,7 +3473,31 @@
              "method",
              "params"
            ],
@@ -20743,7 +20850,7 @@ index 7c5d0060ae..c256d1e7cd 100644
            "type": "object"
          },
          {
-@@ -6044,147 +7751,413 @@
+@@ -6044,147 +7797,413 @@
                ],
                "type": "string"
              }
@@ -21244,7 +21351,7 @@ index 7c5d0060ae..c256d1e7cd 100644
        "properties": {
          "path": {
            "allOf": [
-@@ -6192,1367 +8165,1810 @@
+@@ -6192,1367 +8211,1810 @@
                "$ref": "#/definitions/AbsolutePathBuf"
              }
            ],
@@ -24006,7 +24113,7 @@ index 7c5d0060ae..c256d1e7cd 100644
            "items": {
              "type": "string"
            },
-@@ -7560,61 +9976,38 @@
+@@ -7560,61 +10022,38 @@
              "array",
              "null"
            ]
@@ -24086,7 +24193,7 @@ index 7c5d0060ae..c256d1e7cd 100644
            "type": [
              "string",
              "null"
-@@ -7623,878 +10016,841 @@
+@@ -7623,878 +10062,841 @@
        },
        "type": "object"
      },
@@ -25561,7 +25668,7 @@ index 7c5d0060ae..c256d1e7cd 100644
            "type": [
              "string",
              "null"
-@@ -8502,1055 +10858,1395 @@
+@@ -8502,1055 +10904,1395 @@
          }
        },
        "required": [
@@ -27631,7 +27738,7 @@ index 7c5d0060ae..c256d1e7cd 100644
      },
      "OverriddenMetadata": {
        "properties": {
-@@ -16859,6 +19555,17 @@
+@@ -16859,6 +19601,17 @@
      "ThreadReadResponse": {
        "$schema": "http://json-schema.org/draft-07/schema#",
        "properties": {
@@ -30838,13 +30945,14 @@ index 20587d98c6..fdb6910d3f 100644
        "$ref": "#/definitions/Thread"
      }
 diff --git a/codex-rs/app-server-protocol/schema/typescript/ClientRequest.ts b/codex-rs/app-server-protocol/schema/typescript/ClientRequest.ts
-index 6af04ef401..632c22318b 100644
+index 6af04ef401..3cfe13fae2 100644
 --- a/codex-rs/app-server-protocol/schema/typescript/ClientRequest.ts
 +++ b/codex-rs/app-server-protocol/schema/typescript/ClientRequest.ts
-@@ -8,6 +8,12 @@ import type { GitDiffToRemoteParams } from "./GitDiffToRemoteParams";
+@@ -8,6 +8,13 @@ import type { GitDiffToRemoteParams } from "./GitDiffToRemoteParams";
  import type { InitializeParams } from "./InitializeParams";
  import type { RequestId } from "./RequestId";
  import type { AppsListParams } from "./v2/AppsListParams";
++import type { AutomationCancelIssueParams } from "./v2/AutomationCancelIssueParams";
 +import type { AutomationLinearReadParams } from "./v2/AutomationLinearReadParams";
 +import type { AutomationQueueReadParams } from "./v2/AutomationQueueReadParams";
 +import type { AutomationReconcileParams } from "./v2/AutomationReconcileParams";
@@ -30854,7 +30962,7 @@ index 6af04ef401..632c22318b 100644
  import type { CancelLoginAccountParams } from "./v2/CancelLoginAccountParams";
  import type { CommandExecParams } from "./v2/CommandExecParams";
  import type { CommandExecResizeParams } from "./v2/CommandExecResizeParams";
-@@ -43,6 +49,11 @@ import type { McpServerOauthLoginParams } from "./v2/McpServerOauthLoginParams";
+@@ -43,6 +50,11 @@ import type { McpServerOauthLoginParams } from "./v2/McpServerOauthLoginParams";
  import type { McpServerToolCallParams } from "./v2/McpServerToolCallParams";
  import type { ModelListParams } from "./v2/ModelListParams";
  import type { ModelProviderCapabilitiesReadParams } from "./v2/ModelProviderCapabilitiesReadParams";
@@ -30866,12 +30974,12 @@ index 6af04ef401..632c22318b 100644
  import type { PermissionProfileListParams } from "./v2/PermissionProfileListParams";
  import type { PluginInstallParams } from "./v2/PluginInstallParams";
  import type { PluginInstalledParams } from "./v2/PluginInstalledParams";
-@@ -88,4 +99,4 @@ import type { WindowsSandboxSetupStartParams } from "./v2/WindowsSandboxSetupSta
+@@ -88,4 +100,4 @@ import type { WindowsSandboxSetupStartParams } from "./v2/WindowsSandboxSetupSta
  /**
   * Request from the client to the server.
   */
 -export type ClientRequest ={ "method": "initialize", id: RequestId, params: InitializeParams, } | { "method": "thread/start", id: RequestId, params: ThreadStartParams, } | { "method": "thread/resume", id: RequestId, params: ThreadResumeParams, } | { "method": "thread/fork", id: RequestId, params: ThreadForkParams, } | { "method": "thread/archive", id: RequestId, params: ThreadArchiveParams, } | { "method": "thread/delete", id: RequestId, params: ThreadDeleteParams, } | { "method": "thread/unsubscribe", id: RequestId, params: ThreadUnsubscribeParams, } | { "method": "thread/name/set", id: RequestId, params: ThreadSetNameParams, } | { "method": "thread/goal/set", id: RequestId, params: ThreadGoalSetParams, } | { "method": "thread/goal/get", id: RequestId, params: ThreadGoalGetParams, } | { "method": "thread/goal/clear", id: RequestId, params: ThreadGoalClearParams, } | { "method": "thread/metadata/update", id: RequestId, params: ThreadMetadataUpdateParams, } | { "method": "thread/unarchive", id: RequestId, params: ThreadUnarchiveParams, } | { "method": "thread/compact/start", id: RequestId, params: ThreadCompactStartParams, } | { "method": "thread/shellCommand", id: RequestId, params: ThreadShellCommandParams, } | { "method": "thread/approveGuardianDeniedAction", id: RequestId, params: ThreadApproveGuardianDeniedActionParams, } | { "method": "thread/rollback", id: RequestId, params: ThreadRollbackParams, } | { "method": "thread/list", id: RequestId, params: ThreadListParams, } | { "method": "thread/loaded/list", id: RequestId, params: ThreadLoadedListParams, } | { "method": "thread/read", id: RequestId, params: ThreadReadParams, } | { "method": "thread/inject_items", id: RequestId, params: ThreadInjectItemsParams, } | { "method": "skills/list", id: RequestId, params: SkillsListParams, } | { "method": "skills/extraRoots/set", id: RequestId, params: SkillsExtraRootsSetParams, } | { "method": "hooks/list", id: RequestId, params: HooksListParams, } | { "method": "marketplace/add", id: RequestId, params: MarketplaceAddParams, } | { "method": "marketplace/remove", id: RequestId, params: MarketplaceRemoveParams, } | { "method": "marketplace/upgrade", id: RequestId, params: MarketplaceUpgradeParams, } | { "method": "plugin/list", id: RequestId, params: PluginListParams, } | { "method": "plugin/installed", id: RequestId, params: PluginInstalledParams, } | { "method": "plugin/read", id: RequestId, params: PluginReadParams, } | { "method": "plugin/skill/read", id: RequestId, params: PluginSkillReadParams, } | { "method": "plugin/share/save", id: RequestId, params: PluginShareSaveParams, } | { "method": "plugin/share/updateTargets", id: RequestId, params: PluginShareUpdateTargetsParams, } | { "method": "plugin/share/list", id: RequestId, params: PluginShareListParams, } | { "method": "plugin/share/checkout", id: RequestId, params: PluginShareCheckoutParams, } | { "method": "plugin/share/delete", id: RequestId, params: PluginShareDeleteParams, } | { "method": "app/list", id: RequestId, params: AppsListParams, } | { "method": "fs/readFile", id: RequestId, params: FsReadFileParams, } | { "method": "fs/writeFile", id: RequestId, params: FsWriteFileParams, } | { "method": "fs/createDirectory", id: RequestId, params: FsCreateDirectoryParams, } | { "method": "fs/getMetadata", id: RequestId, params: FsGetMetadataParams, } | { "method": "fs/readDirectory", id: RequestId, params: FsReadDirectoryParams, } | { "method": "fs/remove", id: RequestId, params: FsRemoveParams, } | { "method": "fs/copy", id: RequestId, params: FsCopyParams, } | { "method": "fs/watch", id: RequestId, params: FsWatchParams, } | { "method": "fs/unwatch", id: RequestId, params: FsUnwatchParams, } | { "method": "skills/config/write", id: RequestId, params: SkillsConfigWriteParams, } | { "method": "plugin/install", id: RequestId, params: PluginInstallParams, } | { "method": "plugin/uninstall", id: RequestId, params: PluginUninstallParams, } | { "method": "turn/start", id: RequestId, params: TurnStartParams, } | { "method": "turn/steer", id: RequestId, params: TurnSteerParams, } | { "method": "turn/interrupt", id: RequestId, params: TurnInterruptParams, } | { "method": "review/start", id: RequestId, params: ReviewStartParams, } | { "method": "model/list", id: RequestId, params: ModelListParams, } | { "method": "modelProvider/capabilities/read", id: RequestId, params: ModelProviderCapabilitiesReadParams, } | { "method": "experimentalFeature/list", id: RequestId, params: ExperimentalFeatureListParams, } | { "method": "permissionProfile/list", id: RequestId, params: PermissionProfileListParams, } | { "method": "experimentalFeature/enablement/set", id: RequestId, params: ExperimentalFeatureEnablementSetParams, } | { "method": "mcpServer/oauth/login", id: RequestId, params: McpServerOauthLoginParams, } | { "method": "config/mcpServer/reload", id: RequestId, params: undefined, } | { "method": "mcpServerStatus/list", id: RequestId, params: ListMcpServerStatusParams, } | { "method": "mcpServer/resource/read", id: RequestId, params: McpResourceReadParams, } | { "method": "mcpServer/tool/call", id: RequestId, params: McpServerToolCallParams, } | { "method": "windowsSandbox/setupStart", id: RequestId, params: WindowsSandboxSetupStartParams, } | { "method": "windowsSandbox/readiness", id: RequestId, params: undefined, } | { "method": "account/login/start", id: RequestId, params: LoginAccountParams, } | { "method": "account/login/cancel", id: RequestId, params: CancelLoginAccountParams, } | { "method": "account/logout", id: RequestId, params: undefined, } | { "method": "account/rateLimits/read", id: RequestId, params: undefined, } | { "method": "account/rateLimitResetCredit/consume", id: RequestId, params: ConsumeAccountRateLimitResetCreditParams, } | { "method": "account/usage/read", id: RequestId, params: undefined, } | { "method": "account/workspaceMessages/read", id: RequestId, params: undefined, } | { "method": "account/sendAddCreditsNudgeEmail", id: RequestId, params: SendAddCreditsNudgeEmailParams, } | { "method": "feedback/upload", id: RequestId, params: FeedbackUploadParams, } | { "method": "command/exec", id: RequestId, params: CommandExecParams, } | { "method": "command/exec/write", id: RequestId, params: CommandExecWriteParams, } | { "method": "command/exec/terminate", id: RequestId, params: CommandExecTerminateParams, } | { "method": "command/exec/resize", id: RequestId, params: CommandExecResizeParams, } | { "method": "config/read", id: RequestId, params: ConfigReadParams, } | { "method": "externalAgentConfig/detect", id: RequestId, params: ExternalAgentConfigDetectParams, } | { "method": "externalAgentConfig/import", id: RequestId, params: ExternalAgentConfigImportParams, } | { "method": "externalAgentConfig/import/readHistories", id: RequestId, params: undefined, } | { "method": "config/value/write", id: RequestId, params: ConfigValueWriteParams, } | { "method": "config/batchWrite", id: RequestId, params: ConfigBatchWriteParams, } | { "method": "configRequirements/read", id: RequestId, params: undefined, } | { "method": "account/read", id: RequestId, params: GetAccountParams, } | { "method": "getConversationSummary", id: RequestId, params: GetConversationSummaryParams, } | { "method": "gitDiffToRemote", id: RequestId, params: GitDiffToRemoteParams, } | { "method": "getAuthStatus", id: RequestId, params: GetAuthStatusParams, } | { "method": "fuzzyFileSearch", id: RequestId, params: FuzzyFileSearchParams, };
-+export type ClientRequest ={ "method": "initialize", id: RequestId, params: InitializeParams, } | { "method": "thread/start", id: RequestId, params: ThreadStartParams, } | { "method": "thread/resume", id: RequestId, params: ThreadResumeParams, } | { "method": "thread/fork", id: RequestId, params: ThreadForkParams, } | { "method": "thread/archive", id: RequestId, params: ThreadArchiveParams, } | { "method": "thread/delete", id: RequestId, params: ThreadDeleteParams, } | { "method": "thread/unsubscribe", id: RequestId, params: ThreadUnsubscribeParams, } | { "method": "thread/name/set", id: RequestId, params: ThreadSetNameParams, } | { "method": "thread/goal/set", id: RequestId, params: ThreadGoalSetParams, } | { "method": "thread/goal/get", id: RequestId, params: ThreadGoalGetParams, } | { "method": "thread/goal/clear", id: RequestId, params: ThreadGoalClearParams, } | { "method": "thread/metadata/update", id: RequestId, params: ThreadMetadataUpdateParams, } | { "method": "thread/unarchive", id: RequestId, params: ThreadUnarchiveParams, } | { "method": "thread/compact/start", id: RequestId, params: ThreadCompactStartParams, } | { "method": "thread/shellCommand", id: RequestId, params: ThreadShellCommandParams, } | { "method": "thread/approveGuardianDeniedAction", id: RequestId, params: ThreadApproveGuardianDeniedActionParams, } | { "method": "thread/rollback", id: RequestId, params: ThreadRollbackParams, } | { "method": "thread/list", id: RequestId, params: ThreadListParams, } | { "method": "thread/loaded/list", id: RequestId, params: ThreadLoadedListParams, } | { "method": "thread/read", id: RequestId, params: ThreadReadParams, } | { "method": "thread/inject_items", id: RequestId, params: ThreadInjectItemsParams, } | { "method": "orchestra/validate", id: RequestId, params: OrchestraValidateParams, } | { "method": "automation/validate", id: RequestId, params: AutomationValidateParams, } | { "method": "automation/runFixture", id: RequestId, params: AutomationRunFixtureParams, } | { "method": "automation/linear/read", id: RequestId, params: AutomationLinearReadParams, } | { "method": "automation/queue/read", id: RequestId, params: AutomationQueueReadParams, } | { "method": "automation/status", id: RequestId, params: AutomationRunParams, } | { "method": "automation/pause", id: RequestId, params: AutomationRunParams, } | { "method": "automation/refresh", id: RequestId, params: AutomationReconcileParams, } | { "method": "automation/resume", id: RequestId, params: AutomationReconcileParams, } | { "method": "automation/cancel", id: RequestId, params: AutomationRunParams, } | { "method": "orchestra/invoke", id: RequestId, params: OrchestraInvokeParams, } | { "method": "orchestra/status", id: RequestId, params: OrchestraRunParams, } | { "method": "orchestra/resume", id: RequestId, params: OrchestraResumeParams, } | { "method": "orchestra/cancel", id: RequestId, params: OrchestraRunParams, } | { "method": "orchestra/query", id: RequestId, params: OrchestraQueryParams, } | { "method": "skills/list", id: RequestId, params: SkillsListParams, } | { "method": "skills/extraRoots/set", id: RequestId, params: SkillsExtraRootsSetParams, } | { "method": "hooks/list", id: RequestId, params: HooksListParams, } | { "method": "marketplace/add", id: RequestId, params: MarketplaceAddParams, } | { "method": "marketplace/remove", id: RequestId, params: MarketplaceRemoveParams, } | { "method": "marketplace/upgrade", id: RequestId, params: MarketplaceUpgradeParams, } | { "method": "plugin/list", id: RequestId, params: PluginListParams, } | { "method": "plugin/installed", id: RequestId, params: PluginInstalledParams, } | { "method": "plugin/read", id: RequestId, params: PluginReadParams, } | { "method": "plugin/skill/read", id: RequestId, params: PluginSkillReadParams, } | { "method": "plugin/share/save", id: RequestId, params: PluginShareSaveParams, } | { "method": "plugin/share/updateTargets", id: RequestId, params: PluginShareUpdateTargetsParams, } | { "method": "plugin/share/list", id: RequestId, params: PluginShareListParams, } | { "method": "plugin/share/checkout", id: RequestId, params: PluginShareCheckoutParams, } | { "method": "plugin/share/delete", id: RequestId, params: PluginShareDeleteParams, } | { "method": "app/list", id: RequestId, params: AppsListParams, } | { "method": "fs/readFile", id: RequestId, params: FsReadFileParams, } | { "method": "fs/writeFile", id: RequestId, params: FsWriteFileParams, } | { "method": "fs/createDirectory", id: RequestId, params: FsCreateDirectoryParams, } | { "method": "fs/getMetadata", id: RequestId, params: FsGetMetadataParams, } | { "method": "fs/readDirectory", id: RequestId, params: FsReadDirectoryParams, } | { "method": "fs/remove", id: RequestId, params: FsRemoveParams, } | { "method": "fs/copy", id: RequestId, params: FsCopyParams, } | { "method": "fs/watch", id: RequestId, params: FsWatchParams, } | { "method": "fs/unwatch", id: RequestId, params: FsUnwatchParams, } | { "method": "skills/config/write", id: RequestId, params: SkillsConfigWriteParams, } | { "method": "plugin/install", id: RequestId, params: PluginInstallParams, } | { "method": "plugin/uninstall", id: RequestId, params: PluginUninstallParams, } | { "method": "turn/start", id: RequestId, params: TurnStartParams, } | { "method": "turn/steer", id: RequestId, params: TurnSteerParams, } | { "method": "turn/interrupt", id: RequestId, params: TurnInterruptParams, } | { "method": "review/start", id: RequestId, params: ReviewStartParams, } | { "method": "model/list", id: RequestId, params: ModelListParams, } | { "method": "modelProvider/capabilities/read", id: RequestId, params: ModelProviderCapabilitiesReadParams, } | { "method": "experimentalFeature/list", id: RequestId, params: ExperimentalFeatureListParams, } | { "method": "permissionProfile/list", id: RequestId, params: PermissionProfileListParams, } | { "method": "experimentalFeature/enablement/set", id: RequestId, params: ExperimentalFeatureEnablementSetParams, } | { "method": "mcpServer/oauth/login", id: RequestId, params: McpServerOauthLoginParams, } | { "method": "config/mcpServer/reload", id: RequestId, params: undefined, } | { "method": "mcpServerStatus/list", id: RequestId, params: ListMcpServerStatusParams, } | { "method": "mcpServer/resource/read", id: RequestId, params: McpResourceReadParams, } | { "method": "mcpServer/tool/call", id: RequestId, params: McpServerToolCallParams, } | { "method": "windowsSandbox/setupStart", id: RequestId, params: WindowsSandboxSetupStartParams, } | { "method": "windowsSandbox/readiness", id: RequestId, params: undefined, } | { "method": "account/login/start", id: RequestId, params: LoginAccountParams, } | { "method": "account/login/cancel", id: RequestId, params: CancelLoginAccountParams, } | { "method": "account/logout", id: RequestId, params: undefined, } | { "method": "account/rateLimits/read", id: RequestId, params: undefined, } | { "method": "account/rateLimitResetCredit/consume", id: RequestId, params: ConsumeAccountRateLimitResetCreditParams, } | { "method": "account/usage/read", id: RequestId, params: undefined, } | { "method": "account/workspaceMessages/read", id: RequestId, params: undefined, } | { "method": "account/sendAddCreditsNudgeEmail", id: RequestId, params: SendAddCreditsNudgeEmailParams, } | { "method": "feedback/upload", id: RequestId, params: FeedbackUploadParams, } | { "method": "command/exec", id: RequestId, params: CommandExecParams, } | { "method": "command/exec/write", id: RequestId, params: CommandExecWriteParams, } | { "method": "command/exec/terminate", id: RequestId, params: CommandExecTerminateParams, } | { "method": "command/exec/resize", id: RequestId, params: CommandExecResizeParams, } | { "method": "config/read", id: RequestId, params: ConfigReadParams, } | { "method": "externalAgentConfig/detect", id: RequestId, params: ExternalAgentConfigDetectParams, } | { "method": "externalAgentConfig/import", id: RequestId, params: ExternalAgentConfigImportParams, } | { "method": "externalAgentConfig/import/readHistories", id: RequestId, params: undefined, } | { "method": "config/value/write", id: RequestId, params: ConfigValueWriteParams, } | { "method": "config/batchWrite", id: RequestId, params: ConfigBatchWriteParams, } | { "method": "configRequirements/read", id: RequestId, params: undefined, } | { "method": "account/read", id: RequestId, params: GetAccountParams, } | { "method": "getConversationSummary", id: RequestId, params: GetConversationSummaryParams, } | { "method": "gitDiffToRemote", id: RequestId, params: GitDiffToRemoteParams, } | { "method": "getAuthStatus", id: RequestId, params: GetAuthStatusParams, } | { "method": "fuzzyFileSearch", id: RequestId, params: FuzzyFileSearchParams, };
++export type ClientRequest ={ "method": "initialize", id: RequestId, params: InitializeParams, } | { "method": "thread/start", id: RequestId, params: ThreadStartParams, } | { "method": "thread/resume", id: RequestId, params: ThreadResumeParams, } | { "method": "thread/fork", id: RequestId, params: ThreadForkParams, } | { "method": "thread/archive", id: RequestId, params: ThreadArchiveParams, } | { "method": "thread/delete", id: RequestId, params: ThreadDeleteParams, } | { "method": "thread/unsubscribe", id: RequestId, params: ThreadUnsubscribeParams, } | { "method": "thread/name/set", id: RequestId, params: ThreadSetNameParams, } | { "method": "thread/goal/set", id: RequestId, params: ThreadGoalSetParams, } | { "method": "thread/goal/get", id: RequestId, params: ThreadGoalGetParams, } | { "method": "thread/goal/clear", id: RequestId, params: ThreadGoalClearParams, } | { "method": "thread/metadata/update", id: RequestId, params: ThreadMetadataUpdateParams, } | { "method": "thread/unarchive", id: RequestId, params: ThreadUnarchiveParams, } | { "method": "thread/compact/start", id: RequestId, params: ThreadCompactStartParams, } | { "method": "thread/shellCommand", id: RequestId, params: ThreadShellCommandParams, } | { "method": "thread/approveGuardianDeniedAction", id: RequestId, params: ThreadApproveGuardianDeniedActionParams, } | { "method": "thread/rollback", id: RequestId, params: ThreadRollbackParams, } | { "method": "thread/list", id: RequestId, params: ThreadListParams, } | { "method": "thread/loaded/list", id: RequestId, params: ThreadLoadedListParams, } | { "method": "thread/read", id: RequestId, params: ThreadReadParams, } | { "method": "thread/inject_items", id: RequestId, params: ThreadInjectItemsParams, } | { "method": "orchestra/validate", id: RequestId, params: OrchestraValidateParams, } | { "method": "automation/validate", id: RequestId, params: AutomationValidateParams, } | { "method": "automation/runFixture", id: RequestId, params: AutomationRunFixtureParams, } | { "method": "automation/linear/read", id: RequestId, params: AutomationLinearReadParams, } | { "method": "automation/queue/read", id: RequestId, params: AutomationQueueReadParams, } | { "method": "automation/status", id: RequestId, params: AutomationRunParams, } | { "method": "automation/pause", id: RequestId, params: AutomationRunParams, } | { "method": "automation/refresh", id: RequestId, params: AutomationReconcileParams, } | { "method": "automation/resume", id: RequestId, params: AutomationReconcileParams, } | { "method": "automation/cancel", id: RequestId, params: AutomationRunParams, } | { "method": "automation/cancelIssue", id: RequestId, params: AutomationCancelIssueParams, } | { "method": "orchestra/invoke", id: RequestId, params: OrchestraInvokeParams, } | { "method": "orchestra/status", id: RequestId, params: OrchestraRunParams, } | { "method": "orchestra/resume", id: RequestId, params: OrchestraResumeParams, } | { "method": "orchestra/cancel", id: RequestId, params: OrchestraRunParams, } | { "method": "orchestra/query", id: RequestId, params: OrchestraQueryParams, } | { "method": "skills/list", id: RequestId, params: SkillsListParams, } | { "method": "skills/extraRoots/set", id: RequestId, params: SkillsExtraRootsSetParams, } | { "method": "hooks/list", id: RequestId, params: HooksListParams, } | { "method": "marketplace/add", id: RequestId, params: MarketplaceAddParams, } | { "method": "marketplace/remove", id: RequestId, params: MarketplaceRemoveParams, } | { "method": "marketplace/upgrade", id: RequestId, params: MarketplaceUpgradeParams, } | { "method": "plugin/list", id: RequestId, params: PluginListParams, } | { "method": "plugin/installed", id: RequestId, params: PluginInstalledParams, } | { "method": "plugin/read", id: RequestId, params: PluginReadParams, } | { "method": "plugin/skill/read", id: RequestId, params: PluginSkillReadParams, } | { "method": "plugin/share/save", id: RequestId, params: PluginShareSaveParams, } | { "method": "plugin/share/updateTargets", id: RequestId, params: PluginShareUpdateTargetsParams, } | { "method": "plugin/share/list", id: RequestId, params: PluginShareListParams, } | { "method": "plugin/share/checkout", id: RequestId, params: PluginShareCheckoutParams, } | { "method": "plugin/share/delete", id: RequestId, params: PluginShareDeleteParams, } | { "method": "app/list", id: RequestId, params: AppsListParams, } | { "method": "fs/readFile", id: RequestId, params: FsReadFileParams, } | { "method": "fs/writeFile", id: RequestId, params: FsWriteFileParams, } | { "method": "fs/createDirectory", id: RequestId, params: FsCreateDirectoryParams, } | { "method": "fs/getMetadata", id: RequestId, params: FsGetMetadataParams, } | { "method": "fs/readDirectory", id: RequestId, params: FsReadDirectoryParams, } | { "method": "fs/remove", id: RequestId, params: FsRemoveParams, } | { "method": "fs/copy", id: RequestId, params: FsCopyParams, } | { "method": "fs/watch", id: RequestId, params: FsWatchParams, } | { "method": "fs/unwatch", id: RequestId, params: FsUnwatchParams, } | { "method": "skills/config/write", id: RequestId, params: SkillsConfigWriteParams, } | { "method": "plugin/install", id: RequestId, params: PluginInstallParams, } | { "method": "plugin/uninstall", id: RequestId, params: PluginUninstallParams, } | { "method": "turn/start", id: RequestId, params: TurnStartParams, } | { "method": "turn/steer", id: RequestId, params: TurnSteerParams, } | { "method": "turn/interrupt", id: RequestId, params: TurnInterruptParams, } | { "method": "review/start", id: RequestId, params: ReviewStartParams, } | { "method": "model/list", id: RequestId, params: ModelListParams, } | { "method": "modelProvider/capabilities/read", id: RequestId, params: ModelProviderCapabilitiesReadParams, } | { "method": "experimentalFeature/list", id: RequestId, params: ExperimentalFeatureListParams, } | { "method": "permissionProfile/list", id: RequestId, params: PermissionProfileListParams, } | { "method": "experimentalFeature/enablement/set", id: RequestId, params: ExperimentalFeatureEnablementSetParams, } | { "method": "mcpServer/oauth/login", id: RequestId, params: McpServerOauthLoginParams, } | { "method": "config/mcpServer/reload", id: RequestId, params: undefined, } | { "method": "mcpServerStatus/list", id: RequestId, params: ListMcpServerStatusParams, } | { "method": "mcpServer/resource/read", id: RequestId, params: McpResourceReadParams, } | { "method": "mcpServer/tool/call", id: RequestId, params: McpServerToolCallParams, } | { "method": "windowsSandbox/setupStart", id: RequestId, params: WindowsSandboxSetupStartParams, } | { "method": "windowsSandbox/readiness", id: RequestId, params: undefined, } | { "method": "account/login/start", id: RequestId, params: LoginAccountParams, } | { "method": "account/login/cancel", id: RequestId, params: CancelLoginAccountParams, } | { "method": "account/logout", id: RequestId, params: undefined, } | { "method": "account/rateLimits/read", id: RequestId, params: undefined, } | { "method": "account/rateLimitResetCredit/consume", id: RequestId, params: ConsumeAccountRateLimitResetCreditParams, } | { "method": "account/usage/read", id: RequestId, params: undefined, } | { "method": "account/workspaceMessages/read", id: RequestId, params: undefined, } | { "method": "account/sendAddCreditsNudgeEmail", id: RequestId, params: SendAddCreditsNudgeEmailParams, } | { "method": "feedback/upload", id: RequestId, params: FeedbackUploadParams, } | { "method": "command/exec", id: RequestId, params: CommandExecParams, } | { "method": "command/exec/write", id: RequestId, params: CommandExecWriteParams, } | { "method": "command/exec/terminate", id: RequestId, params: CommandExecTerminateParams, } | { "method": "command/exec/resize", id: RequestId, params: CommandExecResizeParams, } | { "method": "config/read", id: RequestId, params: ConfigReadParams, } | { "method": "externalAgentConfig/detect", id: RequestId, params: ExternalAgentConfigDetectParams, } | { "method": "externalAgentConfig/import", id: RequestId, params: ExternalAgentConfigImportParams, } | { "method": "externalAgentConfig/import/readHistories", id: RequestId, params: undefined, } | { "method": "config/value/write", id: RequestId, params: ConfigValueWriteParams, } | { "method": "config/batchWrite", id: RequestId, params: ConfigBatchWriteParams, } | { "method": "configRequirements/read", id: RequestId, params: undefined, } | { "method": "account/read", id: RequestId, params: GetAccountParams, } | { "method": "getConversationSummary", id: RequestId, params: GetConversationSummaryParams, } | { "method": "gitDiffToRemote", id: RequestId, params: GitDiffToRemoteParams, } | { "method": "getAuthStatus", id: RequestId, params: GetAuthStatusParams, } | { "method": "fuzzyFileSearch", id: RequestId, params: FuzzyFileSearchParams, };
 diff --git a/codex-rs/app-server-protocol/schema/typescript/InitializeResponse.ts b/codex-rs/app-server-protocol/schema/typescript/InitializeResponse.ts
 index f1f79d173c..730501d32c 100644
 --- a/codex-rs/app-server-protocol/schema/typescript/InitializeResponse.ts
@@ -31995,14 +32103,15 @@ index a6da50649c..c984df011c 100644
 + */
 +orchestra?: OrchestraTaskReplay, };
 diff --git a/codex-rs/app-server-protocol/schema/typescript/v2/index.ts b/codex-rs/app-server-protocol/schema/typescript/v2/index.ts
-index 2cfb40140c..d1c435ea8f 100644
+index 2cfb40140c..c4df616193 100644
 --- a/codex-rs/app-server-protocol/schema/typescript/v2/index.ts
 +++ b/codex-rs/app-server-protocol/schema/typescript/v2/index.ts
-@@ -36,6 +36,54 @@ export type { AskForApproval } from "./AskForApproval";
+@@ -36,6 +36,55 @@ export type { AskForApproval } from "./AskForApproval";
  export type { AttestationGenerateParams } from "./AttestationGenerateParams";
  export type { AttestationGenerateResponse } from "./AttestationGenerateResponse";
  export type { AutoReviewDecisionSource } from "./AutoReviewDecisionSource";
 +export type { AutomationAgentProfile } from "./AutomationAgentProfile";
++export type { AutomationCancelIssueParams } from "./AutomationCancelIssueParams";
 +export type { AutomationClaimStatus } from "./AutomationClaimStatus";
 +export type { AutomationCleanupProjection } from "./AutomationCleanupProjection";
 +export type { AutomationCleanupStatus } from "./AutomationCleanupStatus";
@@ -32053,7 +32162,7 @@ index 2cfb40140c..d1c435ea8f 100644
  export type { ByteRange } from "./ByteRange";
  export type { CancelLoginAccountParams } from "./CancelLoginAccountParams";
  export type { CancelLoginAccountResponse } from "./CancelLoginAccountResponse";
-@@ -279,6 +327,42 @@ export type { NetworkRequirements } from "./NetworkRequirements";
+@@ -279,6 +328,42 @@ export type { NetworkRequirements } from "./NetworkRequirements";
  export type { NetworkUnixSocketPermission } from "./NetworkUnixSocketPermission";
  export type { NewThreadModelDefaults } from "./NewThreadModelDefaults";
  export type { NonSteerableTurnKind } from "./NonSteerableTurnKind";
@@ -32112,10 +32221,10 @@ index 26842d50dc..7b20d32b29 100644
  pub use protocol::v1::Tools;
  pub use protocol::v1::UserSavedConfig;
 diff --git a/codex-rs/app-server-protocol/src/protocol/common.rs b/codex-rs/app-server-protocol/src/protocol/common.rs
-index 584c66fed9..c1411228d8 100644
+index 584c66fed9..0289ba81f7 100644
 --- a/codex-rs/app-server-protocol/src/protocol/common.rs
 +++ b/codex-rs/app-server-protocol/src/protocol/common.rs
-@@ -660,6 +660,91 @@ client_request_definitions! {
+@@ -660,6 +660,97 @@ client_request_definitions! {
          serialization: thread_id(params.thread_id),
          response: v2::ThreadInjectItemsResponse,
      },
@@ -32171,6 +32280,12 @@ index 584c66fed9..c1411228d8 100644
 +    },
 +    AutomationCancel => "automation/cancel" {
 +        params: v2::AutomationRunParams,
++        serialization: thread_id(params.thread_id),
++        manual_payload_conversion: manual,
++        response: v2::AutomationRunResponse,
++    },
++    AutomationCancelIssue => "automation/cancelIssue" {
++        params: v2::AutomationCancelIssueParams,
 +        serialization: thread_id(params.thread_id),
 +        manual_payload_conversion: manual,
 +        response: v2::AutomationRunResponse,
@@ -32393,7 +32508,7 @@ index 1c45a725ed..fedbf3a167 100644
          if let Some(raw_socket_path) = listen_url.strip_prefix("unix://") {
              let socket_path = if raw_socket_path.is_empty() {
 diff --git a/codex-rs/app-server/Cargo.toml b/codex-rs/app-server/Cargo.toml
-index dd4485b70c..15b87e088f 100644
+index dd4485b70c..ae2b8edf6c 100644
 --- a/codex-rs/app-server/Cargo.toml
 +++ b/codex-rs/app-server/Cargo.toml
 @@ -47,6 +47,8 @@ codex-external-agent-migration = { workspace = true }
@@ -32405,6 +32520,14 @@ index dd4485b70c..15b87e088f 100644
  codex-git-utils = { workspace = true }
  codex-file-watcher = { workspace = true }
  codex-hooks = { workspace = true }
+@@ -108,6 +110,7 @@ uuid = { workspace = true, features = ["serde", "v7"] }
+ codex-windows-sandbox = { workspace = true }
+
+ [dev-dependencies]
++async-trait = "0.1.89"
+ app_test_support = { workspace = true }
+ axum = { workspace = true, default-features = false, features = [
+     "http1",
 diff --git a/codex-rs/app-server/src/app_server_tracing.rs b/codex-rs/app-server/src/app_server_tracing.rs
 index 6e8133740f..eb56e535c6 100644
 --- a/codex-rs/app-server/src/app_server_tracing.rs
@@ -32493,7 +32616,7 @@ index 7599e498d9..9ef1e875cc 100644
          long = "listen",
          value_name = "URL",
 diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
-index 4d1e7b1ced..a28a27e98b 100644
+index 4d1e7b1ced..8ac2d81163 100644
 --- a/codex-rs/app-server/src/message_processor.rs
 +++ b/codex-rs/app-server/src/message_processor.rs
 @@ -32,6 +32,7 @@ use crate::request_processors::GitRequestProcessor;
@@ -32528,7 +32651,7 @@ index 4d1e7b1ced..a28a27e98b 100644
              plugin_processor,
              remote_control_processor,
              search_processor,
-@@ -1265,6 +1269,81 @@ impl MessageProcessor {
+@@ -1265,6 +1269,86 @@ impl MessageProcessor {
              ClientRequest::ThreadInjectItems { params, .. } => {
                  self.turn_processor.thread_inject_items(params).await
              }
@@ -32582,6 +32705,11 @@ index 4d1e7b1ced..a28a27e98b 100644
 +                .cancel_automation(params)
 +                .await
 +                .map(|response| Some(ClientResponsePayload::AutomationCancel(response))),
++            ClientRequest::AutomationCancelIssue { params, .. } => self
++                .orchestra_processor
++                .cancel_automation_issue(params)
++                .await
++                .map(|response| Some(ClientResponsePayload::AutomationCancelIssue(response))),
 +            ClientRequest::OrchestraInvoke { params, .. } => self
 +                .orchestra_processor
 +                .invoke(params)
@@ -33312,3 +33440,25 @@ index 54ef305c07..34c02cff05 100644
              }
          }
          Some(update)
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_read.rs b/codex-rs/app-server/tests/suite/v2/thread_read.rs
+index 4162e7ebd6..c55591a5be 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_read.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_read.rs
+@@ -244,7 +244,7 @@ async fn paginated_stored_thread_allows_metadata_discovery_and_rejects_legacy_hi
+         mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+     )
+     .await??;
+-    let ThreadReadResponse { thread } = to_response::<ThreadReadResponse>(read_resp)?;
++    let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
+     assert_eq!(thread.history_mode, ThreadHistoryMode::Paginated);
+     assert!(thread.turns.is_empty());
+ 
+@@ -763,7 +763,7 @@ async fn thread_read_can_return_archived_threads_by_id() -> Result<()> {
+         mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+     )
+     .await??;
+-    let ThreadReadResponse { thread } = to_response::<ThreadReadResponse>(read_resp)?;
++    let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
+ 
+     assert_eq!(thread.id, conversation_id);
+     assert_eq!(thread.preview, preview);

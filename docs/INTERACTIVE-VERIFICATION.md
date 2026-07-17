@@ -36,6 +36,39 @@ dated issue #20 record.
 
 Interrupt a resident workflow invocation and verify active Attempts are fenced, child cancellation is requested, and the Run durably suspends rather than continuing in the background. Resume it through a later task-native invocation and verify checkpoint reconciliation. Create a conflicting target edit and verify promotion preserves it, retains the shared worktree, and succeeds after the conflict is resolved and the run is resumed. Use an installed version to validate a source-checkout candidate without changing the installed cache; promote only after all required checks and approval pass.
 
+## Stage 5 — retained desktop Automation seam
+
+Open a normal repository task in the retained T3Code desktop, then open **Automation profile** from
+the chat header. Use `examples/automation/WORKFLOW.md` or a repository-local equivalent and record
+the Product manifest identity used for the check.
+
+1. Select **Validate and preview**. With `LINEAR_API_KEY` absent, confirm the profile remains valid,
+   the missing credential is a warning, and live Linear intake reports `skipped` rather than failing
+   or exposing raw GraphQL.
+2. Select **Start fixture**. Confirm the Root Run belongs to the current task and the claim displays
+   a persistent worktree, native Issue task ID, typed Workflow Run ID, and bounded next action.
+3. Select **Inspect** and **Refresh**. Confirm checkpoint revision/reconciliation and bounded queue
+   projection update without child transcript text appearing in the dialog.
+4. Select **Pause**, then **Resume**. Confirm the visible Root Run moves through `suspended` after
+   fenced descendant cancellation and returns to `running` only after reconciliation.
+5. Select **Cancel issue** on one nonterminal claim. Confirm the request immediately returns a
+   claim-only `suspended` cancellation fence and the Root Run remains inspectable. After native
+   descendant and effect reconciliation is confirmed, the claim becomes `cancelled` and cleanup
+   becomes eligible. If confirmation is unavailable, confirm the bounded retry state remains visible
+   and no new work is dispatched for that claim.
+6. Start a fresh fixture if needed, then select **Cancel run**. Confirm the Root Run becomes
+   `cancelled` without a detached continuation.
+
+Record these as human-verified only after observing the retained Electron/React application. The
+automated acceptance and protocol tests do not substitute for this checklist.
+
+Enter a known root Run ID once when recovering older state. Confirm the retained renderer remembers
+that task-local ID and automatically reloads the bounded native status projection after a renderer
+reload; it must not persist or reconstruct child histories.
+
+Retained evidence for the Symphony-compatible product seam is recorded in
+[`verification/2026-07-17-issue-42-symphony-acceptance.md`](verification/2026-07-17-issue-42-symphony-acceptance.md).
+
 ## Human-only evidence
 
 Tool rendering, real provider execution, visible V2 activity/residency behavior, interactive approval, cancellation timing, fresh-task recovery, and installed-cache identity remain `pending` until observed.

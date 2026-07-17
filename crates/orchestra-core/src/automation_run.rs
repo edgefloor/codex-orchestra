@@ -1384,6 +1384,78 @@ impl AutomationRunStore {
         Ok(())
     }
 
+    /// Fence one Issue claim before native descendants are interrupted. The
+    /// root revision is advanced by the durable save, so any provider callback
+    /// prepared from the previous revision cannot commit after this point.
+    pub fn begin_claim_cancellation(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+    ) -> Result<(), AutomationRunError> {
+        let claim = checkpoint
+            .claims
+            .get_mut(claim_id)
+            .ok_or_else(|| AutomationRunError::MissingClaim(claim_id.into()))?;
+        if matches!(
+            claim.status,
+            AutomationClaimStatus::Completed
+                | AutomationClaimStatus::Cancelled
+                | AutomationClaimStatus::Failed
+        ) {
+            return Ok(());
+        }
+        claim.status = AutomationClaimStatus::Suspended;
+        claim.retry = None;
+        claim.next_action = "cancel native Issue descendants, then reconcile effects".into();
+        for effect in &mut claim.effects {
+            if effect.status == AutomationEffectStatus::Executing {
+                effect.status = AutomationEffectStatus::Ambiguous;
+                effect.failure = Some(
+                    "Issue cancellation fenced the claim before the provider result became durable"
+                        .into(),
+                );
+            }
+        }
+        checkpoint.next_action = format!("finish cancellation for claim `{claim_id}`");
+        self.save(checkpoint)
+    }
+
+    pub fn complete_claim_cancellation(
+        &self,
+        checkpoint: &mut AutomationRootCheckpoint,
+        claim_id: &str,
+        descendants_cancelled: bool,
+    ) -> Result<(), AutomationRunError> {
+        let claim = checkpoint
+            .claims
+            .get_mut(claim_id)
+            .ok_or_else(|| AutomationRunError::MissingClaim(claim_id.into()))?;
+        if claim.status == AutomationClaimStatus::Cancelled {
+            return Ok(());
+        }
+        if !descendants_cancelled {
+            claim.status = AutomationClaimStatus::Suspended;
+            claim.next_action = "retry native Issue descendant cancellation".into();
+        } else if claim.effects.iter().any(|effect| {
+            matches!(
+                effect.status,
+                AutomationEffectStatus::Executing | AutomationEffectStatus::Ambiguous
+            )
+        }) {
+            claim.status = AutomationClaimStatus::Suspended;
+            claim.next_action =
+                "reconcile ambiguous Tracker effects before cancellation cleanup".into();
+        } else {
+            claim.status = AutomationClaimStatus::Cancelled;
+            claim.retry = None;
+            claim.cleanup.status = AutomationCleanupStatus::Eligible;
+            claim.cleanup.last_failure = None;
+            claim.next_action = "Issue claim cancelled; terminal cleanup is eligible".into();
+        }
+        checkpoint.next_action = claim.next_action.clone();
+        self.save(checkpoint)
+    }
+
     pub fn prepare_tracker_comment(
         &self,
         checkpoint: &mut AutomationRootCheckpoint,
@@ -3189,6 +3261,90 @@ mod tests {
         let effect = &durable.claims[&claim_id].effects[0];
         assert_eq!(effect.status, AutomationEffectStatus::Ambiguous);
         assert_eq!(effect.provider_receipt, None);
+    }
+
+    #[test]
+    fn issue_cancellation_fences_late_effects_and_waits_for_descendants_and_reconciliation() {
+        let repository = tempdir().unwrap();
+        let workspace = tempdir().unwrap();
+        let profile = profile(workspace.path());
+        let digest = crate::canonical_sha256(&serde_json::to_value(&profile).unwrap()).unwrap();
+        let (store, mut root) = AutomationRunStore::start(AutomationRunStart {
+            repository: repository.path(),
+            owner_thread_id: "task-cancel-issue",
+            source_revision: "abc123",
+            profile: &profile,
+            profile_digest: &digest,
+        })
+        .unwrap();
+        let claim_id = store.claim_fixture(&mut root, &issue(), 1).unwrap();
+        let (_, request) = store
+            .prepare_tracker_comment(
+                &mut root,
+                &claim_id,
+                &profile,
+                "provider mutation in flight",
+                AutomationGatePolicy::AutoAccept,
+            )
+            .unwrap();
+        let request = request.unwrap();
+        let mut stale = root.clone();
+
+        store
+            .begin_claim_cancellation(&mut root, &claim_id)
+            .unwrap();
+        assert_eq!(
+            root.claims[&claim_id].status,
+            AutomationClaimStatus::Suspended
+        );
+        assert_eq!(
+            root.claims[&claim_id].effects[0].status,
+            AutomationEffectStatus::Ambiguous
+        );
+        assert!(matches!(
+            store.complete_tracker_effect(
+                &mut stale,
+                &claim_id,
+                &request.idempotency_key,
+                AutomationEffectExecution::Committed {
+                    provider_receipt: "late-provider-result".into()
+                },
+            ),
+            Err(AutomationRunError::StaleLease { .. })
+        ));
+
+        store
+            .complete_claim_cancellation(&mut root, &claim_id, false)
+            .unwrap();
+        assert!(
+            root.claims[&claim_id]
+                .next_action
+                .contains("descendant cancellation")
+        );
+        store
+            .complete_claim_cancellation(&mut root, &claim_id, true)
+            .unwrap();
+        assert!(
+            root.claims[&claim_id]
+                .next_action
+                .contains("ambiguous Tracker effects")
+        );
+
+        let effect = &mut root.claims.get_mut(&claim_id).unwrap().effects[0];
+        effect.status = AutomationEffectStatus::Committed;
+        effect.failure = None;
+        effect.provider_receipt = Some("reconciled-provider-result".into());
+        store
+            .complete_claim_cancellation(&mut root, &claim_id, true)
+            .unwrap();
+        assert_eq!(
+            root.claims[&claim_id].status,
+            AutomationClaimStatus::Cancelled
+        );
+        assert_eq!(
+            root.claims[&claim_id].cleanup.status,
+            AutomationCleanupStatus::Eligible
+        );
     }
 
     #[test]
