@@ -27,6 +27,7 @@ ORCHESTRA_EVALUATOR_BIN="$output/orchestra-validate-worker" \
   cargo test --manifest-path "$root/Cargo.toml" -p codex-orchestra-core \
   --test evaluator_worker -- --ignored
 cp "$codex/codex-rs/target/debug/codex" "$output/codex"
+cp "$root/product/release.toml" "$output/release.toml"
 
 target=$(rustc -vV | sed -n 's/^host: //p')
 "$root/target/debug/orchestra-product" manifest \

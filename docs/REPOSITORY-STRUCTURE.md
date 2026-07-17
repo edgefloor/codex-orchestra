@@ -2,16 +2,18 @@
 
 ```text
 crates/orchestra-core/              restricted compiler, plan validation, runtime, state, context, host trait
-crates/orchestra-host-prototype/    disposable issue #20 length-framed host fixture
 crates/orchestra-lifecycle/         preview-first plugin configuration lifecycle CLI and tests
-prototypes/desktop-host/            disposable T3-derived renderer and MessagePort harness
-prototypes/hermetic-evaluator/      disposable exact-Zod worker harness for issue #16
+crates/orchestra-product/           Product manifest, release gates, update state, and verification CLI
+evaluator/                          pinned one-request exact-Zod Product worker
 sdk/                                TypeScript authoring declarations (never executed)
-integration/codex/                  pinned revision, minimal patch, and Codex overlay crates
+integration/codex/                  pinned revision, maintained Codex patch, and source overlay
+integration/t3code/                 pinned revision and maintained retained-desktop patch
+product/                            exact Product pins, release policy, and evidence schemas
 scripts/codex-integration.sh        deterministic apply/build verification
-scripts/desktop-host-prototype.sh   one-command issue #20 architecture gate
-scripts/electron-host-prototype.sh  pinned T3Code Electron process-boundary gate
-scripts/hermetic-evaluator-prototype.sh one-command issue #16 MVP evaluator gate
+scripts/t3code-integration.sh       retained desktop apply/build/test verification
+scripts/product-source-prepare.sh   prepare both exact maintained fork trees
+scripts/product-dev-build.sh        build and verify the dogfood Product tuple
+scripts/product-release.sh          two-architecture signed release and publication gates
 scripts/characterize-pinned-skills.sh pinned native skill boundary verification
 skills/                             user-facing native-tool guidance
 config/                             optional project/global Codex configuration
@@ -22,6 +24,7 @@ docs/adr/                           architecture decisions
 docs/ARCHITECTURE.md                decision-complete product-fork synthesis
 docs/WORKFLOW-COMPILATION.md        accepted evaluator artifact and trust contract
 docs/agents/                        tracker and agent-operation contracts
+landing/                            static product landing page and its browser tests
 ```
 
 Runtime-owned target-repository data:

@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Orchestra coordinates coding agents, review gates, and repository evidence in one operational workspace."
+    />
+    <link
+      rel="preload"
+      href="/assets/fonts/instrument-sans-variable.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/assets/landing/operations-monolith-1820.avif"
+      as="image"
+      type="image/avif"
+      imagesrcset="/assets/landing/operations-monolith-960.avif 960w, /assets/landing/operations-monolith-1820.avif 1820w"
+      imagesizes="100vw"
+      fetchpriority="high"
+    />
+    <script>
+      (() => {
+        let stored = null;
+        try {
+          stored = localStorage.getItem("orchestra-motion");
+        } catch {}
+        const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        document.documentElement.dataset.motion =
+          stored === "on" ? "on" : stored === "off" || reduced ? "off" : "on";
+      })();
+    </script>
+    <title>Orchestra | The operational record</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <div class="intro-overlay" id="intro-overlay" aria-hidden="true" hidden>
+      <span>Orchestra</span>
+    </div>
+    <canvas class="page-canvas" id="motion-field" aria-hidden="true"></canvas>
+    <button
+      class="motion-toggle"
+      id="motion-toggle"
+      type="button"
+      aria-pressed="false"
+      aria-label="Pause motion"
+    >
+      Pause motion
+    </button>
+
+    <header class="topbar">
+      <nav class="container nav" aria-label="Primary navigation">
+        <a class="brand" href="#top" aria-label="Orchestra home">Orchestra</a>
+        <div class="nav-links">
+          <a class="nav-product" href="#workspace">Product</a>
+          <a href="https://github.com/edgefloor/codex-orchestra">GitHub</a>
+          <a class="button button-compact" href="#access">Request access</a>
+        </div>
+      </nav>
+    </header>
+
+    <main id="content">
+      <section class="hero" id="top" aria-labelledby="hero-heading">
+        <figure class="hero-monolith" aria-hidden="true">
+          <picture>
+            <source
+              type="image/avif"
+              srcset="/assets/landing/operations-monolith-960.avif 960w, /assets/landing/operations-monolith-1820.avif 1820w"
+              sizes="100vw"
+            />
+            <source
+              type="image/webp"
+              srcset="/assets/landing/operations-monolith-960.webp 960w, /assets/landing/operations-monolith-1820.webp 1820w"
+              sizes="100vw"
+            />
+            <img
+              src="/assets/landing/operations-monolith-1820.png"
+              srcset="/assets/landing/operations-monolith-960.png 960w, /assets/landing/operations-monolith-1820.png 1820w"
+              sizes="100vw"
+              width="1820"
+              height="864"
+              alt=""
+              decoding="async"
+              fetchpriority="high"
+            />
+          </picture>
+        </figure>
+
+        <div class="container hero-content">
+          <div class="hero-copy">
+            <p class="eyebrow">Codex-native agent operations</p>
+            <h1 id="hero-heading">Control the work, not the agents.</h1>
+            <p class="lead">
+              Orchestra coordinates coding agents, review gates, and repository evidence in one
+              operational workspace.
+            </p>
+            <div class="button-row hero-actions">
+              <a class="button button-primary" href="#access">Request access</a>
+              <a class="button" href="#workspace" data-product-link>View the product workspace</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section operating-model" id="model" aria-labelledby="model-heading">
+        <div class="container">
+          <div class="section-intro">
+            <p class="section-label">Operating model</p>
+            <h2 id="model-heading">Parallel execution. One accountable record.</h2>
+            <p class="lead">
+              Run tasks in parallel without losing review gates, repository context, or the evidence
+              required to approve a change.
+            </p>
+          </div>
+
+          <div class="operating-map">
+            <article class="principle-primary">
+              <p class="principle-number">01</p>
+              <div>
+                <h3>Delegate bounded work in parallel.</h3>
+                <p>Native Codex subagents stay tied to their task, repository, and worktree.</p>
+              </div>
+            </article>
+            <div class="principle-stack">
+              <article class="principle-row">
+                <p class="principle-number">02</p>
+                <div><h3>Hold the gates.</h3><p>Approvals, requested changes, and blockers remain explicit before work moves.</p></div>
+              </article>
+              <article class="principle-row">
+                <p class="principle-number">03</p>
+                <div><h3>Keep the record.</h3><p>Tool calls, diffs, issue state, and handoffs stay connected for review.</p></div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section workspace-section" id="workspace" aria-labelledby="workspace-heading" tabindex="-1">
+        <div class="container workspace-grid">
+          <div class="workspace-copy">
+            <p class="section-label">Product workspace</p>
+            <h2 id="workspace-heading">Review agents without rebuilding context.</h2>
+            <p class="lead">
+              Native tasks, subagents, repository state, changes, and review controls remain visible
+              on one working surface.
+            </p>
+            <a class="text-link" href="#workspace" data-product-link>Open the product destination</a>
+          </div>
+
+          <figure class="workspace-shot">
+            <picture>
+              <source
+                type="image/avif"
+                srcset="/assets/landing/product-workspace-720.avif 720w, /assets/landing/product-workspace-1440.avif 1440w"
+                sizes="(max-width: 920px) calc(100vw - 2rem), 58vw"
+              />
+              <source
+                type="image/webp"
+                srcset="/assets/landing/product-workspace-720.webp 720w, /assets/landing/product-workspace-1440.webp 1440w"
+                sizes="(max-width: 920px) calc(100vw - 2rem), 58vw"
+              />
+              <img
+                src="/assets/landing/product-workspace-1440.png"
+                srcset="/assets/landing/product-workspace-720.png 720w, /assets/landing/product-workspace-1440.png 1440w"
+                sizes="(max-width: 920px) calc(100vw - 2rem), 58vw"
+                width="1440"
+                height="698"
+                loading="lazy"
+                decoding="async"
+                alt="Orchestra workspace showing a claimed coding task, native agent activity, proposed effects, and the task composer."
+              />
+            </picture>
+            <figcaption>One normal coding workspace for tasks, subagents, changes, gates, and evidence.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section evidence-section" id="evidence" aria-labelledby="evidence-heading">
+        <figure class="evidence-archive">
+          <picture>
+            <source
+              type="image/avif"
+              srcset="/assets/landing/evidence-archive-768.avif 768w, /assets/landing/evidence-archive-1536.avif 1536w"
+              sizes="(max-width: 920px) 100vw, 48vw"
+            />
+            <source
+              type="image/webp"
+              srcset="/assets/landing/evidence-archive-768.webp 768w, /assets/landing/evidence-archive-1536.webp 1536w"
+              sizes="(max-width: 920px) 100vw, 48vw"
+            />
+            <img
+              src="/assets/landing/evidence-archive-1536.png"
+              srcset="/assets/landing/evidence-archive-768.png 768w, /assets/landing/evidence-archive-1536.png 1536w"
+              sizes="(max-width: 920px) 100vw, 48vw"
+              width="1536"
+              height="1024"
+              loading="lazy"
+              decoding="async"
+              alt="Layered archival blocks representing linked task, diff, approval, and handoff evidence."
+            />
+          </picture>
+        </figure>
+
+        <div class="container evidence-grid">
+          <div>
+            <p class="section-label">Evidence trail</p>
+            <h2 id="evidence-heading">Every claim points back to work.</h2>
+            <p class="lead">
+              Orchestra keeps execution state close to artifacts a reviewer can inspect while raw
+              child histories stay in their native tasks.
+            </p>
+          </div>
+          <div class="ledger" aria-label="Evidence lifecycle">
+            <div class="ledger-row"><div><strong>Issue claimed</strong><p>Scope and owner are recorded before execution begins.</p></div><span>linked</span></div>
+            <div class="ledger-row"><div><strong>Subagent dispatched</strong><p>The task stays bounded to its repository context.</p></div><span>traced</span></div>
+            <div class="ledger-row"><div><strong>Diff proposed</strong><p>Changed files and intent remain visible to the reviewer.</p></div><span>inspectable</span></div>
+            <div class="ledger-row"><div><strong>Approval requested</strong><p>The decision gate retains every requested change.</p></div><span>gated</span></div>
+            <div class="ledger-row"><div><strong>Handoff recorded</strong><p>Status, evidence, and open decisions move together.</p></div><span>handoff-ready</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section workflow-section" id="workflow" aria-labelledby="workflow-heading">
+        <figure class="workflow-panorama">
+          <picture>
+            <source
+              type="image/avif"
+              srcset="/assets/landing/workflow-panorama-960.avif 960w, /assets/landing/workflow-panorama-1920.avif 1920w"
+              sizes="100vw"
+            />
+            <source
+              type="image/webp"
+              srcset="/assets/landing/workflow-panorama-960.webp 960w, /assets/landing/workflow-panorama-1920.webp 1920w"
+              sizes="100vw"
+            />
+            <img
+              src="/assets/landing/workflow-panorama-1920.png"
+              srcset="/assets/landing/workflow-panorama-960.png 960w, /assets/landing/workflow-panorama-1920.png 1920w"
+              sizes="100vw"
+              width="1920"
+              height="818"
+              loading="lazy"
+              decoding="async"
+              alt="A panoramic sequence of native task execution, evidence review, decision gate, and recorded handoff."
+            />
+          </picture>
+        </figure>
+
+        <div class="container">
+          <p class="section-label">Accountable workflow</p>
+          <h2 id="workflow-heading">Move work through explicit gates.</h2>
+          <p class="lead">Progress stays visible. Decisions stay human.</p>
+          <ol class="workflow-path">
+            <li class="workflow-step"><span>01</span><h3>Frame the task</h3><p>Define the outcome, repository, and constraints that bound native work.</p></li>
+            <li class="workflow-step"><span>02</span><h3>Isolate execution</h3><p>Delegate in parallel without losing ownership or contaminating adjacent changes.</p></li>
+            <li class="workflow-step"><span>03</span><h3>Review the evidence</h3><p>Inspect the diff, activity chain, and unresolved decisions on demand.</p></li>
+            <li class="workflow-step"><span>04</span><h3>Record the handoff</h3><p>Carry forward what changed, what was verified, and what remains open.</p></li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="section access" id="access" aria-labelledby="access-heading">
+        <div class="container access-content">
+          <p class="section-label">Early access</p>
+          <h2 id="access-heading">Run agent work with review built in.</h2>
+          <p class="lead">
+            Join the access list for the native coding workspace where delegated work, review gates,
+            and repository evidence stay connected.
+          </p>
+          <form class="access-form" id="access-form" novalidate aria-describedby="access-status">
+            <label class="field-label" for="access-email">Work email</label>
+            <div class="field-row">
+              <input
+                class="field-input"
+                id="access-email"
+                name="email"
+                type="email"
+                autocomplete="email"
+                inputmode="email"
+                placeholder="you@company.com"
+                required
+                disabled
+                aria-invalid="false"
+              />
+              <button class="button button-primary" type="submit" disabled>Request access</button>
+            </div>
+            <p class="form-note" id="access-status" role="status" aria-live="polite" tabindex="-1">
+              Access requests are unavailable until a submission endpoint is configured.
+            </p>
+          </form>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="container footer-row">
+        <div>
+          <a class="footer-brand" href="#top">Orchestra</a>
+          <p>Accountable agent operations, from delegated work to reviewed handoff.</p>
+        </div>
+        <nav class="footer-nav" aria-label="Footer navigation">
+          <a href="#workspace">Product</a>
+          <a href="#access">Request access</a>
+          <a href="#top">Back to top</a>
+        </nav>
+      </div>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

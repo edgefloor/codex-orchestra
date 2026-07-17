@@ -20,17 +20,10 @@ For the accepted desktop target, also verify exact-bundle initialization without
 per-task snapshot and cursor subscription, lazy child-task subscription on expansion, typed
 `ThreadItem::Orchestra` hydration, World State replacement of the Run Digest, deterministic digest
 truncation with stable omission references, and identical bounded query selection through native
-task-tool and App Server adapters. Keep these checks pending until the desktop host exists and each
-behavior is directly observed.
-
-The disposable issue #20 harness now automates the protocol/reducer subset above with deterministic
-fixtures. `scripts/desktop-host-prototype.sh` directly observed exact negotiation, `thread/read`
-hydration plus a composed snapshot, replay-to-live delivery, stable lifecycle revisions, lazy child
-stream attachment, World State replacement, query parity and denial, reload, restart with an expired
-cursor, slow-consumer reset, bundle mismatch, redaction, and separate inherited confirmation-pipe
-plumbing. This does not change the production Electron/React, Codex `StateRuntime`, native
-macOS confirmation and renderer-isolation proof, and provider-backed rows from `pending`; see the
-dated issue #20 record.
+task-tool and App Server adapters. Native automated coverage lives in the pinned Codex and retained
+T3Code suites; real provider and UI observations are recorded in the issue #27, #28, and #51 dated
+verification records. A privileged confirmation channel is not part of this checklist until a
+concrete Orchestra-native confirmation UX exists.
 
 ## Stage 4 — recovery and self-hosting
 

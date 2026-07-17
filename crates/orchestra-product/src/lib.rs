@@ -5,6 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+pub mod release;
+
 pub const MANIFEST_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Error)]
@@ -48,8 +50,10 @@ pub struct SchemaPins {
 #[serde(deny_unknown_fields, rename_all(serialize = "camelCase"))]
 pub struct EvaluatorPins {
     pub revision: String,
+    #[serde(alias = "adapterAbi")]
     pub adapter_abi: String,
     pub canonicalizer: String,
+    #[serde(alias = "issueFormat")]
     pub issue_format: String,
 }
 
@@ -59,7 +63,7 @@ pub struct ArtifactInput {
     pub path: PathBuf,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArtifactIdentity {
     pub bytes: u64,
@@ -81,14 +85,14 @@ struct UnsignedReleaseManifest {
     artifacts: BTreeMap<String, ArtifactIdentity>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SchemaIdentity {
     pub identity: String,
     pub sha256: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReleaseManifest {
     pub schema_version: u32,
@@ -199,6 +203,53 @@ pub fn write_manifest(path: &Path, manifest: &ReleaseManifest) -> Result<(), Pro
     bytes.push(b'\n');
     fs::write(&temporary, bytes)?;
     fs::rename(temporary, path)?;
+    Ok(())
+}
+
+pub fn verify_manifest_identity(manifest: &ReleaseManifest) -> Result<(), ProductError> {
+    let unsigned = UnsignedReleaseManifest {
+        schema_version: manifest.schema_version,
+        product_version: manifest.product_version.clone(),
+        minimum_macos: manifest.minimum_macos.clone(),
+        target: manifest.target.clone(),
+        sources: manifest.sources.clone(),
+        schemas: manifest.schemas.clone(),
+        evaluator: manifest.evaluator.clone(),
+        capabilities: manifest.capabilities.clone(),
+        limits: manifest.limits.clone(),
+        artifacts: manifest.artifacts.clone(),
+    };
+    let actual = sha256(&serde_json::to_vec(&unsigned)?);
+    if actual != manifest.manifest_sha256 {
+        return Err(ProductError::Message(format!(
+            "release manifest identity mismatch: expected {}, calculated {actual}",
+            manifest.manifest_sha256
+        )));
+    }
+    Ok(())
+}
+
+pub fn verify_manifest_artifact(
+    manifest: &ReleaseManifest,
+    name: &str,
+    path: &Path,
+) -> Result<(), ProductError> {
+    verify_manifest_identity(manifest)?;
+    let expected = manifest.artifacts.get(name).ok_or_else(|| {
+        ProductError::Message(format!("release manifest has no artifact `{name}`"))
+    })?;
+    let bytes = fs::read(path).map_err(|error| {
+        ProductError::Message(format!(
+            "failed to read artifact `{name}` at {}: {error}",
+            path.display()
+        ))
+    })?;
+    let actual_sha256 = sha256(&bytes);
+    if bytes.len() as u64 != expected.bytes || actual_sha256 != expected.sha256 {
+        return Err(ProductError::Message(format!(
+            "artifact `{name}` does not match the sealed release manifest"
+        )));
+    }
     Ok(())
 }
 
@@ -321,5 +372,43 @@ mod tests {
         fs::write(artifact, b"second").unwrap();
         let second = build_manifest(pins(), "arm64-apple-darwin", &inputs).unwrap();
         assert_ne!(first.manifest_sha256, second.manifest_sha256);
+    }
+
+    #[test]
+    fn manifest_identity_rejects_tampering() {
+        let temp = tempdir().unwrap();
+        let artifact = temp.path().join("host");
+        fs::write(&artifact, b"host bytes").unwrap();
+        let mut manifest = build_manifest(
+            pins(),
+            "arm64-apple-darwin",
+            &[ArtifactInput {
+                name: "host".into(),
+                path: artifact,
+            }],
+        )
+        .unwrap();
+        verify_manifest_identity(&manifest).unwrap();
+        manifest.product_version = "tampered".into();
+        assert!(verify_manifest_identity(&manifest).is_err());
+    }
+
+    #[test]
+    fn manifest_artifact_verification_rejects_substitution() {
+        let temp = tempdir().unwrap();
+        let artifact = temp.path().join("host");
+        fs::write(&artifact, b"host bytes").unwrap();
+        let manifest = build_manifest(
+            pins(),
+            "arm64-apple-darwin",
+            &[ArtifactInput {
+                name: "host".into(),
+                path: artifact.clone(),
+            }],
+        )
+        .unwrap();
+        verify_manifest_artifact(&manifest, "host", &artifact).unwrap();
+        fs::write(&artifact, b"substituted").unwrap();
+        assert!(verify_manifest_artifact(&manifest, "host", &artifact).is_err());
     }
 }

@@ -4,6 +4,10 @@
 > direct byte bridge, but the replacement workflow dashboard built from it failed product review.
 > The MVP retains the normal T3Code application and its existing Codex provider adapter. Nothing in
 > this record is production evidence for the current desktop path unless repeated there.
+>
+> Retirement note (2026-07-17): issue #30 removed the disposable source and commands after native
+> Codex and retained T3Code tests superseded the applicable assertions. This dated record is preserved
+> as unsupported legacy evidence and is not a current reproduction guide.
 
 This record covers the deterministic architecture gate for
 [issue #20](https://github.com/edgefloor/codex-orchestra/issues/20). It tests the retained

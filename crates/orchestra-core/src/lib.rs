@@ -67,11 +67,12 @@ pub use linear::{
 };
 pub use plan::*;
 pub use query::{
-    AgentReference, BoundedText, EvidenceKind, EvidencePage, EvidenceReference,
-    ExecutionHistoryRecord, ExecutionHistorySource, ExecutionQueryBudget, ExecutionQueryError,
-    ExecutionQueryLimits, ExecutionQueryResult, ExecutionQueryService, ExecutionSelector,
-    HistoryCursor, HistoryPage, HistoryReadRequest, NoExecutionHistory, OutputProjection,
-    OutputsPage, RunDigest, RunProjection, StepCounts, StepProjection, StepsPage,
+    AgentReference, BoundedText, EvidenceAvailability, EvidenceContentProjection, EvidenceKind,
+    EvidencePage, EvidenceProvenance, EvidenceReference, ExecutionHistoryRecord,
+    ExecutionHistorySource, ExecutionQueryBudget, ExecutionQueryError, ExecutionQueryLimits,
+    ExecutionQueryResult, ExecutionQueryService, ExecutionSelector, HistoryCursor, HistoryPage,
+    HistoryReadRequest, NoExecutionHistory, OutputProjection, OutputsPage, RunDigest,
+    RunProjection, StepCounts, StepProjection, StepsPage,
 };
 pub use runtime::{OrchestraRuntime, RunError, RunOutcome, repository_revision};
 pub use skills::{SkillArtifact, SkillError, SkillManifest, SkillManifestEntry};

@@ -1,0 +1,19 @@
+{
+  "record_sha256": "<release-record-sha256>",
+  "immutable_artifacts_published": true,
+  "immutable_evidence_published": true,
+  "published_assets": {
+    "aarch64-apple-darwin/release-manifest.json": "<sha256>",
+    "aarch64-apple-darwin/artifacts/Orchestra-0.2.0-arm64.zip": "<sha256>",
+    "x86_64-apple-darwin/release-manifest.json": "<sha256>",
+    "x86_64-apple-darwin/artifacts/Orchestra-0.2.0-x64.zip": "<sha256>",
+    "evidence/orchestra.spdx.json": "<sha256>",
+    "source/corresponding-source.tar.gz": "<sha256>",
+    "<all other sealed material and gate paths>": "<sha256>"
+  },
+  "metadata_signed": true,
+  "appcast": "publication/latest-mac.yml",
+  "appcast_sha256": "<sha256>",
+  "signature": "publication/latest-mac.yml.sig",
+  "signature_sha256": "<sha256>"
+}

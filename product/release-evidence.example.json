@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "product_version": "0.2.0",
+  "updater_version": "6.8.3",
+  "targets": [
+    {
+      "target": "aarch64-apple-darwin",
+      "manifest": "aarch64-apple-darwin/release-manifest.json",
+      "manifest_sha256": "<sha256>",
+      "archive": "aarch64-apple-darwin/artifacts/Orchestra-0.2.0-arm64.zip",
+      "archive_sha256": "<sha256>",
+      "codesign_verified": true,
+      "hardened_runtime": true,
+      "renderer_sandboxed": true,
+      "notarized": true,
+      "stapled": true,
+      "machine_verified": true
+    },
+    {
+      "target": "x86_64-apple-darwin",
+      "manifest": "x86_64-apple-darwin/release-manifest.json",
+      "manifest_sha256": "<sha256>",
+      "archive": "x86_64-apple-darwin/artifacts/Orchestra-0.2.0-x64.zip",
+      "archive_sha256": "<sha256>",
+      "codesign_verified": true,
+      "hardened_runtime": true,
+      "renderer_sandboxed": true,
+      "notarized": true,
+      "stapled": true,
+      "machine_verified": true
+    }
+  ],
+  "gates": {
+    "repository": { "status": "passed", "evidence": "evidence/repository.json", "sha256": "<sha256>" },
+    "protocol": { "status": "passed", "evidence": "evidence/protocol.json", "sha256": "<sha256>" },
+    "evaluator": { "status": "passed", "evidence": "evidence/evaluator.json", "sha256": "<sha256>" },
+    "state": { "status": "passed", "evidence": "evidence/state.json", "sha256": "<sha256>" },
+    "codex-home": { "status": "passed", "evidence": "evidence/codex-home.json", "sha256": "<sha256>" },
+    "distribution": { "status": "passed", "evidence": "evidence/distribution.json", "sha256": "<sha256>" },
+    "machine": { "status": "passed", "evidence": "evidence/machine.json", "sha256": "<sha256>" },
+    "licensing": { "status": "passed", "evidence": "evidence/licensing.json", "sha256": "<sha256>" },
+    "human-evidence": { "status": "passed", "evidence": "evidence/human.json", "sha256": "<sha256>" }
+  },
+  "state": {
+    "canonical_rollouts_preserved": true,
+    "repository_checkpoints_preserved": true,
+    "side_by_side_projection_generations": true,
+    "maintenance_lease_verified": true,
+    "rollback_barriers_verified": true
+  },
+  "plugin": {
+    "baseline_active": false,
+    "installs_native_execution": false
+  }
+}
+

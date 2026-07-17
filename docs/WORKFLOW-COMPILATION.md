@@ -1,8 +1,8 @@
 # Workflow compilation and validation contract
 
-This document is the accepted issue #11 MVP contract handed to the issue #16 evaluator prototype. The
-prototype may ratify or reduce its candidate limits; if it falsifies determinism or bounded failure
-behavior, issue #11 and ADR-0016 must be amended before implementation decomposition.
+This document is the accepted issue #11 contract implemented by the Product compiler and evaluator.
+Issue #16 ratified the deterministic one-request worker boundary; issue #26 moved its assertions into
+the maintained Rust adapter, Product worker, and pinned-worker integration suite.
 
 ## Ownership and process boundary
 
@@ -100,8 +100,8 @@ evaluator infrastructure failure. Partial responses are never accepted.
 
 ## Candidate MVP limits
 
-All values are hard upper bounds recorded in the Product release manifest. Issue #16 must measure and
-ratify or reduce them; it may not broaden them without amending this contract.
+All values are hard upper bounds recorded in the Product release manifest. They may be reduced without
+breaking compatibility; broadening them requires amending this contract and the exact Product tuple.
 
 | Resource | Rust compilation | Validation worker |
 | --- | ---: | ---: |

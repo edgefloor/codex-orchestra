@@ -12,14 +12,15 @@
 | Lifecycle doctor | | pending | |
 | Plugin validator | | pending | |
 | Pinned Codex apply/build | | pending | |
-| Disposable desktop-host gate | `scripts/desktop-host-prototype.sh` | pending | |
+| Retained T3Code apply/build/test | | pending | |
+| Product release preflight | | pending | |
 
 ## Human UI evidence
 
 | Observation | Result | Notes |
 |---|---|---|
 | Fresh-task skill discovery | pending | |
-| Five native Orchestra tools visible | pending | |
+| Six native Orchestra tools visible | pending | |
 | Root Run invoked inside and owned by the parent task; no detached start path | pending | |
 | Canonical V2 task paths/activity | pending | |
 | Explicit model/reasoning visible | pending | |
@@ -34,7 +35,6 @@
 | Typed Orchestra thread items hydrate from rollout revisions | pending | |
 | Run Digest refresh replaces extension-owned World State and truncates deterministically | pending | |
 | Native task and App Server query adapters return the same authorized bounded selection | pending | |
-| Private confirmation reaches Electron main without entering the renderer data port | pending | |
 | Installed cache remains byte-identical | pending | |
 
 ## Verdict

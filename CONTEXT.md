@@ -52,7 +52,19 @@
 
 **Workflow steer**: A native Codex steering instruction addressed to an agent owned by an Orchestra Attempt. Orchestra records its target, initiator, authority, sequence, content digest, and delivery outcome before and after forwarding it through Codex's existing steer operation.
 
-**Stage**: Dependency-ready steps executed concurrently up to `max_parallel`.
+**Stage**: A conflict-free batch of dependency-ready Steps executed against one Stage snapshot, up to `max_parallel`. Write leases may defer an otherwise-ready writer to a later Stage.
+
+**Stage snapshot**: The immutable, content-addressed repository view captured from a Run worktree for one Stage. Every Attempt in that Stage observes the same repository bytes.
+
+**Run worktree**: The single runtime-owned mutable repository view for a Run. It accumulates validated ChangeSets and is the repository state against which aggregate checks run before Promotion.
+
+**Attempt overlay**: A private copy-on-write repository view for one writer Attempt, derived from its Stage snapshot and writable only within its reserved Write scope. It cannot mutate the Run worktree directly.
+
+**Write scope**: The declared repository paths a writer Step is authorized to change. It is enforced by the runtime's workspace isolation rather than treated as prompt guidance.
+
+**Write lease**: A runtime reservation of a Write scope or named exclusive mutation class for one Attempt. Conflicting leases cannot be held concurrently.
+
+**ChangeSet**: An immutable candidate transaction produced by a writer Attempt, binding its Stage snapshot and observed read hashes to its changed paths, file metadata, binary-safe patch, and canonical digest. It remains evidence until the runtime validates and applies it.
 
 **Context bundle**: Exact bytes materialized from declared files, line ranges, revisions, diffs, and dependency outputs, with a SHA-256 digest.
 
@@ -132,6 +144,6 @@
 - Targeted model and renderer expansion shares one Orchestra-owned Execution query service. Native Codex tool and App Server adapters apply their own budgets and output shapes without changing selection, authorization, identity, or pagination semantics.
 - The MVP exposes fixed typed expansion selectors and adds another only for a concrete product need. It has no general graph-query language.
 - Resumed runs use their recorded inputs, skill snapshots, human responses, and external-effect receipts rather than re-resolving mutable ambient state.
-- Verified isolated changes reach the target checkout only after successful checks and acceptance; rejection or a promotion conflict never overwrites target files.
+- Writer Attempts produce ChangeSets rather than mutating the Run worktree; only the runtime applies validated ChangeSets, and only the verified aggregate reaches the target checkout after successful checks and acceptance. Rejection or a Promotion conflict never overwrites target files.
 - Codex and the T3Code-derived desktop are intentional Product forks. Their upstream revisions are explicit and pinned, native primitives are reused first, and divergence stays concentrated in reviewed seams.
 - Native Product components update and roll back as one exact release. Plugin/configuration lifecycle remains independent, and neither path rewrites canonical Codex history or repository Run checkpoints.

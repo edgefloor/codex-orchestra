@@ -16,6 +16,7 @@ pub struct ExecutionQueryLimits {
     pub max_checkpoint_bytes: u64,
     pub max_inline_value_bytes: usize,
     pub max_evidence_hash_bytes: u64,
+    pub max_evidence_content_bytes: u64,
     pub max_text_bytes: usize,
     pub max_identity_bytes: usize,
     pub max_digest_bytes: usize,
@@ -29,6 +30,7 @@ impl Default for ExecutionQueryLimits {
             max_checkpoint_bytes: 16 * 1024 * 1024,
             max_inline_value_bytes: 16 * 1024,
             max_evidence_hash_bytes: 32 * 1024 * 1024,
+            max_evidence_content_bytes: 32 * 1024,
             max_text_bytes: 2 * 1024,
             max_identity_bytes: 512,
             max_digest_bytes: 8 * 1024,
@@ -65,6 +67,9 @@ pub enum ExecutionSelector {
     Evidence {
         step_id: Option<String>,
         after: Option<String>,
+    },
+    EvidenceContent {
+        evidence_id: String,
     },
     History {
         after: Option<HistoryCursor>,
@@ -206,6 +211,15 @@ impl ExecutionQueryService {
                     run_id,
                     step_id.as_deref(),
                     after.as_deref(),
+                    budget,
+                )?)
+            }
+            ExecutionSelector::EvidenceContent { evidence_id } => {
+                ExecutionQueryResult::EvidenceContent(self.evidence_content(
+                    repository,
+                    &checkpoint,
+                    run_id,
+                    &evidence_id,
                     budget,
                 )?)
             }
@@ -500,11 +514,19 @@ impl ExecutionQueryService {
                 None
             };
             all.push(EvidenceReference {
+                evidence_id: evidence_id(&relative),
+                name: evidence_name(&relative, self.limits.max_identity_bytes)?,
                 path: relative,
                 kind: evidence_kind(&path),
+                provenance: evidence_provenance(&path),
                 step_id,
                 bytes: metadata.len(),
                 sha256: digest,
+                availability: if metadata.len() <= self.limits.max_evidence_content_bytes {
+                    EvidenceAvailability::Available
+                } else {
+                    EvidenceAvailability::ContentTooLarge
+                },
             });
         }
         let requested_more = all.len() > budget.max_items;
@@ -517,6 +539,87 @@ impl ExecutionQueryService {
             |items, next| ExecutionQueryResult::Evidence(EvidencePage { items, next }),
         )?;
         Ok(EvidencePage { items, next })
+    }
+
+    fn evidence_content(
+        &self,
+        repository: &Path,
+        _checkpoint: &RunCheckpoint,
+        run_id: &str,
+        requested_evidence_id: &str,
+        budget: ExecutionQueryBudget,
+    ) -> Result<EvidenceContentProjection, ExecutionQueryError> {
+        validate_identity(requested_evidence_id, self.limits.max_identity_bytes)?;
+        let root = repository
+            .join(".codex/orchestra/runs")
+            .join(run_id)
+            .join("evidence");
+        let mut files = Vec::new();
+        collect_evidence(&root, &root, &mut files)?;
+        let (relative, path) = files
+            .into_iter()
+            .find(|(relative, _)| evidence_id(relative) == requested_evidence_id)
+            .ok_or(ExecutionQueryError::NotFound)?;
+        let metadata = fs::metadata(&path).map_err(storage_error)?;
+        let kind = evidence_kind(&path);
+        let provenance = evidence_provenance(&path);
+        let name = evidence_name(&relative, self.limits.max_identity_bytes)?;
+        let digest = if metadata.len() <= self.limits.max_evidence_hash_bytes {
+            Some(sha256(&fs::read(&path).map_err(storage_error)?))
+        } else {
+            None
+        };
+        if metadata.len() > self.limits.max_evidence_content_bytes {
+            return Ok(EvidenceContentProjection {
+                evidence_id: requested_evidence_id.into(),
+                name,
+                kind,
+                provenance,
+                availability: EvidenceAvailability::ContentTooLarge,
+                bytes: metadata.len(),
+                sha256: digest,
+                media_type: evidence_media_type(&path).into(),
+                content: None,
+            });
+        }
+        let bytes = fs::read(&path).map_err(storage_error)?;
+        let content = match String::from_utf8(bytes) {
+            Ok(content) => content,
+            Err(_) => {
+                return Ok(EvidenceContentProjection {
+                    evidence_id: requested_evidence_id.into(),
+                    name,
+                    kind,
+                    provenance,
+                    availability: EvidenceAvailability::Malformed,
+                    bytes: metadata.len(),
+                    sha256: digest,
+                    media_type: evidence_media_type(&path).into(),
+                    content: None,
+                });
+            }
+        };
+        let projection = EvidenceContentProjection {
+            evidence_id: requested_evidence_id.into(),
+            name,
+            kind,
+            provenance,
+            availability: EvidenceAvailability::Available,
+            bytes: metadata.len(),
+            sha256: digest,
+            media_type: evidence_media_type(&path).into(),
+            content: Some(content),
+        };
+        if serialized_len(&ExecutionQueryResult::EvidenceContent(projection.clone()))?
+            > budget.max_bytes
+        {
+            return Ok(EvidenceContentProjection {
+                content: None,
+                availability: EvidenceAvailability::ContentTooLarge,
+                ..projection
+            });
+        }
+        Ok(projection)
     }
 
     async fn history_page(
@@ -570,6 +673,7 @@ pub enum ExecutionQueryResult {
     Steps(StepsPage),
     Outputs(OutputsPage),
     Evidence(EvidencePage),
+    EvidenceContent(EvidenceContentProjection),
     History(HistoryPage),
 }
 
@@ -685,13 +789,17 @@ pub struct OutputsPage {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EvidenceReference {
+    pub evidence_id: String,
+    pub name: String,
     pub path: String,
     pub kind: EvidenceKind,
+    pub provenance: EvidenceProvenance,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub step_id: Option<String>,
     pub bytes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
+    pub availability: EvidenceAvailability,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -701,6 +809,39 @@ pub enum EvidenceKind {
     Change,
     Skill,
     Other,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceProvenance {
+    RuntimeCheck,
+    RuntimeChange,
+    SkillSnapshot,
+    RuntimeOther,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceAvailability {
+    Available,
+    ContentTooLarge,
+    Malformed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvidenceContentProjection {
+    pub evidence_id: String,
+    pub name: String,
+    pub kind: EvidenceKind,
+    pub provenance: EvidenceProvenance,
+    pub availability: EvidenceAvailability,
+    pub bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    pub media_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -846,6 +987,38 @@ fn evidence_kind(path: &Path) -> EvidenceKind {
     }
 }
 
+fn evidence_provenance(path: &Path) -> EvidenceProvenance {
+    match evidence_kind(path) {
+        EvidenceKind::Check => EvidenceProvenance::RuntimeCheck,
+        EvidenceKind::Change => EvidenceProvenance::RuntimeChange,
+        EvidenceKind::Skill => EvidenceProvenance::SkillSnapshot,
+        EvidenceKind::Other => EvidenceProvenance::RuntimeOther,
+    }
+}
+
+fn evidence_id(relative: &str) -> String {
+    sha256(relative.as_bytes())
+}
+
+fn evidence_name(relative: &str, max_bytes: usize) -> Result<String, ExecutionQueryError> {
+    let name = Path::new(relative)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(ExecutionQueryError::InvalidIdentity)?;
+    validate_identity(name, max_bytes)?;
+    Ok(name.into())
+}
+
+fn evidence_media_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("json") => "application/json",
+        Some("patch" | "diff") => "text/x-diff",
+        Some("md") => "text/markdown",
+        Some("log" | "txt") => "text/plain",
+        _ => "text/plain",
+    }
+}
+
 fn evidence_step_id(path: &str) -> Option<String> {
     let (directory, file) = path.split_once('/')?;
     if !matches!(directory, "checks" | "changes") || file == "promoted.patch" {
@@ -967,6 +1140,7 @@ mod tests {
         let root = repository.join(".codex/orchestra/runs/run-1");
         fs::create_dir_all(root.join("evidence/checks")).unwrap();
         fs::create_dir_all(root.join("evidence/changes")).unwrap();
+        fs::create_dir_all(root.join("evidence/other")).unwrap();
         fs::write(
             root.join("state.json"),
             serde_json::to_vec(checkpoint).unwrap(),
@@ -974,6 +1148,7 @@ mod tests {
         .unwrap();
         fs::write(root.join("evidence/checks/failed-2.json"), b"check").unwrap();
         fs::write(root.join("evidence/changes/done-1.patch"), b"patch").unwrap();
+        fs::write(root.join("evidence/other/malformed.bin"), [0xff, 0xfe]).unwrap();
     }
 
     #[tokio::test]
@@ -991,6 +1166,9 @@ mod tests {
             ExecutionSelector::Evidence {
                 step_id: None,
                 after: None,
+            },
+            ExecutionSelector::EvidenceContent {
+                evidence_id: evidence_id("checks/failed-2.json"),
             },
             ExecutionSelector::History { after: None },
         ] {
@@ -1079,10 +1257,77 @@ mod tests {
             panic!("expected evidence");
         };
         assert_eq!(evidence.items[0].path, "checks/failed-2.json");
+        assert_eq!(evidence.items[0].name, "failed-2.json");
+        assert_eq!(
+            evidence.items[0].provenance,
+            EvidenceProvenance::RuntimeCheck
+        );
+        assert_eq!(
+            evidence.items[0].availability,
+            EvidenceAvailability::Available
+        );
         assert_eq!(
             evidence.items[0].sha256.as_deref(),
             Some(sha256(b"check").as_str())
         );
+    }
+
+    #[tokio::test]
+    async fn evidence_content_is_opaque_authorized_bounded_and_explicit() {
+        let repository = tempdir().unwrap();
+        write_run(repository.path(), &checkpoint(repository.path()));
+        let service = ExecutionQueryService::default();
+        let result = service
+            .query(
+                repository.path(),
+                "task-1",
+                "run-1",
+                ExecutionSelector::EvidenceContent {
+                    evidence_id: evidence_id("checks/failed-2.json"),
+                },
+                ExecutionQueryBudget::default(),
+            )
+            .await
+            .unwrap();
+        let ExecutionQueryResult::EvidenceContent(content) = result else {
+            panic!("expected evidence content");
+        };
+        assert_eq!(content.name, "failed-2.json");
+        assert_eq!(content.content.as_deref(), Some("check"));
+        assert_eq!(content.media_type, "application/json");
+        assert_eq!(content.sha256.as_deref(), Some(sha256(b"check").as_str()));
+        assert!(!serde_json::to_string(&content).unwrap().contains("checks/"));
+
+        let malformed = service
+            .query(
+                repository.path(),
+                "task-1",
+                "run-1",
+                ExecutionSelector::EvidenceContent {
+                    evidence_id: evidence_id("other/malformed.bin"),
+                },
+                ExecutionQueryBudget::default(),
+            )
+            .await
+            .unwrap();
+        let ExecutionQueryResult::EvidenceContent(malformed) = malformed else {
+            panic!("expected malformed evidence projection");
+        };
+        assert_eq!(malformed.availability, EvidenceAvailability::Malformed);
+        assert!(malformed.content.is_none());
+
+        let unknown = service
+            .query(
+                repository.path(),
+                "task-1",
+                "run-1",
+                ExecutionSelector::EvidenceContent {
+                    evidence_id: "0".repeat(64),
+                },
+                ExecutionQueryBudget::default(),
+            )
+            .await;
+        assert!(matches!(unknown, Err(ExecutionQueryError::NotFound)));
     }
 
     #[derive(Default)]

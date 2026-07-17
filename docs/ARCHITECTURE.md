@@ -69,10 +69,10 @@ the local server cannot manufacture a detached Run. Only task-scoped notificatio
 cursors; there is no global replay sequence. Slow consumers reconnect through snapshot plus
 task-local replay.
 
-The issue #20 direct MessagePort/framed-host design remains disposable prototype evidence, not the
-MVP product transport. A renderer-inaccessible control channel is still required before exposing an
-Orchestra-specific privileged native confirmation, but that channel will be added at the narrowest
-retained T3Code seam when the confirmation UX is implemented.
+The retired issue #20 direct MessagePort/framed-host design remains only as a dated historical
+evidence record, not product transport or runnable source. A renderer-inaccessible control channel is
+still required before exposing an Orchestra-specific privileged native confirmation, but that
+channel will be added at the narrowest retained T3Code seam when the confirmation UX is implemented.
 
 ## Compilation and validation
 
@@ -130,13 +130,14 @@ Rebuildable projections use versioned generations. Direct Developer ID distribut
 and x86_64 builds, full-app updates, rollback barriers, signing, notarization, notices, SBOM, and fork
 sync follow ADR-0017. Every dependency, including the updater, is pinned exactly in an actual release.
 
-## Transition from the experimental repository
+## Maintained fork source model
 
-Production work absorbs proven behavior into the two product forks in dependency order. The current
-minimal provider override and disposable harnesses remain evidence until equivalent native tests
-pass, then the disposable harnesses are deleted.
-The transition must not preserve fixture protocols, duplicate stores, Node authority, detached tools,
-or an alternate scheduler for compatibility.
+The disposable evaluator, host, MessagePort, Electron, and reducer harnesses were removed after their
+claims gained native Product parity. Their dated verification records remain historical evidence.
+`integration/codex/overlay/` and the pinned T3Code patch are maintained source overlays for the two
+exact upstream revisions; build scripts copy or apply them into clean source trees, but they are not
+runnable services, compatibility backends, stores, or control planes. The repository preserves no
+fixture protocol, duplicate store, Node workflow authority, detached tool, or alternate scheduler.
 
 ## Decision reconciliation
 

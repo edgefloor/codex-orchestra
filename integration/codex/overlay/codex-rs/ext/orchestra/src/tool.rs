@@ -3084,6 +3084,7 @@ enum QuerySelector {
     Steps,
     Outputs,
     Evidence,
+    EvidenceContent,
     History,
     Digest,
 }
@@ -3094,6 +3095,7 @@ struct QueryArgs {
     run_id: String,
     selector: QuerySelector,
     step_id: Option<String>,
+    evidence_id: Option<String>,
     after: Option<String>,
     history_after: Option<HistoryCursor>,
     max_items: Option<usize>,
@@ -3200,6 +3202,13 @@ impl OrchestraTool {
                         step_id: args.step_id,
                         after: args.after,
                     },
+                    QuerySelector::EvidenceContent => ExecutionSelector::EvidenceContent {
+                        evidence_id: args.evidence_id.ok_or_else(|| {
+                            FunctionCallError::RespondToModel(
+                                "evidence_id is required for evidence_content".into(),
+                            )
+                        })?,
+                    },
                     QuerySelector::History => ExecutionSelector::History {
                         after: args.history_after,
                     },
@@ -3265,15 +3274,29 @@ impl Kind {
                 (
                     "selector".into(),
                     JsonSchema::string_enum(
-                        ["run", "steps", "outputs", "evidence", "history", "digest"]
-                            .map(|value| Value::String(value.into()))
-                            .to_vec(),
+                        [
+                            "run",
+                            "steps",
+                            "outputs",
+                            "evidence",
+                            "evidence_content",
+                            "history",
+                            "digest",
+                        ]
+                        .map(|value| Value::String(value.into()))
+                        .to_vec(),
                         Some("Fixed bounded projection to read.".into()),
                     ),
                 ),
                 (
                     "step_id".into(),
                     JsonSchema::string(Some("Optional outputs/evidence step filter.".into())),
+                ),
+                (
+                    "evidence_id".into(),
+                    JsonSchema::string(Some(
+                        "Opaque identity required only for evidence_content.".into(),
+                    )),
                 ),
                 (
                     "after".into(),
@@ -3902,6 +3925,7 @@ mod tests {
                 json!("steps"),
                 json!("outputs"),
                 json!("evidence"),
+                json!("evidence_content"),
                 json!("history"),
                 json!("digest"),
             ]

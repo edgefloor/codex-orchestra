@@ -1,0 +1,47 @@
+schema_version = 1
+
+[updater]
+implementation = "electron-updater"
+version = "6.8.3"
+full_app_only = true
+metadata_digest = "sha512"
+
+[distribution]
+minimum_macos = "13.0"
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+retained_predecessors = 2
+automatic_rollback_attempts = 1
+
+[state]
+canonical_paths = ["$CODEX_HOME/sessions", "$CODEX_HOME/state_5.sqlite", ".codex/orchestra/runs"]
+projection_root = "$CODEX_HOME/orchestra/projections"
+
+[plugin]
+baseline_active = false
+installs_native_execution = false
+
+[materials]
+required = [
+  "evidence/ORCHESTRA-LICENSE.txt",
+  "evidence/CODEX-LICENSE.txt",
+  "evidence/T3CODE-LICENSE.txt",
+  "evidence/THIRD-PARTY-NOTICES.md",
+  "evidence/orchestra-cargo-metadata.json",
+  "evidence/codex-cargo-metadata.json",
+  "evidence/pnpm-licenses.json",
+  "evidence/orchestra.spdx.json",
+  "source/corresponding-source.tar.gz",
+]
+
+[gates]
+required = [
+  "repository",
+  "protocol",
+  "evaluator",
+  "state",
+  "codex-home",
+  "distribution",
+  "machine",
+  "licensing",
+  "human-evidence",
+]

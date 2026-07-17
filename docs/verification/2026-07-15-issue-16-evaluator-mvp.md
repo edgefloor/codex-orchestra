@@ -8,6 +8,10 @@ that stock Bun is a hostile-code security sandbox.
 
 ## Reproduce
 
+> Historical note (2026-07-17): issue #30 removed this disposable harness after the Product worker
+> suite superseded every assertion. The command below records the original run and is not present in
+> the maintained tree; use `scripts/evaluator-test.sh` for current verification.
+
 ```sh
 scripts/hermetic-evaluator-prototype.sh
 ```
@@ -30,5 +34,5 @@ for determinism and operational recovery, not isolated against malicious JavaScr
 hard memory enforcement, adversarial escape testing, notarized signing, both production architectures,
 and the final forked evaluator revision belong to production hardening and release verification.
 
-The prototype is disposable. Production must integrate the same request, provenance, canonicalization,
-and failure semantics into the pinned Product fork rather than shipping this harness as a second runtime.
+Issue #26 integrated the same request, provenance, canonicalization, and failure semantics into the
+pinned Product fork. Issue #30 removed the harness rather than shipping it as a second runtime.

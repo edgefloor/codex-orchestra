@@ -94,7 +94,10 @@ Replay cursors are supplied only when subscribing to an individual task stream. 
 it does not enumerate task cursors.
 
 > [!IMPORTANT]
-> Orchestra is an experimental development build, not a signed macOS release. The authoring skills can load on stock Codex, but the six native workflow and query tools require the exact Codex and T3Code revisions declared in [`product/pins.toml`](product/pins.toml).
+> Orchestra has a two-architecture signed-release pipeline, but no public release is claimed until
+> its Apple signing, notarization, machine, licensing, and human-evidence gates have actually
+> passed. The authoring skills can load on stock Codex, but native workflow and query tools require
+> the exact Codex and T3Code revisions declared in [`product/pins.toml`](product/pins.toml).
 
 The working MVP builds one Orchestra-enabled Codex CLI, the normal pinned T3Code
 Electron/React/server application, the generated Codex-plus-Orchestra protocol, and the evaluator as
@@ -315,6 +318,8 @@ Concurrent writers with overlapping path prefixes fail validation unless both us
 Isolated changes are captured as durable patches, integrated serially into the shared run worktree, and verified there before approval. Once the run completes with the first approval choice, Orchestra persists an aggregate `promoted.patch`, checks that it applies cleanly, and applies it to the target checkout without staging it. A conflict fails promotion without changing target files and retains the shared worktree so `orchestra_resume` can retry. Rejection cleans up without promotion.
 
 An unborn repository can use the shared checkout directly. Isolated worktrees require a committed source revision.
+
+This per-step Git-worktree mechanism is the current transitional implementation. The [transactional writers brief](docs/TRANSACTIONAL-WRITERS.md) summarizes the replacement defined by [ADR-0019](docs/adr/0019-transactional-writer-changesets.md): one runtime-owned Run worktree, immutable Stage snapshots, sandbox-enforced Attempt overlays, Write leases, and deterministic ChangeSet application. Until that interface is implemented, isolated worktrees remain the safe concurrent-writer mechanism; agents must not be allowed to write concurrently in one checkout.
 
 ### Attempts and repeats
 
@@ -686,32 +691,26 @@ The current Codex implementation is `CodexHost` in [`integration/codex/overlay/c
 
 Implementations must preserve parent-task lineage, return final agent responses, honor cancellation and command timeouts, provide absolute workspaces, and leave durable run state to `OrchestraRuntime`. See [`crates/orchestra-core/src/host.rs`](crates/orchestra-core/src/host.rs) for the trait and the fake host in the runtime tests for a minimal example.
 
-## Disposable desktop-host prototype
+## Retired experimental integrations
 
-The issue #20 architecture gate is runnable without provider calls:
-
-```bash
-scripts/desktop-host-prototype.sh
-```
-
-It builds an explicitly disposable Rust fixture, bridges its bounded length-prefixed JSON frames
-through a real `MessagePort`, and drives a T3Code-derived pure renderer adapter through task
-hydration, replay-to-live delivery, typed Orchestra lifecycle updates, lazy child attachment, World
-State replacement, query parity, reload/restart recovery, overload, bundle mismatch, and a private
-confirmation pipe. It does not replace the production Codex overlay or constitute a second runtime;
-its remaining gaps and deletion criteria are recorded in
-[`docs/verification/2026-07-15-issue-20-disposable-host-prototype.md`](docs/verification/2026-07-15-issue-20-disposable-host-prototype.md).
+The issue #16 evaluator harness and issue #20 direct-host, MessagePort, Electron, and reducer fixtures
+were removed after their durable assertions moved to the Product evaluator, native Codex protocol and
+state tests, and retained T3Code provider/UI tests. Their dated evidence remains readable in
+[`docs/verification/`](docs/verification/); it is historical evidence, not an alternate runtime or
+supported reproduction path.
 
 ## Current limitations
 
 - Stock Codex cannot dynamically load the Rust extension; the pinned integration patch is required.
-- The dogfood build is unsigned and arm64 development-only; signing, notarization, x86_64 artifacts,
-  updater publication, and automatic rollback remain distribution work in issue #29.
+- Development dogfood output remains unsigned unless Apple release credentials are supplied. The
+  lockstep arm64/x86_64 build, notarization verification, full-app updater, release/publication
+  gates, and rollback controller are documented in [`docs/RELEASING.md`](docs/RELEASING.md).
 - The retained desktop is intentionally a narrow coding-harness UI; richer evidence browsing and
   release UX are follow-up product work, not alternate runtime paths.
 - A provider-backed native subagent completion has been observed through the packaged T3Code app.
   Orchestra-specific lifecycle rendering and privileged native confirmation UX remain follow-up
-  integration work; the MVP does not claim that the disposable direct-host prototype supplies them.
+  integration work. No privileged decision API is exposed to the renderer before that concrete UX
+  exists.
 
 These constraints are tracked explicitly rather than hidden behind an alternate runtime.
 

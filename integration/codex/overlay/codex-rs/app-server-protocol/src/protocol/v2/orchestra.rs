@@ -842,6 +842,8 @@ pub struct OrchestraQueryParams {
     #[ts(optional)]
     pub step_id: Option<String>,
     #[ts(optional)]
+    pub evidence_id: Option<String>,
+    #[ts(optional)]
     pub after: Option<String>,
     #[ts(optional)]
     pub history_after: Option<OrchestraHistoryCursor>,
@@ -859,6 +861,7 @@ pub enum OrchestraQueryKind {
     Steps,
     Outputs,
     Evidence,
+    EvidenceContent,
     History,
     Digest,
 }
@@ -902,6 +905,7 @@ pub enum OrchestraQueryResult {
     Steps(OrchestraStepsPage),
     Outputs(OrchestraOutputsPage),
     Evidence(OrchestraEvidencePage),
+    EvidenceContent(OrchestraEvidenceContentProjection),
     History(OrchestraHistoryPage),
     Digest(OrchestraRunDigest),
 }
@@ -1012,13 +1016,52 @@ pub enum OrchestraEvidenceKind {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct OrchestraEvidenceReference {
-    pub path: String,
+    pub evidence_id: String,
+    pub name: String,
     pub kind: OrchestraEvidenceKind,
+    pub provenance: OrchestraEvidenceProvenance,
     #[ts(optional)]
     pub step_id: Option<String>,
     pub bytes: u64,
     #[ts(optional)]
     pub sha256: Option<String>,
+    pub availability: OrchestraEvidenceAvailability,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "v2/")]
+pub enum OrchestraEvidenceProvenance {
+    RuntimeCheck,
+    RuntimeChange,
+    SkillSnapshot,
+    RuntimeOther,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "v2/")]
+pub enum OrchestraEvidenceAvailability {
+    Available,
+    ContentTooLarge,
+    Malformed,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct OrchestraEvidenceContentProjection {
+    pub evidence_id: String,
+    pub name: String,
+    pub kind: OrchestraEvidenceKind,
+    pub provenance: OrchestraEvidenceProvenance,
+    pub availability: OrchestraEvidenceAvailability,
+    pub bytes: u64,
+    #[ts(optional)]
+    pub sha256: Option<String>,
+    pub media_type: String,
+    #[ts(optional)]
+    pub content: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]

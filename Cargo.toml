@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/orchestra-core",
-    "crates/orchestra-host-prototype",
     "crates/orchestra-lifecycle",
     "crates/orchestra-product",
 ]

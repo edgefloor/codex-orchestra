@@ -34,7 +34,9 @@ use codex_app_server_protocol::OrchestraWorkflowPlan;
 use codex_app_server_protocol::OrchestraWorkflowStep;
 use codex_orchestra_core as core;
 use codex_orchestra_core::Action;
+use codex_orchestra_core::EvidenceAvailability;
 use codex_orchestra_core::EvidenceKind;
+use codex_orchestra_core::EvidenceProvenance;
 use codex_orchestra_core::ExecutionPlan;
 use codex_orchestra_core::ExecutionQueryBudget;
 use codex_orchestra_core::ExecutionQueryResult;
@@ -356,6 +358,11 @@ impl OrchestraRequestProcessor {
             OrchestraQueryKind::Evidence => ExecutionSelector::Evidence {
                 step_id: params.step_id,
                 after: params.after,
+            },
+            OrchestraQueryKind::EvidenceContent => ExecutionSelector::EvidenceContent {
+                evidence_id: params.evidence_id.ok_or_else(|| {
+                    orchestra_error(core::ExecutionQueryError::InvalidIdentity.to_string())
+                })?,
             },
             OrchestraQueryKind::History => ExecutionSelector::History {
                 after: params.history_after.map(|cursor| HistoryCursor {
@@ -982,20 +989,43 @@ fn project_query_result(
                     .items
                     .into_iter()
                     .map(|evidence| protocol::OrchestraEvidenceReference {
-                        path: evidence.path,
+                        evidence_id: evidence.evidence_id,
+                        name: evidence.name,
                         kind: match evidence.kind {
                             EvidenceKind::Check => protocol::OrchestraEvidenceKind::Check,
                             EvidenceKind::Change => protocol::OrchestraEvidenceKind::Change,
                             EvidenceKind::Skill => protocol::OrchestraEvidenceKind::Skill,
                             EvidenceKind::Other => protocol::OrchestraEvidenceKind::Other,
                         },
+                        provenance: project_evidence_provenance(evidence.provenance),
                         step_id: evidence.step_id,
                         bytes: evidence.bytes,
                         sha256: evidence.sha256,
+                        availability: project_evidence_availability(evidence.availability),
                     })
                     .collect(),
                 next: page.next,
             })
+        }
+        ExecutionQueryResult::EvidenceContent(evidence) => {
+            protocol::OrchestraQueryResult::EvidenceContent(
+                protocol::OrchestraEvidenceContentProjection {
+                    evidence_id: evidence.evidence_id,
+                    name: evidence.name,
+                    kind: match evidence.kind {
+                        EvidenceKind::Check => protocol::OrchestraEvidenceKind::Check,
+                        EvidenceKind::Change => protocol::OrchestraEvidenceKind::Change,
+                        EvidenceKind::Skill => protocol::OrchestraEvidenceKind::Skill,
+                        EvidenceKind::Other => protocol::OrchestraEvidenceKind::Other,
+                    },
+                    provenance: project_evidence_provenance(evidence.provenance),
+                    availability: project_evidence_availability(evidence.availability),
+                    bytes: evidence.bytes,
+                    sha256: evidence.sha256,
+                    media_type: evidence.media_type,
+                    content: evidence.content,
+                },
+            )
         }
         ExecutionQueryResult::History(page) => {
             protocol::OrchestraQueryResult::History(protocol::OrchestraHistoryPage {
@@ -1027,6 +1057,29 @@ fn project_bounded_text(
     codex_app_server_protocol::OrchestraBoundedText {
         text: text.text,
         truncated: text.truncated,
+    }
+}
+
+fn project_evidence_provenance(
+    provenance: EvidenceProvenance,
+) -> protocol::OrchestraEvidenceProvenance {
+    match provenance {
+        EvidenceProvenance::RuntimeCheck => protocol::OrchestraEvidenceProvenance::RuntimeCheck,
+        EvidenceProvenance::RuntimeChange => protocol::OrchestraEvidenceProvenance::RuntimeChange,
+        EvidenceProvenance::SkillSnapshot => protocol::OrchestraEvidenceProvenance::SkillSnapshot,
+        EvidenceProvenance::RuntimeOther => protocol::OrchestraEvidenceProvenance::RuntimeOther,
+    }
+}
+
+fn project_evidence_availability(
+    availability: EvidenceAvailability,
+) -> protocol::OrchestraEvidenceAvailability {
+    match availability {
+        EvidenceAvailability::Available => protocol::OrchestraEvidenceAvailability::Available,
+        EvidenceAvailability::ContentTooLarge => {
+            protocol::OrchestraEvidenceAvailability::ContentTooLarge
+        }
+        EvidenceAvailability::Malformed => protocol::OrchestraEvidenceAvailability::Malformed,
     }
 }
 

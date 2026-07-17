@@ -1,6 +1,0 @@
-{
-  "name": "orchestra-electron-boundary-prototype",
-  "private": true,
-  "type": "module",
-  "main": "main.mjs"
-}
