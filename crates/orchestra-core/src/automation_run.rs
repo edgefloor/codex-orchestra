@@ -2677,6 +2677,14 @@ mod tests {
             delivered.provider_receipt.as_deref(),
             Some("queued on native child")
         );
+        let reloaded = store.load().unwrap();
+        let durable = reloaded.claims[&claim_id].steering_receipts.last().unwrap();
+        assert_eq!(durable.sequence, submitted.sequence);
+        assert_eq!(durable.status, AutomationSteeringStatus::Delivered);
+        assert_eq!(
+            durable.provider_receipt.as_deref(),
+            Some("queued on native child")
+        );
         assert!(matches!(
             store.prepare_issue_steering(&mut checkpoint, &claim_id, "task-steering", "", 43),
             Err(AutomationRunError::InvalidSteeringInput)
