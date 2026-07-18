@@ -1017,6 +1017,24 @@ impl AutomationRunStore {
             .claims
             .get_mut(&intent_claim_id)
             .ok_or_else(|| AutomationRunError::MissingClaim(intent_claim_id.clone()))?;
+        if intent_status == AutomationDispatchIntentStatus::Started
+            && matches!(
+                claim.status,
+                AutomationClaimStatus::Completed
+                    | AutomationClaimStatus::Cancelled
+                    | AutomationClaimStatus::Failed
+            )
+        {
+            let intent = next.coordination.dispatch_intent.as_mut().unwrap();
+            intent.status = AutomationDispatchIntentStatus::Completed;
+            next.coordination.next_action =
+                "dispatch outcome was already durable; scan the next bounded tracker page".into();
+            next.next_action.clone_from(&next.coordination.next_action);
+            let result = intent.clone();
+            self.persist(&mut next, expected_epoch, expected_revision)?;
+            *checkpoint = next;
+            return Ok(result);
+        }
         if !claim_is_active(claim.status) {
             return Err(AutomationRunError::InactiveClaim(intent_claim_id));
         }
@@ -4124,6 +4142,59 @@ mod tests {
         assert_eq!(
             root.claims[&intent.claim_id].status,
             AutomationClaimStatus::Cancelled
+        );
+        assert_eq!(store.load().unwrap(), root);
+    }
+
+    #[test]
+    fn started_dispatch_finalizes_an_already_durable_terminal_claim() {
+        let repository = tempdir().unwrap();
+        let workspace = tempdir().unwrap();
+        let profile = profile(workspace.path());
+        let digest = crate::canonical_sha256(&serde_json::to_value(&profile).unwrap()).unwrap();
+        let (store, mut root) = AutomationRunStore::start(AutomationRunStart {
+            repository: repository.path(),
+            owner_thread_id: "task-dispatch-terminal",
+            source_revision: "abc123",
+            profile: &profile,
+            profile_digest: &digest,
+        })
+        .unwrap();
+        let tracked_issue = issue();
+        let plan = plan_coordination_page(
+            &root,
+            &profile,
+            AutomationCoordinationPage::Ready {
+                expected_scan_revision: 0,
+                input_cursor: None,
+                output_cursor: None,
+                issues: std::slice::from_ref(&tracked_issue),
+            },
+            1,
+            50_000,
+        )
+        .unwrap();
+        let intent = store
+            .commit_coordination_plan(&mut root, &profile, plan)
+            .unwrap()
+            .dispatch_intent
+            .unwrap();
+        store
+            .start_dispatch_intent(&mut root, &intent.intent_id, true, 50_100)
+            .unwrap();
+        store
+            .update_claim(&mut root, &intent.claim_id, |claim| {
+                claim.status = AutomationClaimStatus::Completed;
+            })
+            .unwrap();
+
+        let finalized = store
+            .start_dispatch_intent(&mut root, &intent.intent_id, true, 50_200)
+            .unwrap();
+        assert_eq!(finalized.status, AutomationDispatchIntentStatus::Completed);
+        assert_eq!(
+            root.claims[&intent.claim_id].status,
+            AutomationClaimStatus::Completed
         );
         assert_eq!(store.load().unwrap(), root);
     }
