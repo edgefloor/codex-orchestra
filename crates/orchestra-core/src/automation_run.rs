@@ -264,6 +264,14 @@ pub struct AutomationCoordinationPlan {
     tracker_states: BTreeMap<String, String>,
     selection: Option<AutomationCoordinationSelection>,
     replayed: bool,
+    task_prompt: Option<String>,
+}
+
+impl AutomationCoordinationPlan {
+    pub fn with_task_prompt(mut self, task_prompt: &str) -> Self {
+        self.task_prompt = Some(task_prompt.to_owned());
+        self
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -908,7 +916,7 @@ impl AutomationRunStore {
         );
         match plan.selection {
             Some(AutomationCoordinationSelection::NewIssue(issue)) => {
-                let claim = prepare_automation_claim(
+                let mut claim = prepare_automation_claim(
                     &next,
                     &issue,
                     plan.coordination
@@ -928,6 +936,9 @@ impl AutomationRunStore {
                     return Err(AutomationRunError::PendingDispatchIntent(
                         "coordination plan lost its new-claim identity".into(),
                     ));
+                }
+                if let Some(task_prompt) = plan.task_prompt.as_ref() {
+                    claim.task_prompt.clone_from(task_prompt);
                 }
                 next.claims.insert(claim.claim_id.clone(), claim);
             }
@@ -1046,6 +1057,8 @@ impl AutomationRunStore {
                         claim.continuation_count = claim.continuation_count.saturating_add(1);
                     }
                     claim.retry = None;
+                    claim.workflow_run_id = None;
+                    claim.workflow_status = None;
                     claim.status = AutomationClaimStatus::Running;
                     claim.last_progress_at_ms = Some(now_ms);
                     claim.next_action =
@@ -2598,6 +2611,7 @@ pub fn plan_coordination_page(
                 tracker_states: BTreeMap::new(),
                 selection: None,
                 replayed: false,
+                task_prompt: None,
             });
         }
     };
@@ -2642,6 +2656,7 @@ pub fn plan_coordination_page(
             tracker_states: BTreeMap::new(),
             selection: None,
             replayed: true,
+            task_prompt: None,
         });
     }
     if expected_scan_revision.saturating_add(1) == checkpoint.coordination.scan_revision
@@ -2883,6 +2898,7 @@ pub fn plan_coordination_page(
         tracker_states,
         selection,
         replayed: false,
+        task_prompt: None,
     })
 }
 
@@ -3846,7 +3862,8 @@ mod tests {
             1,
             10_000,
         )
-        .unwrap();
+        .unwrap()
+        .with_task_prompt("Pinned rendered Automation prompt");
         let committed = store
             .commit_coordination_plan(&mut root, &profile, plan)
             .unwrap();
@@ -3856,6 +3873,10 @@ mod tests {
         assert_eq!(intent.issue_id, urgent.id);
         assert_eq!(root.claims.len(), 1);
         assert_eq!(root.claims[&intent.claim_id].issue_identifier, "ORC-URGENT");
+        assert_eq!(
+            root.claims[&intent.claim_id].task_prompt,
+            "Pinned rendered Automation prompt"
+        );
         assert_eq!(root.queue[&low.id].status, AutomationQueueStatus::Queued);
         assert_eq!(root.coordination.scan_revision, 1);
         assert_eq!(root.coordination.output_cursor.as_deref(), Some("cursor-1"));
@@ -3968,6 +3989,12 @@ mod tests {
         .unwrap();
         let claimed_issue = issue();
         let claim_id = store.claim_fixture(&mut root, &claimed_issue, 1).unwrap();
+        store
+            .update_claim(&mut root, &claim_id, |claim| {
+                claim.workflow_run_id = Some("workflow-previous".into());
+                claim.workflow_status = Some(RunStatus::Completed);
+            })
+            .unwrap();
         let retry = store
             .schedule_claim_retry(&mut root, &claim_id, &profile, 5_000, "retry me")
             .unwrap();
@@ -4005,6 +4032,8 @@ mod tests {
             .unwrap();
         assert_eq!(started.status, AutomationDispatchIntentStatus::Started);
         assert!(root.claims[&claim_id].retry.is_none());
+        assert!(root.claims[&claim_id].workflow_run_id.is_none());
+        assert!(root.claims[&claim_id].workflow_status.is_none());
         let completed = store
             .complete_dispatch_intent(&mut root, &intent.intent_id)
             .unwrap();
