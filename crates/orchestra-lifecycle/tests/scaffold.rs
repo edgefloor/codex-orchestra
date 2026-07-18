@@ -122,7 +122,7 @@ fn direct_fork_pins_are_explicit_and_patch_assembly_is_retired() {
     );
     assert_eq!(
         sources["orchestra_desktop"].as_str(),
-        Some("355eeab55f8aacd03ab7bc985adf0deb9dced7eb")
+        Some("3342a13f14dc08b130756475293047321b825baa")
     );
     for retired in [
         "integration/codex",
