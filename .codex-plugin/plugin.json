@@ -1,6 +1,6 @@
 {
   "name": "orchestra",
-  "version": "0.2.0+codex.973a40f7",
+  "version": "0.2.0+codex.7fddc000",
   "description": "Author and operate native V2 Orchestra workflows in an Orchestra-enabled Codex build",
   "author": {
     "name": "Orchestra contributors"
