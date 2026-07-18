@@ -28,7 +28,8 @@ if (
 const server = net.createServer();
 server.listen(0, "127.0.0.1", () => {
   const { port } = server.address();
-  console.log("backend ready http://127.0.0.1:" + port + "/");
+  console.log("backend ready");
+  console.log("  url: http://127.0.0.1:" + port + "/");
   console.log("main window created");
 });
 process.once("SIGINT", () => server.close(() => process.exit(0)));

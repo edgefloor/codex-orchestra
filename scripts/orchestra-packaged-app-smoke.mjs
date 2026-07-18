@@ -34,11 +34,9 @@ const waitFor = async (predicate, timeoutMs) => {
 };
 
 const loopbackUrl = (text) => {
-  const backendLine = text
-    .split(/\r?\n/u)
-    .reverse()
-    .find((line) => line.includes("backend ready"));
-  const matches = (backendLine ?? text).matchAll(
+  const backendMarker = text.lastIndexOf("backend ready");
+  const backendOutput = backendMarker === -1 ? text : text.slice(backendMarker);
+  const matches = backendOutput.matchAll(
     /https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d+(?:\/[^\s"']*)?/giu,
   );
   let latest;
