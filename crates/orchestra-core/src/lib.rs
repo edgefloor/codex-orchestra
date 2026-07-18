@@ -30,18 +30,20 @@ pub use automation::{
 };
 pub use automation_run::{
     AutomationClaimLiveness, AutomationClaimReconciliation, AutomationClaimStatus,
-    AutomationCleanupState, AutomationCleanupStatus, AutomationCoordinationResult,
-    AutomationEffectExecution, AutomationEffectReceipt, AutomationEffectStatus,
-    AutomationGatePolicy, AutomationHookKind, AutomationHookReceipt, AutomationHookStatus,
-    AutomationIssueClaim, AutomationProfileRevision, AutomationProfileRevisionStatus,
-    AutomationQueueCategory, AutomationQueueCounts, AutomationQueueItem, AutomationQueuePage,
-    AutomationQueueProjectionItem, AutomationQueueStatus, AutomationReconciliationStatus,
-    AutomationRetryKind, AutomationRetrySchedule, AutomationRootCheckpoint, AutomationRootStatus,
-    AutomationRunError, AutomationRunStart, AutomationRunStore, AutomationSteeringReceipt,
-    AutomationSteeringStatus, AutomationTrackerCommentRequest,
-    AutomationTrackerPullRequestLinkRequest, AutomationTrackerTransitionRequest,
-    automation_claim_liveness, automation_queue_counts, automation_queue_page,
-    normalize_pull_request_url,
+    AutomationCleanupState, AutomationCleanupStatus, AutomationCoordinationCheckpoint,
+    AutomationCoordinationCommit, AutomationCoordinationIntakeStatus, AutomationCoordinationPage,
+    AutomationCoordinationPlan, AutomationCoordinationResult, AutomationDispatchIntent,
+    AutomationDispatchIntentKind, AutomationDispatchIntentStatus, AutomationEffectExecution,
+    AutomationEffectReceipt, AutomationEffectStatus, AutomationGatePolicy, AutomationHookKind,
+    AutomationHookReceipt, AutomationHookStatus, AutomationIssueClaim, AutomationProfileRevision,
+    AutomationProfileRevisionStatus, AutomationQueueCategory, AutomationQueueCounts,
+    AutomationQueueItem, AutomationQueuePage, AutomationQueueProjectionItem, AutomationQueueStatus,
+    AutomationReconciliationStatus, AutomationRetryKind, AutomationRetrySchedule,
+    AutomationRootCheckpoint, AutomationRootStatus, AutomationRunError, AutomationRunStart,
+    AutomationRunStore, AutomationSteeringReceipt, AutomationSteeringStatus,
+    AutomationTrackerCommentRequest, AutomationTrackerPullRequestLinkRequest,
+    AutomationTrackerTransitionRequest, automation_claim_liveness, automation_queue_counts,
+    automation_queue_page, normalize_pull_request_url, plan_coordination_page,
 };
 pub use compiler::{CompileError, compile_workflow};
 pub use compiler_artifact::{
