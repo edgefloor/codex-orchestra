@@ -3372,6 +3372,7 @@ mod tests {
         AutomationOrchestraProfile, AutomationPollingProfile, AutomationSecretKind,
         AutomationSecretReference, AutomationTrackerProfile, AutomationWorkspaceProfile,
     };
+    use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
     use tempfile::tempdir;
 
